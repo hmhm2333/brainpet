@@ -9,11 +9,13 @@ Tagline: **Train your brain. Grow your pet.**
 
 ## Current objective
 
-Build the smallest credible foundation that proves this loop:
+Build a stable reusable runtime and stage first, then prove this loop with two
+formal game modules:
 
 1. The user clicks a visible accessory or body-area control on the pet.
 2. The pet launches a small transparent, frameless training surface nearby.
-3. A task module runs for a short bounded round.
+3. One of two task modules is selected automatically and runs for a 45–60
+   second bounded round.
 4. The result is recorded locally and produces an immediate pet reaction.
 5. The surface collapses without interrupting the user's main workspace.
 
@@ -22,9 +24,15 @@ Build the smallest credible foundation that proves this loop:
 - Preserve existing OpenPets pet, agent integration, and plugin behavior.
 - Add a host-owned pet hotspot primitive.
 - Add a host-owned transparent anchored overlay primitive for sandboxed plugins.
+- Build a task-neutral runtime for lifecycle, timing, input, sessions, storage,
+  failure recovery, and pet feedback.
+- Build a reusable stage for pixel rendering, assets, animation, audio, HUD,
+  scaling, pause, settlement, and diagnostics.
 - Define a runtime-neutral task module contract.
-- Ship two or three generic demonstration tasks based on established task
-  paradigms, without copying commercial product expression.
+- Pass the infrastructure stress, soak, DPI, multi-display, failure, and second-
+  dummy-module gates before formal game development begins.
+- Ship one go/no-go task and one continuous-updating / avoid-repetition task,
+  with original game expression and no separate tutorial flow.
 - Store results locally and map completion/performance to pet feedback.
 
 ## Explicit non-goals
@@ -61,7 +69,8 @@ pnpm --filter @open-pets/desktop test
 ```
 
 Feature work must also add the narrowest behavior-level tests for hotspot hit
-testing, overlay lifecycle, plugin isolation, and task result validation.
+testing, overlay lifecycle, runtime state transitions, monotonic timing, input
+normalization, plugin isolation, task result validation, and abnormal cleanup.
 
 ## Lifecycle
 

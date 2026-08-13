@@ -9,8 +9,14 @@
   conspicuous accessory such as a badge, pendant, antenna, or held device.
 - Training appears in a small transparent surface anchored to the pet, not a
   browser tab, full-screen experience, or unrelated taskbar application.
-- Game content is not the first technical risk. Host integration and a reusable
-  task boundary come first.
+- The surface targets roughly one ninth of the active display work area, with
+  size limits for small, high-DPI, and 4K displays.
+- A click immediately selects one of two current levels and starts a 45–60
+  second round. V1 has no game lobby, map, level picker, or tutorial screen.
+- The pet character, pixel scale, palette, props, and feedback create visual
+  consistency; V1 does not require a narrative world.
+- The stable runtime and stage are the first product deliverable. Formal game
+  development starts only after the infrastructure completion gate passes.
 - Scores should produce pet feedback, but the first version remains local.
 
 ## Architecture boundary
@@ -25,11 +31,20 @@ OpenPets-derived desktop host
   plugin sandbox and permissions
             |
             v
-BrainPet training plugin
+BrainPet runtime core
+  lifecycle state machine
+  monotonic clock and input
+  session and persistence
   session orchestration
   task registry
   local history
   pet reward mapping
+            |
+            v
+BrainPet stage
+  rendering and asset loading
+  sprite, animation, audio, and HUD
+  scaling, pause, settlement, and diagnostics
             |
             v
 Task modules
@@ -56,9 +71,9 @@ Acceptance:
 - Transparent regions preserve desktop click-through where practical.
 - Disabling the BrainPet feature restores ordinary OpenPets interaction.
 
-## Milestone 2: plugin contract
+## Milestone 2: runtime and stage contract
 
-Expose only the host capabilities the training plugin needs:
+Expose only the host capabilities the BrainPet runtime needs:
 
 - subscribe to a declared pet hotspot;
 - open, update, reposition, hide, and close one anchored overlay;
@@ -69,7 +84,16 @@ Expose only the host capabilities the training plugin needs:
 The overlay remains sandboxed: no Node integration, arbitrary navigation,
 unapproved network access, or direct renderer handles.
 
-## Milestone 3: task module contract
+Build the task-neutral runtime and stage before any formal game:
+
+- lifecycle state machine, monotonic clock, normalized input, and pause/resume;
+- task registry, deterministic sessions, local events, and validated results;
+- logical resolution, pixel scaling, asset manifests, sprite animation, audio,
+  HUD, settlement, and safe renderer boundaries;
+- a development-only Stage Exerciser for deterministic lifecycle, rendering,
+  input, timing, failure, DPI, and multi-display tests.
+
+## Milestone 3: task module contract and exerciser
 
 Each task definition should provide:
 
@@ -87,20 +111,42 @@ The session orchestrator timestamps raw events and validates the submitted
 result. This provides a future boundary for analytics or leaderboards without
 requiring them now.
 
-## Milestone 4: demonstration tasks
+Use the contract to implement the development-only Stage Exerciser and a second
+dummy module before formal game work.
+
+## Milestone 4: infrastructure completion gate
+
+Do not begin formal game development until:
+
+- the Stage Exerciser completes 100 automated open/run/close cycles without
+  orphan windows, stale sessions, or dead hotspots;
+- a 30-minute soak test shows no obvious continuing memory growth;
+- focus loss, pause, lock, display changes, renderer failure, and cleanup are
+  deterministic and tested;
+- fixed seeds reproduce the same event schedule and validated result;
+- a second dummy module plugs in without changes to the host, runtime, stage,
+  or persistence flow;
+- disabling the feature fully restores ordinary OpenPets behavior.
+
+## Milestone 5: formal game modules
 
 Implement only enough variety to validate the contract:
 
 1. A response-inhibition task using a generic go/no-go paradigm.
-2. An interference-control task using a generic color-word or spatial conflict
-   paradigm with original presentation.
-3. Optionally, a short spatial sequence task if it reveals a missing capability
-   in the task contract.
+2. A working-memory task using a continuous-updating / avoid-repetition
+   paradigm with original presentation. Its collection boundary, repetition
+   rules, reset conditions, and difficulty parameters require an approved
+   task-to-game mapping and contamination review.
 
 These are demonstrations, not a finalized cognitive curriculum. Parameters and
 scoring remain transparent and versioned.
 
-## Milestone 5: local pet loop
+The first level of each task is the rule-learning test: it uses highly
+distinguishable stimuli, low pressure, and immediate feedback instead of a
+separate tutorial or demonstration sequence. The plugin automatically selects
+between the two tasks while avoiding excessive consecutive repetition.
+
+## Milestone 6: local pet loop
 
 Record sessions locally and translate them into restrained pet feedback:
 
@@ -120,9 +166,8 @@ Record sessions locally and translate them into restrained pet feedback:
 
 ## First implementation slice
 
-The next code change should implement no task at all. It should add a feature-
-flagged hotspot descriptor to the default pet surface and use it to open an
-empty transparent overlay containing only a close control and diagnostic text.
-That slice determines whether the intended interaction survives real OpenPets
-dragging, click-through, multi-display, focus, sandbox, and lifecycle behavior.
-
+The next code changes should implement no formal game. First add a feature-
+flagged hotspot and anchored sandbox window, then run the task-neutral Stage
+Exerciser through the complete runtime lifecycle. The exerciser remains
+development-only. Formal game code begins only after the infrastructure gate
+passes and must use the approved runtime, stage, and task-module contracts.
