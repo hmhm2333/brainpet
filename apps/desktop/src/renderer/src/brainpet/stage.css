@@ -55,6 +55,7 @@ button { font: inherit; }
 .score-medal { display:grid; place-items:center; width:145px; height:104px; border:5px solid var(--ink); background:#f5bd3d; box-shadow:inset -10px -10px 0 #d9952f,5px 5px 0 #0d1729; }
 .score-medal span{font:900 10px/1 monospace;letter-spacing:.1em}.score-medal strong{font:900 40px/1 monospace;}
 .best-score { margin:-4px 0 0; color:#173754; font:900 10px/1 ui-monospace,monospace; letter-spacing:.08em; }
+.agent-notice { margin:0; padding:4px 8px; border:2px solid var(--ink); background:#fff7dc; box-shadow:2px 2px 0 #0d1729; color:#173754; font:900 9px/1 ui-monospace,monospace; letter-spacing:.04em; }
 .result-stats { display:flex; gap:8px; }.result-stats span{display:flex;gap:5px;padding:5px 8px;border:2px solid var(--ink);background:#fff7dc;font-size:10px;font-weight:800}.result-stats b{font-family:monospace}
 .result-actions{display:flex;gap:10px}
 .quality-note,.auto-close{margin:0;font-size:9px;font-weight:800}.quality-note{padding:4px 7px;border:2px solid var(--ink);background:#fff7dc}.auto-close{opacity:.62}

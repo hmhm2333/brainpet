@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { applyExternalPetReaction, getDefaultPetWindowForPlugins } from "../default-pet-controller.js";
 import { debug, error as logError, info, warn } from "../logger.js";
 import { setBrainPetTrainingRequestHandler } from "../pet-window.js";
+import { subscribePluginEvent } from "../plugin-events-source.js";
+import { isBrainPetAgentCompletion, parseBrainPetAgentActivity } from "./agent-activity-policy.js";
 import { computeBrainPetStageBounds } from "./geometry.js";
 import { createBrainPetRuntimeSnapshot, createSeed, reduceBrainPetRuntime, type BrainPetRuntimeEvent, type BrainPetRuntimeSnapshot } from "./runtime-core.js";
 import { computeDeclaredScore, isTaskId, type BrainPetTaskResult, type BrainPetTaskSessionConfig } from "./task-contract.js";
@@ -25,6 +27,7 @@ let statePath: string | null = null;
 let persistedState: BrainPetPersistedState = createBrainPetPersistedState();
 let stateSaveChain: Promise<void> = Promise.resolve();
 let hostEventsInstalled = false;
+let unsubscribeAgentActivity: (() => void) | null = null;
 
 export interface BrainPetStageBootstrap {
   readonly apiVersion: 1;
@@ -173,6 +176,7 @@ function installBrainPetHostEvents(): void {
   screen.on("display-added", handleDisplayChange);
   screen.on("display-removed", handleDisplayChange);
   screen.on("display-metrics-changed", handleDisplayChange);
+  unsubscribeAgentActivity = subscribePluginEvent("agent:activity", handleAgentActivity);
 }
 
 function removeBrainPetHostEvents(): void {
@@ -185,18 +189,30 @@ function removeBrainPetHostEvents(): void {
   screen.off("display-added", handleDisplayChange);
   screen.off("display-removed", handleDisplayChange);
   screen.off("display-metrics-changed", handleDisplayChange);
+  unsubscribeAgentActivity?.();
+  unsubscribeAgentActivity = null;
 }
 
-function handleLockScreen(): void { sendHostEvent("pause", "lock-screen"); }
-function handleUnlockScreen(): void { sendHostEvent("resume", "lock-screen"); }
-function handleSuspend(): void { sendHostEvent("pause", "suspend"); }
-function handleResume(): void { sendHostEvent("resume", "suspend"); repositionBrainPetStage(); }
+function handleLockScreen(): void { sendPauseEvent("pause", "lock-screen"); }
+function handleUnlockScreen(): void { sendPauseEvent("resume", "lock-screen"); }
+function handleSuspend(): void { sendPauseEvent("pause", "suspend"); }
+function handleResume(): void { sendPauseEvent("resume", "suspend"); repositionBrainPetStage(); }
 function handleDisplayChange(): void { repositionBrainPetStage(); }
 
-function sendHostEvent(type: "pause" | "resume", reason: "lock-screen" | "suspend"): void {
+function sendPauseEvent(type: "pause" | "resume", reason: "lock-screen" | "suspend"): void {
   const window = stageWindow;
   if (!window || window.isDestroyed()) return;
+  info("brainpet.host", "host lifecycle event", { type, reason, runtimePhase: runtime.phase });
   window.webContents.send(STAGE_HOST_EVENT_CHANNEL, { type, reason });
+}
+
+function handleAgentActivity(payload: Record<string, unknown>): void {
+  const activity = parseBrainPetAgentActivity(payload);
+  if (!activity || !isBrainPetAgentCompletion(activity)) return;
+  const window = stageWindow;
+  if (!window || window.isDestroyed()) return;
+  debug("brainpet.host", "agent completion observed without interrupting stage", { surface: activity.surface, runtimePhase: runtime.phase });
+  window.webContents.send(STAGE_HOST_EVENT_CHANNEL, { type: "agent-completed", surface: activity.surface });
 }
 
 export function getBrainPetRuntimeSnapshot(): BrainPetRuntimeSnapshot {

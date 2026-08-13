@@ -10,7 +10,12 @@ contextBridge.exposeInMainWorld("brainPet", Object.freeze({
   onHostEvent: (listener) => {
     if (typeof listener !== "function") return () => {};
     const handler = (_event, value) => {
-      if (!value || (value.type !== "pause" && value.type !== "resume")) return;
+      if (!value) return;
+      if (value.type === "agent-completed" && (value.surface === "default" || value.surface === "agent")) {
+        listener(Object.freeze({ type: value.type, surface: value.surface }));
+        return;
+      }
+      if (value.type !== "pause" && value.type !== "resume") return;
       if (value.reason !== "lock-screen" && value.reason !== "suspend") return;
       listener(Object.freeze({ type: value.type, reason: value.reason }));
     };

@@ -13,6 +13,7 @@ let bootstrap: Awaited<ReturnType<typeof window.brainPet.getBootstrap>>;
 let lastRenderedAt = 0;
 let lastFeedback = "neutral";
 let resultCloseTimer = 0;
+let agentCompletionPending = false;
 let settings: BrainPetStageSettings = loadStageSettings(localStorage);
 let quality = new StageQualityMonitor();
 let eventLog: Array<{ readonly type: string; readonly atMs: number; readonly details?: unknown }> = [];
@@ -31,7 +32,7 @@ async function initialize(): Promise<void> {
   window.addEventListener("blur", () => setPauseReason("focus", true));
   window.addEventListener("focus", () => setPauseReason("focus", false));
   document.addEventListener("visibilitychange", () => setPauseReason("visibility", document.hidden));
-  bridge.onHostEvent((event) => setPauseReason("host", event.type === "pause"));
+  bridge.onHostEvent(handleHostEvent);
   applySettings();
 }
 
@@ -154,6 +155,7 @@ function renderResult(result: BrainPetTaskResult): void {
       <p class="pixel-kicker">QUEST CLEAR!</p>
       <div class="score-medal"><span>SCORE</span><strong>${result.score}</strong></div>
       <p class="best-score">${isNewBest ? "NEW BEST" : "PERSONAL BEST"} · ${best}</p>
+      ${agentCompletionPending ? `<p class="agent-notice">AGENT 已完成 · 本局没有被打断</p>` : ""}
       <div class="result-stats"><span><b>${result.correct}</b>正确</span><span><b>${result.incorrect}</b>失误</span><span><b>${result.missed}</b>漏答</span></div>
       ${result.quality.flags.length ? `<p class="quality-note">本局记录：${result.quality.flags.map(qualityFlagLabel).join("、")}</p>` : ""}
       <div class="result-actions"><button class="pixel-button primary" data-action="again">再来随机一局</button><button class="pixel-button" data-action="done">收工</button></div>
@@ -168,7 +170,19 @@ function renderResult(result: BrainPetTaskResult): void {
     startRandomTask();
   });
   root.querySelector("[data-action='done']")?.addEventListener("click", () => bridge.close());
+  agentCompletionPending = false;
   resultCloseTimer = window.setTimeout(() => bridge.close(), 8_000);
+}
+
+function handleHostEvent(event: Parameters<Parameters<Window["brainPet"]["onHostEvent"]>[0]>[0]): void {
+  if (event.type === "agent-completed") {
+    if (activeTask) {
+      agentCompletionPending = true;
+      logStageEvent("agent-completed", { surface: event.surface, policy: "defer-until-result" });
+    }
+    return;
+  }
+  setPauseReason("host", event.type === "pause");
 }
 
 function chrome(title: string, status: string): string {

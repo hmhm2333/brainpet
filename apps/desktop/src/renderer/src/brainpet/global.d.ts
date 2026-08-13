@@ -20,7 +20,10 @@ interface BrainPetBridge {
     | { readonly type: "settled" }
   ): void;
   close(): void;
-  onHostEvent(listener: (event: { readonly type: "pause" | "resume"; readonly reason: "lock-screen" | "suspend" }) => void): () => void;
+  onHostEvent(listener: (event:
+    | { readonly type: "pause" | "resume"; readonly reason: "lock-screen" | "suspend" }
+    | { readonly type: "agent-completed"; readonly surface: "default" | "agent" }
+  ) => void): () => void;
 }
 
 declare global {

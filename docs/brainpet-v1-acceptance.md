@@ -25,6 +25,7 @@
 - Host 使用声明式、版本化计分合同从原始试次重算正确、错误、漏答、虚报、平均反应时和娱乐分数，不盲信 renderer 汇总。
 - session 存储拆分 task/asset/difficulty/score 版本、原始试次、质量标记与宠物事件；最近结果有界且原子写盘。
 - 失焦、隐藏、锁屏和 suspend 均暂停；暂停时长不进入任务逻辑时间。unlock/resume 恢复并重新锚定。
+- Host 订阅既有 `agent:activity` 总线；只有 `success/celebrating` 被视为 Agent 完成。运行中的当前局不被关闭、暂停或重置，完成提示延迟到本局结算页，避免抢占任务输入。
 - Stage 提供版本化资源缓存/缺失回退，以及 scene/layer/sprite/particle/camera 最小合同。
 - 通用设置包含音效、降低动画和高辨识模式；均由 Stage 自己持久化，不扩张 Host IPC。
 - 开发模式提供 Stage Exerciser、固定 seed 重放、事件日志导出、输入回显和帧/暂停状态。
@@ -42,12 +43,13 @@
 - 目标舞台 640×360；本机 150% Windows 缩放实测内容区 640×360，源码 Electron 打开约 160–208ms。
 - 宠物移动后舞台跟随；失焦自动暂停/恢复；按钮可点击区域 30×30。
 - welcome、Stage Exerciser、Go/No-Go、持续更新和 unpacked package 均有 Electron 实机截图留在本地 `output/playwright`（该目录不进入 Git）。
-- branded portable 私测包：`apps/desktop/dist-electron/BrainPet-3.4.0-win-x64.exe`，约 151 MB；首次解压启动需更长等待，最终同版包内舞台实测 640×360、241ms 打开并通过故障隔离。
+- branded portable 私测包：`apps/desktop/dist-electron/BrainPet-3.4.0-win-x64.exe`，151,441,293 bytes，SHA256 `A189A2E0852C980261EAA3567CD74C33BD9CDAC798CE1B4DD0B1E6224A374498`；首次解压启动需更长等待，最终同版包内舞台实测 640×360、162ms 打开并通过锚定、失焦暂停和故障隔离。
 - 未使用竞品名称、角色、贴图、音效或关卡数据；视觉为原创掌机像素表达。
 
 ## 已知环境边界
 
 - 验收机只有一个物理显示器，无法诚实声称完成双显示器物理复核；已覆盖副屏负坐标和四边几何，并保留外部双屏私测项。
+- `2026-08-13 23:23` 只读盘点回执确认：Windows 11 build 26200、DISPLAY1 2560×1600、150% DPI、物理显示器数 1；本地证据位于 `output/physical-acceptance/20260813-232336`（不进入 Git）。
 - 当前私测包未做商业代码签名，Windows 会显示未知发布者；本地 Electron dist 可同时构建 unsigned `win-unpacked` 回退目录。
 - OpenPets 上游部分测试依赖 Windows symlink 权限或已有断言，BrainPet 专项测试、构建、打包合同与 Electron 实机测试单独列证据，不把上游环境失败算成 BrainPet 通过。
 
@@ -59,7 +61,7 @@
 2. 锁屏与 Agent 并发：任务进行中按 `Win+L`，解锁后确认仍显示暂停、点击继续后时钟从原进度恢复；让 Agent 在任务中完成一次工作，确认宠物状态可变化但舞台不关闭、不重置 session、不抢占其他应用焦点。
 3. 独立动态视觉评审：查看一轮 Go/No-Go 和一轮持续更新的实机录屏，逐项确认文字不溢出、像素不糊、红/蓝刺激可区分、正误反馈不闪烁、暂停/结束动作清楚，且画面没有默认 HTML 控件或诊断占位。
 
-复核人应在本文件追加机器、显示器、缩放组合、日期、结论与录屏路径。以上三项未记录前，状态只能是“开发验收完成，V1 物理放行待复核”，不能写“全部验收通过”。
+复核人运行 `powershell -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/brainpet-physical-acceptance.ps1 -RunInteractive`。脚本会在 `output/physical-acceptance/<时间戳>` 生成 JSON 与 Markdown 回执，记录机器环境、显示器、DPI、便携包哈希、逐项结论和证据路径；它不会自动锁屏、修改显示设置或关闭进程。以上三项没有一份 `overallStatus: passed` 的外部回执前，状态只能是“开发验收完成，V1 物理放行待复核”，不能写“全部验收通过”。
 
 ## 回退
 
