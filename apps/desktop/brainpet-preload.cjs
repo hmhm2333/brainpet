@@ -15,6 +15,16 @@ contextBridge.exposeInMainWorld("brainPet", Object.freeze({
         listener(Object.freeze({ type: value.type, surface: value.surface }));
         return;
       }
+      if (value.type === "session-outcome"
+        && typeof value.passed === "boolean"
+        && Number.isInteger(value.previousLevel)
+        && Number.isInteger(value.nextLevel)
+        && typeof value.accuracy === "number"
+        && typeof value.isNewLevelBest === "boolean"
+        && Number.isInteger(value.todayCompleted)) {
+        listener(Object.freeze({ type: value.type, passed: value.passed, previousLevel: value.previousLevel, nextLevel: value.nextLevel, accuracy: value.accuracy, isNewLevelBest: value.isNewLevelBest, todayCompleted: value.todayCompleted }));
+        return;
+      }
       if (value.type !== "pause" && value.type !== "resume") return;
       if (value.reason !== "lock-screen" && value.reason !== "suspend") return;
       listener(Object.freeze({ type: value.type, reason: value.reason }));

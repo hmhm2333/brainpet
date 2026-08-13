@@ -36,6 +36,22 @@ test("a paused interval is not misclassified as dropped frames", () => {
   assert.equal(monitor.snapshot(29_983.3).droppedFrameCount, 0);
 });
 
+test("the declared 30 fps fallback is not classified as frame loss", () => {
+  const monitor = new StageQualityMonitor();
+  for (let frame = 0; frame < 1_350; frame += 1) monitor.frame(frame * 33.4);
+  const result = monitor.snapshot(0);
+  assert.equal(result.droppedFrameCount, 0);
+  assert.equal(result.valid, true);
+});
+
+test("sustained cadence below the 30 fps floor invalidates quality", () => {
+  const monitor = new StageQualityMonitor();
+  for (let frame = 0; frame < 180; frame += 1) monitor.frame(frame * 100);
+  const result = monitor.snapshot(0);
+  assert.equal(result.valid, false);
+  assert.equal(result.flags.includes("excessive-frame-loss"), true);
+});
+
 test("stage accessibility settings round-trip without expanding host IPC", () => {
   const values = new Map<string, string>();
   const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value) };

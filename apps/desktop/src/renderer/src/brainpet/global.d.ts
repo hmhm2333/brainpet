@@ -4,9 +4,13 @@ interface BrainPetStageBootstrap {
   readonly apiVersion: 1;
   readonly mode: "stage-exerciser" | "training";
   readonly suggestedSeed: number;
+  readonly session: BrainPetTaskSessionConfig;
   readonly availableTasks: readonly BrainPetTaskId[];
   readonly lastResult: BrainPetTaskResult | null;
   readonly highScores: Partial<Record<BrainPetTaskId, number>>;
+  readonly levelHighScore: number;
+  readonly todayCompleted: number;
+  readonly petSpriteUrl: string | null;
 }
 
 interface BrainPetBridge {
@@ -23,6 +27,7 @@ interface BrainPetBridge {
   onHostEvent(listener: (event:
     | { readonly type: "pause" | "resume"; readonly reason: "lock-screen" | "suspend" }
     | { readonly type: "agent-completed"; readonly surface: "default" | "agent" }
+    | { readonly type: "session-outcome"; readonly passed: boolean; readonly previousLevel: number; readonly nextLevel: number; readonly accuracy: number; readonly isNewLevelBest: boolean; readonly todayCompleted: number }
   ) => void): () => void;
 }
 

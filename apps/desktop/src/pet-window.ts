@@ -1119,6 +1119,16 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
     .brainpet-trigger:hover { transform: translateY(-2px); background: #ffe57c; }
     .brainpet-trigger:active { transform: translate(2px, 2px); box-shadow: inset -2px -2px 0 #d9952f, 1px 1px 0 rgba(23,32,51,.28); }
     .brainpet-trigger:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+    [data-brainpet-launching="true"] .pet-shell { animation: brainpet-ready 480ms steps(4,end); }
+    [data-brainpet-launching="true"] .brainpet-trigger { animation: brainpet-toss 480ms steps(4,end); pointer-events: none; }
+    [data-brainpet-feedback="clear"] .brainpet-trigger,
+    [data-brainpet-feedback="streak"] .brainpet-trigger,
+    [data-brainpet-feedback="new-best"] .brainpet-trigger { animation: brainpet-clear 1.1s steps(6,end); }
+    [data-brainpet-feedback="streak"] .brainpet-trigger { background:#9fe9ff; }
+    [data-brainpet-feedback="new-best"] .brainpet-trigger { background:#fff7dc; box-shadow:inset -2px -2px 0 #d9952f,0 0 0 4px #f5bd3d,3px 3px 0 rgba(23,32,51,.28); }
+    @keyframes brainpet-ready { 25%{transform:translateY(-5px) rotate(-2deg)} 55%{transform:translateY(2px) rotate(2deg)} 100%{transform:none} }
+    @keyframes brainpet-toss { 30%{transform:translate(-4px,-9px) rotate(-15deg)} 65%{transform:translate(8px,-16px) rotate(18deg)} 100%{transform:none} }
+    @keyframes brainpet-clear { 20%{transform:translateY(-9px) rotate(-8deg)} 45%{transform:translateY(1px) rotate(8deg)} 70%{transform:translateY(-5px) rotate(-4deg)} 100%{transform:none} }
     .bubble { position: absolute; left: 50%; bottom: ${bubbleBottom}px; z-index: 4; box-sizing: border-box; display: inline-flex; flex-direction: column; width: fit-content; min-width: 92px; max-width: min(220px, calc(100vw - 18px)); max-height: 128px; padding: 10px 12px; background: linear-gradient(135deg, rgba(239, 246, 255, 0.97), rgba(237, 233, 254, 0.96)); color: #172033; font: 760 11px/14px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-align: left; border: 1px solid rgba(255, 255, 255, 0.78); border-radius: 14px; box-shadow: 0 12px 24px rgba(15, 23, 42, 0.16), 0 2px 5px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.82); white-space: normal; overflow-wrap: break-word; word-break: normal; overflow: visible; pointer-events: auto; -webkit-app-region: no-drag; opacity: 1; backdrop-filter: ${bubbleBackdropFilter}; transform: translateX(-50%); transform-origin: 64% 100%; animation: bubble-in 180ms cubic-bezier(0.2, 0, 0, 1); }
     .bubble[data-dismiss-token] { cursor: pointer; }
     .bubble::after { content: ""; position: absolute; left: 64%; bottom: -7px; width: 12px; height: 12px; background: inherit; border-right: 1px solid rgba(255, 255, 255, 0.56); border-bottom: 1px solid rgba(255, 255, 255, 0.56); border-bottom-right-radius: 3px; transform: translateX(-50%) rotate(45deg); box-shadow: 3px 3px 7px rgba(15, 23, 42, 0.08); }

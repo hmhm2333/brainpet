@@ -6,6 +6,7 @@ export interface BrainPetTaskManifest {
   readonly apiVersion: typeof BRAINPET_TASK_API_VERSION;
   readonly id: BrainPetTaskId;
   readonly title: string;
+  readonly introRule: string;
   readonly durationMs: number;
   readonly supportsSeed: true;
   readonly taskVersion: string;
@@ -15,6 +16,14 @@ export interface BrainPetTaskManifest {
     readonly correctPoints: number;
     readonly incorrectPoints: number;
   };
+  readonly difficulty: {
+    readonly policyVersion: "brainpet-block-v1";
+    readonly parameterVersion: string;
+    readonly maxLevel: number;
+    readonly blockCount: 3;
+    readonly passAccuracy: number;
+    readonly minimumCorrect: number;
+  };
 }
 
 export interface BrainPetTaskSessionConfig {
@@ -23,11 +32,15 @@ export interface BrainPetTaskSessionConfig {
   readonly durationMs: number;
   readonly level: number;
   readonly difficultyPolicyVersion: string;
+  readonly parameterVersion: string;
+  readonly parameters: Readonly<Record<string, number | string | boolean>>;
+  readonly blockCount: 3;
 }
 
 export interface BrainPetTrialRecord {
   readonly stimulusId: string;
   readonly stimulusKind: string;
+  readonly blockIndex: 1 | 2 | 3;
   readonly plannedAtMs: number;
   readonly presentedAtMs: number;
   readonly inputType: "primary" | "secondary" | "none";
@@ -60,10 +73,15 @@ export interface BrainPetTaskResult {
   readonly incorrect: number;
   readonly missed: number;
   readonly durationMs: number;
+  readonly startedAt: string;
   readonly completedAt: string;
+  readonly completionStatus: "completed";
   readonly taskVersion: string;
   readonly assetVersion: string;
   readonly difficultyPolicyVersion: string;
+  readonly parameterVersion: string;
+  readonly parameters: Readonly<Record<string, number | string | boolean>>;
+  readonly blockCount: 3;
   readonly scoreVersion: string;
   readonly level: number;
   readonly falseAlarms: number;
@@ -71,6 +89,12 @@ export interface BrainPetTaskResult {
   readonly trials: readonly BrainPetTrialRecord[];
   readonly quality: BrainPetResultQuality;
   readonly petEvents: readonly ("complete" | "stable" | "new-best")[];
+  readonly progression?: {
+    readonly passed: boolean;
+    readonly previousLevel: number;
+    readonly nextLevel: number;
+    readonly accuracy: number;
+  };
 }
 
 export function validateBrainPetTaskManifest(value: unknown): BrainPetTaskManifest {
@@ -80,6 +104,7 @@ export function validateBrainPetTaskManifest(value: unknown): BrainPetTaskManife
   if (typeof value.title !== "string" || value.title.trim().length === 0 || value.title.length > 48) {
     throw new Error("BrainPet task title must contain 1-48 characters.");
   }
+  if (typeof value.introRule !== "string" || value.introRule.trim().length === 0 || value.introRule.length > 64) throw new Error("BrainPet task intro rule must contain 1-64 characters.");
   if (!Number.isInteger(value.durationMs) || (value.durationMs as number) < 10_000 || (value.durationMs as number) > 120_000) {
     throw new Error("BrainPet task duration must be between 10 and 120 seconds.");
   }
@@ -91,6 +116,15 @@ export function validateBrainPetTaskManifest(value: unknown): BrainPetTaskManife
     throw new Error("BrainPet task scoring must use a bounded versioned declaration.");
   }
   if (Math.abs(value.scoring.correctPoints as number) > 1_000 || Math.abs(value.scoring.incorrectPoints as number) > 1_000) throw new Error("BrainPet score weights are out of range.");
+  if (!isRecord(value.difficulty)
+    || value.difficulty.policyVersion !== "brainpet-block-v1"
+    || !isSemanticVersion(value.difficulty.parameterVersion)
+    || !Number.isInteger(value.difficulty.maxLevel) || (value.difficulty.maxLevel as number) < 1 || (value.difficulty.maxLevel as number) > 100
+    || value.difficulty.blockCount !== 3
+    || typeof value.difficulty.passAccuracy !== "number" || value.difficulty.passAccuracy < 0.5 || value.difficulty.passAccuracy > 1
+    || !Number.isInteger(value.difficulty.minimumCorrect) || (value.difficulty.minimumCorrect as number) < 1) {
+    throw new Error("BrainPet task difficulty declaration is invalid.");
+  }
   return value as unknown as BrainPetTaskManifest;
 }
 

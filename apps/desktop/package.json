@@ -26,6 +26,7 @@
     "test:brainpet-stress": "pnpm build && cross-env BRAINPET_LIFECYCLE_CYCLES=100 node scripts/brainpet-electron-smoke.mjs",
     "test:brainpet-rollback": "pnpm build && cross-env BRAINPET_EXPECT_DISABLED=1 node scripts/brainpet-electron-smoke.mjs",
     "test:brainpet-soak": "pnpm build && cross-env BRAINPET_SOAK_MS=1800000 node scripts/brainpet-electron-smoke.mjs",
+    "test:brainpet-completion": "pnpm build && cross-env BRAINPET_SMOKE_TASK=cargo-signal BRAINPET_VERIFY_COMPLETION=1 node scripts/brainpet-electron-smoke.mjs ../../output/playwright/brainpet-completion.png",
     "test:brainpet-physical-inventory": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/brainpet-physical-acceptance.ps1 -InventoryOnly",
     "build:deps": "pnpm --filter \"@open-pets/desktop^...\" build",
     "test:build": "pnpm build:deps && tsc -p tsconfig.tests.json",

@@ -2,14 +2,16 @@ import { app, BrowserWindow, ipcMain, powerMonitor, screen, type IpcMainEvent } 
 import { join } from "node:path";
 
 import { applyExternalPetReaction, getDefaultPetWindowForPlugins } from "../default-pet-controller.js";
+import { getAppStateSnapshot } from "../app-state.js";
 import { debug, error as logError, info, warn } from "../logger.js";
 import { setBrainPetTrainingRequestHandler } from "../pet-window.js";
 import { subscribePluginEvent } from "../plugin-events-source.js";
 import { isBrainPetAgentCompletion, parseBrainPetAgentActivity } from "./agent-activity-policy.js";
 import { computeBrainPetStageBounds } from "./geometry.js";
+import { chooseBrainPetTask, localDateKey } from "./progression.js";
 import { createBrainPetRuntimeSnapshot, createSeed, reduceBrainPetRuntime, type BrainPetRuntimeEvent, type BrainPetRuntimeSnapshot } from "./runtime-core.js";
 import { computeDeclaredScore, isTaskId, type BrainPetTaskResult, type BrainPetTaskSessionConfig } from "./task-contract.js";
-import { getBrainPetTaskManifest, isPlayableBrainPetTaskId, listPlayableBrainPetTaskIds } from "./task-registry.js";
+import { getBrainPetDifficultyParameters, getBrainPetTaskManifest, isPlayableBrainPetTaskId, listPlayableBrainPetTaskIds } from "./task-registry.js";
 import { appendBrainPetResult, createBrainPetPersistedState, loadBrainPetState, saveBrainPetState, type BrainPetPersistedState } from "./state.js";
 
 const STAGE_READY_CHANNEL = "brainpet:stage-ready";
@@ -33,9 +35,13 @@ export interface BrainPetStageBootstrap {
   readonly apiVersion: 1;
   readonly mode: "stage-exerciser" | "training";
   readonly suggestedSeed: number;
+  readonly session: BrainPetTaskSessionConfig;
   readonly availableTasks: readonly BrainPetTaskResult["taskId"][];
   readonly lastResult: BrainPetTaskResult | null;
   readonly highScores: BrainPetPersistedState["highScores"];
+  readonly levelHighScore: number;
+  readonly todayCompleted: number;
+  readonly petSpriteUrl: string | null;
 }
 
 export function initializeBrainPetHost(): void {
@@ -128,11 +134,14 @@ export function openBrainPetStage(anchorWindow?: BrowserWindow): void {
   });
 
   const petWindow = stageAnchorWindow;
+  const handleAnchorClosed = () => closeBrainPetStage("anchor-closed");
   petWindow?.on("move", scheduleReposition);
   petWindow?.on("moved", scheduleReposition);
+  petWindow?.once("closed", handleAnchorClosed);
   window.on("closed", () => {
     petWindow?.off("move", scheduleReposition);
     petWindow?.off("moved", scheduleReposition);
+    petWindow?.off("closed", handleAnchorClosed);
   });
   startRepositionTimer();
 
@@ -225,13 +234,19 @@ function installBrainPetIpc(): void {
 
   ipcMain.handle(STAGE_BOOTSTRAP_CHANNEL, (event): BrainPetStageBootstrap => {
     assertStageSender(event);
+    const suggestedSeed = createSeed(Date.now(), process.pid);
+    const session = createNextSession(suggestedSeed);
     return {
       apiVersion: 1,
       mode: getStageMode(),
-      suggestedSeed: createSeed(Date.now(), process.pid),
+      suggestedSeed,
+      session,
       availableTasks: getAvailableTasks(),
       lastResult: runtime.lastResult ?? persistedState.recentResults[0] ?? null,
       highScores: persistedState.highScores,
+      levelHighScore: isPlayableBrainPetTaskId(session.taskId) ? persistedState.taskProgress[session.taskId].highScoresByLevel[String(session.level)] ?? 0 : 0,
+      todayCompleted: persistedState.dailyCompletion.localDate === localDateKey(new Date()) ? persistedState.dailyCompletion.count : 0,
+      petSpriteUrl: getCurrentPetSpriteUrl(),
     };
   });
   ipcMain.on(STAGE_READY_CHANNEL, (event) => {
@@ -249,10 +264,27 @@ function installBrainPetIpc(): void {
       warn("brainpet.host", "invalid stage event rejected");
       return;
     }
+    if ((parsed.type === "pause-requested" || parsed.type === "resume-requested") && runtime.phase === "closing") {
+      debug("brainpet.host", "late stage lifecycle event ignored during close", { type: parsed.type });
+      return;
+    }
     try {
       runtime = transition(parsed);
       if (parsed.type === "session-finished") {
-        persistedState = appendBrainPetResult(persistedState, parsed.result);
+        const appended = appendBrainPetResult(persistedState, parsed.result);
+        persistedState = appended.state;
+        if (appended.outcome && stageWindow && !stageWindow.isDestroyed()) {
+          stageWindow.webContents.send(STAGE_HOST_EVENT_CHANNEL, {
+            type: "session-outcome",
+            ...appended.outcome,
+            todayCompleted: persistedState.dailyCompletion.count,
+          });
+        }
+        if (appended.outcome?.passed && stageAnchorWindow && !stageAnchorWindow.isDestroyed()) {
+          stageAnchorWindow.webContents.send("openpets:brainpet-accessory-feedback", {
+            tone: appended.outcome.isNewLevelBest ? "new-best" : persistedState.dailyCompletion.count >= 2 ? "streak" : "clear",
+          });
+        }
         applyExternalPetReaction(parsed.result.petEvents.includes("new-best") || parsed.result.petEvents.includes("stable") ? "celebrating" : "success");
         if (statePath) {
           const snapshot = persistedState;
@@ -279,7 +311,8 @@ function parseRuntimeEvent(value: unknown): BrainPetRuntimeEvent | null {
 
 function isSession(value: unknown): value is BrainPetTaskSessionConfig {
   if (!isRecord(value) || !isTaskId(value.taskId)) return false;
-  return Number.isInteger(value.seed) && Number.isInteger(value.durationMs) && (value.durationMs as number) >= 10_000 && (value.durationMs as number) <= 120_000 && Number.isInteger(value.level) && (value.level as number) >= 1 && (value.level as number) <= 100 && value.difficultyPolicyVersion === "brainpet-block-v1";
+  const manifest = getBrainPetTaskManifest(value.taskId);
+  return Number.isInteger(value.seed) && value.durationMs === manifest.durationMs && Number.isInteger(value.level) && (value.level as number) >= 1 && (value.level as number) <= manifest.difficulty.maxLevel && value.difficultyPolicyVersion === manifest.difficulty.policyVersion && value.parameterVersion === manifest.difficulty.parameterVersion && value.blockCount === manifest.difficulty.blockCount && isParameterVector(value.parameters) && parameterVectorsEqual(value.parameters, getBrainPetDifficultyParameters(value.taskId, value.level as number));
 }
 
 function isResult(value: unknown): value is BrainPetTaskResult {
@@ -290,11 +323,16 @@ function isResult(value: unknown): value is BrainPetTaskResult {
     && Number.isInteger(value.incorrect)
     && Number.isInteger(value.missed)
     && Number.isInteger(value.durationMs)
+    && typeof value.startedAt === "string" && !Number.isNaN(Date.parse(value.startedAt as string))
     && typeof value.completedAt === "string"
+    && value.completionStatus === "completed"
     && value.completedAt.length <= 64
     && typeof value.taskVersion === "string"
     && typeof value.assetVersion === "string"
     && value.difficultyPolicyVersion === "brainpet-block-v1"
+    && typeof value.parameterVersion === "string"
+    && isParameterVector(value.parameters)
+    && value.blockCount === 3
     && value.scoreVersion === "brainpet-score-v1"
     && Number.isInteger(value.level)
     && Number.isInteger(value.falseAlarms)
@@ -303,7 +341,7 @@ function isResult(value: unknown): value is BrainPetTaskResult {
     && isResultQuality(value.quality)
     && Array.isArray(value.petEvents) && value.petEvents.every((item) => item === "complete" || item === "stable" || item === "new-best"))) return false;
   const manifest = getBrainPetTaskManifest(value.taskId);
-  if (value.taskVersion !== manifest.taskVersion || value.assetVersion !== manifest.assetVersion) return false;
+  if (value.taskVersion !== manifest.taskVersion || value.assetVersion !== manifest.assetVersion || value.parameterVersion !== manifest.difficulty.parameterVersion || !parameterVectorsEqual(value.parameters as Record<string, number | string | boolean>, getBrainPetDifficultyParameters(value.taskId, value.level as number))) return false;
   const trials = value.trials as BrainPetTaskResult["trials"];
   const correct = trials.filter((trial) => isRecord(trial) && trial.correct === true).length;
   const incorrect = trials.filter((trial) => isRecord(trial) && trial.correct === false && trial.inputType !== "none").length;
@@ -323,6 +361,7 @@ function isTrial(value: unknown): boolean {
   return isRecord(value)
     && typeof value.stimulusId === "string" && value.stimulusId.length <= 64
     && typeof value.stimulusKind === "string" && value.stimulusKind.length <= 64
+    && (value.blockIndex === 1 || value.blockIndex === 2 || value.blockIndex === 3)
     && Number.isFinite(value.plannedAtMs)
     && Number.isFinite(value.presentedAtMs)
     && (value.inputType === "primary" || value.inputType === "secondary" || value.inputType === "none")
@@ -360,7 +399,10 @@ function computeCurrentStageBounds(): Electron.Rectangle {
 function repositionBrainPetStage(): void {
   const window = stageWindow;
   if (!window || window.isDestroyed()) return;
-  window.setContentBounds(computeCurrentStageBounds(), false);
+  const next = computeCurrentStageBounds();
+  const current = window.getContentBounds();
+  if (current.x === next.x && current.y === next.y && current.width === next.width && current.height === next.height) return;
+  window.setContentBounds(next, false);
 }
 
 function scheduleReposition(): void {
@@ -397,6 +439,40 @@ function getAvailableTasks(): readonly BrainPetTaskResult["taskId"][] {
   const forced = process.env.OPENPETS_BRAINPET_FORCE_TASK;
   if (isPlayableBrainPetTaskId(forced)) return [forced];
   return listPlayableBrainPetTaskIds();
+}
+
+function createNextSession(seed: number): BrainPetTaskSessionConfig {
+  if (getStageMode() === "stage-exerciser") {
+    const manifest = getBrainPetTaskManifest("stage-exerciser");
+    return createSessionConfig(manifest.id, seed, 1);
+  }
+  const available = getAvailableTasks().filter(isPlayableBrainPetTaskId);
+  const taskId = chooseBrainPetTask(available, seed, persistedState.recentTaskIds);
+  const manifest = getBrainPetTaskManifest(taskId);
+  return createSessionConfig(taskId, seed, persistedState.taskProgress[taskId].currentLevel);
+}
+
+function createSessionConfig(taskId: BrainPetTaskResult["taskId"], seed: number, level: number): BrainPetTaskSessionConfig {
+  const manifest = getBrainPetTaskManifest(taskId);
+  return { taskId, seed, durationMs: manifest.durationMs, level, difficultyPolicyVersion: manifest.difficulty.policyVersion, parameterVersion: manifest.difficulty.parameterVersion, parameters: getBrainPetDifficultyParameters(taskId, level), blockCount: manifest.difficulty.blockCount };
+}
+
+function getCurrentPetSpriteUrl(): string | null {
+  const state = getAppStateSnapshot();
+  const pet = state.pets.installed.find((candidate) => candidate.id === state.preferences.defaultPetId);
+  if (!pet || pet.builtIn) return null;
+  const scheme = pet.source?.kind === "codex" ? "openpets-codex" : "openpets-installed";
+  return `${scheme}://spritesheet/${encodeURIComponent(pet.id)}`;
+}
+
+function isParameterVector(value: unknown): value is Record<string, number | string | boolean> {
+  return isRecord(value) && Object.keys(value).length <= 16 && Object.entries(value).every(([key, item]) => /^[a-z][A-Za-z0-9]{0,31}$/.test(key) && (typeof item === "number" && Number.isFinite(item) || typeof item === "string" && item.length <= 64 || typeof item === "boolean"));
+}
+
+function parameterVectorsEqual(left: Record<string, number | string | boolean>, right: Readonly<Record<string, number | string | boolean>>): boolean {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key]);
 }
 
 function getSafeRendererDevUrl(): string | undefined {

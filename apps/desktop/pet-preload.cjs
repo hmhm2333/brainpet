@@ -61,6 +61,18 @@ ipcRenderer.on("openpets:pet-reaction-state", (_event, state) => {
   }
 });
 
+ipcRenderer.on("openpets:brainpet-accessory-feedback", (_event, value) => {
+  if (!value || (value.tone !== "clear" && value.tone !== "streak" && value.tone !== "new-best")) return;
+  const apply = () => {
+    document.documentElement.dataset.brainpetFeedback = value.tone;
+    window.setTimeout(() => {
+      if (document.documentElement.dataset.brainpetFeedback === value.tone) delete document.documentElement.dataset.brainpetFeedback;
+    }, 1_200);
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", apply, { once: true });
+  else apply();
+});
+
 ipcRenderer.on("openpets:pet-content-state", (_event, state) => {
   if (!state || typeof state.bodyHtml !== "string" || state.bodyHtml.length > 64 * 1024 || !allowedReactionStates.has(state.reactionState)) {
     return;
@@ -157,7 +169,10 @@ const installPetSenses = () => {
     if (target.closest("[data-brainpet-trigger]")) {
       event.preventDefault();
       event.stopPropagation();
+      if (document.documentElement.dataset.brainpetLaunching === "true") return;
+      document.documentElement.dataset.brainpetLaunching = "true";
       sendPetEvent("brainpet:trainingRequested", {});
+      window.setTimeout(() => { delete document.documentElement.dataset.brainpetLaunching; }, 520);
       return;
     }
     if (!target.closest(".pet-hitbox, .pet-shell")) return;

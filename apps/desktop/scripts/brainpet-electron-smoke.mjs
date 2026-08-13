@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -22,6 +22,7 @@ const lifecycleCycles = parsePositiveInteger(process.env.BRAINPET_LIFECYCLE_CYCL
 const soakMs = parseNonNegativeInteger(process.env.BRAINPET_SOAK_MS, 0);
 const startupTimeoutMs = parsePositiveInteger(process.env.BRAINPET_START_TIMEOUT_MS, 20_000);
 const expectDisabled = process.env.BRAINPET_EXPECT_DISABLED === "1";
+const verifyCompletion = process.env.BRAINPET_VERIFY_COMPLETION === "1";
 const forcedTask = process.env.BRAINPET_SMOKE_TASK;
 const videoPath = process.env.BRAINPET_VIDEO_PATH ? resolve(process.env.BRAINPET_VIDEO_PATH) : null;
 if (forcedTask && forcedTask !== "cargo-signal" && forcedTask !== "pack-refresh") throw new Error("BRAINPET_SMOKE_TASK must be cargo-signal or pack-refresh.");
@@ -50,23 +51,27 @@ try {
     if (!(button instanceof HTMLButtonElement)) return { found: false };
     const rect = button.getBoundingClientRect();
     button.click();
-    return { found: true, label: button.getAttribute('aria-label'), width: rect.width, height: rect.height };
+    return { found: true, label: button.getAttribute('aria-label'), width: rect.width, height: rect.height, launching: document.documentElement.dataset.brainpetLaunching === 'true' };
   })()`);
   assert.equal(trigger.found, true, "pet training trigger must exist");
   assert.equal(trigger.label, "打开 BrainPet 训练");
   assert.equal(trigger.width >= 28 && trigger.height >= 28, true, "pet training trigger must remain easy to click");
+  assert.equal(trigger.launching, true, "pet and training accessory must enter the launch animation before the stage opens");
 
   let stageTarget = await waitForTarget(port, (target) => target.title === "BrainPet", 10_000);
-  await waitForEvaluation(stageTarget, `document.readyState === 'complete' && document.body.innerText.includes('开始随机任务')`, 5_000);
+  const expectedTaskText = forcedTask === "cargo-signal" ? "装箱，还是放过" : forcedTask === "pack-refresh" ? "行囊不重样" : "舞台校验器";
+  await waitForEvaluation(stageTarget, `document.readyState === 'complete' && document.body.innerText.includes(${JSON.stringify(expectedTaskText)})`, 5_000);
   const openingMs = Date.now() - openingStartedAt;
   assert.equal(openingMs <= 500, true, `warm stage opening must stay under 500ms; received ${openingMs}ms`);
-  const welcome = await evaluate(stageTarget, `({ width: innerWidth, height: innerHeight, text: document.body.innerText })`);
+  const welcome = await evaluate(stageTarget, `({ width: innerWidth, height: innerHeight, text: document.body.innerText, hasSelectionButton: Boolean(document.querySelector('[data-action="start"]')) })`);
   assert.equal(welcome.width >= 640 && welcome.width <= 642, true, `stage width must stay within DPI rounding tolerance; received ${welcome.width}`);
   assert.equal(welcome.height >= 360 && welcome.height <= 362, true, `stage height must stay within DPI rounding tolerance; received ${welcome.height}`);
-  assert.match(welcome.text, /开始随机任务/);
-  await evaluate(stageTarget, `document.querySelector('[data-action="start"]')?.click()`);
-  const expectedTaskText = forcedTask === "cargo-signal" ? "装箱，还是放过" : forcedTask === "pack-refresh" ? "行囊不重样" : "舞台校验器";
-  await waitForEvaluation(stageTarget, `document.body.innerText.includes(${JSON.stringify(expectedTaskText)})`, 5_000);
+  assert.equal(welcome.hasSelectionButton, false, "stage must auto-enter the selected task without a lobby button");
+  const introOutputPath = outputPath.replace(/(\.[^.]+)$/, "-intro$1");
+  const introScreenshot = await sendCdp(stageTarget.webSocketDebuggerUrl, "Page.captureScreenshot", { format: "png", fromSurface: true });
+  await mkdir(dirname(introOutputPath), { recursive: true });
+  await writeFile(introOutputPath, Buffer.from(introScreenshot.data, "base64"));
+  await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
   const videoRecording = videoPath ? recordStageVideo(stageTarget, videoPath, 6_000) : null;
 
   const stagePositionBefore = await evaluate(stageTarget, `({ x: screenX, y: screenY })`);
@@ -87,17 +92,61 @@ try {
   const anchorFollow = stagePositionAfter.x !== stagePositionBefore.x || stagePositionAfter.y !== stagePositionBefore.y;
   assert.equal(anchorFollow, true, "stage must follow the pet window after it moves");
 
-  await sendCdp(petTarget.webSocketDebuggerUrl, "Page.bringToFront", {});
-  await waitForEvaluation(stageTarget, `document.body.innerText.includes('PAUSED')`, 5_000);
-  await delay(250);
-  await sendCdp(stageTarget.webSocketDebuggerUrl, "Page.bringToFront", {});
-  await waitForEvaluation(stageTarget, `!document.body.innerText.includes('PAUSED')`, 5_000);
-  const focusPause = true;
+  let focusPause = false;
+  if (!verifyCompletion) {
+    await sendCdp(petTarget.webSocketDebuggerUrl, "Page.bringToFront", {});
+    await waitForEvaluation(stageTarget, `document.body.innerText.includes('PAUSED')`, 5_000);
+    await delay(250);
+    await sendCdp(stageTarget.webSocketDebuggerUrl, "Page.bringToFront", {});
+    await waitForEvaluation(stageTarget, `!document.body.innerText.includes('PAUSED')`, 5_000);
+    focusPause = true;
+  }
 
   const screenshot = await sendCdp(stageTarget.webSocketDebuggerUrl, "Page.captureScreenshot", { format: "png", fromSurface: true });
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, Buffer.from(screenshot.data, "base64"));
   if (videoRecording) await videoRecording;
+
+  let completion = null;
+  let resultOutputPath = null;
+  if (verifyCompletion) {
+    assert.equal(forcedTask, "cargo-signal", "completion smoke currently requires the deterministic cargo-signal task");
+    // Visual capture and anchor movement can suspend rAF in Chromium. Start a clean
+    // measured session so the quality gate reflects play rather than CDP tooling.
+    await evaluate(stageTarget, `document.querySelector('[data-action="close"]')?.click()`);
+    await waitForTargetToDisappear(port, stageTarget.id, 10_000);
+    await evaluate(petTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
+    stageTarget = await waitForTarget(port, (target) => target.title === "BrainPet", 10_000);
+    await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
+    await evaluate(stageTarget, `window.__brainPetAutoInput = window.setInterval(() => { const target = document.querySelector('.tone-sky [data-action="primary"]'); if (target instanceof HTMLElement) target.click(); }, 60)`);
+    // Avoid opening a fresh CDP socket 20 times per second during the measured
+    // session; that instrumentation itself creates artificial 300-500 ms gaps.
+    await delay(44_000);
+    await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.result-card'))`, 12_000);
+    await evaluate(stageTarget, `window.clearInterval(window.__brainPetAutoInput)`);
+    await waitForEvaluation(stageTarget, `!document.body.innerText.includes('CHECKING...')`, 5_000);
+    completion = await evaluate(stageTarget, `({ text: document.body.innerText, hasRetry: Boolean(document.querySelector('[data-action="again"]')) })`);
+    await delay(250);
+    const persisted = JSON.parse(await readFile(join(userDataDir, "brainpet-state.json"), "utf8"));
+    completion.quality = persisted.recentResults?.[0]?.quality ?? null;
+    assert.match(completion.text, /今日已完成 1 关/);
+    assert.equal(completion.quality?.valid, true, `completion quality must be valid: ${JSON.stringify(completion.quality)}`);
+    assert.match(completion.text, /QUEST CLEAR!/);
+    assert.doesNotMatch(completion.text, /成绩不计有效/);
+    assert.equal(completion.hasRetry, true, "result must offer a same-level retry");
+    await delay(1_500);
+    resultOutputPath = outputPath.replace(/(\.[^.]+)$/, "-result$1");
+    const resultScreenshot = await sendCdp(stageTarget.webSocketDebuggerUrl, "Page.captureScreenshot", { format: "png", fromSurface: true });
+    await writeFile(resultOutputPath, Buffer.from(resultScreenshot.data, "base64"));
+    await evaluate(stageTarget, `document.querySelector('[data-action="again"]')?.click()`);
+    await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.task-card')) && document.body.innerText.includes('第 1 关')`, 5_000);
+    await sendCdp(petTarget.webSocketDebuggerUrl, "Page.bringToFront", {});
+    await waitForEvaluation(stageTarget, `document.body.innerText.includes('PAUSED')`, 5_000);
+    await delay(250);
+    await sendCdp(stageTarget.webSocketDebuggerUrl, "Page.bringToFront", {});
+    await waitForEvaluation(stageTarget, `!document.body.innerText.includes('PAUSED')`, 5_000);
+    focusPause = true;
+  }
 
   for (let cycle = 1; cycle < lifecycleCycles; cycle += 1) {
     await evaluate(stageTarget, `document.querySelector('[data-action="close"]')?.click()`);
@@ -105,9 +154,8 @@ try {
     const currentPetTarget = await waitForTarget(port, (target) => target.title === "OpenPets Default Pet", 5_000);
     await evaluate(currentPetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
     stageTarget = await waitForTarget(port, (target) => target.title === "BrainPet", 10_000);
-    await waitForEvaluation(stageTarget, `document.readyState === 'complete' && document.body.innerText.includes('开始随机任务')`, 5_000);
-    await evaluate(stageTarget, `document.querySelector('[data-action="start"]')?.click()`);
-    await waitForEvaluation(stageTarget, `document.body.innerText.includes(${JSON.stringify(expectedTaskText)})`, 5_000);
+    await waitForEvaluation(stageTarget, `document.readyState === 'complete' && document.body.innerText.includes(${JSON.stringify(expectedTaskText)})`, 5_000);
+    await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
   }
 
   const soak = await runSoak(stageTarget, soakMs);
@@ -123,7 +171,7 @@ try {
   const remainingTargets = await listTargets(port);
   assert.equal(remainingTargets.some((target) => target.title === "OpenPets Default Pet"), true, "stage crash must not close the pet host");
 
-  process.stdout.write(`${JSON.stringify({ ok: true, outputPath, videoPath, trigger, stage: { width: welcome.width, height: welcome.height }, openingMs, anchorFollow, focusPause, lifecycleCycles, soak, crashIsolated: true })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, outputPath, introOutputPath, resultOutputPath, videoPath, trigger, stage: { width: welcome.width, height: welcome.height }, openingMs, anchorFollow, focusPause, completionVerified: Boolean(completion), completionQuality: completion?.quality ?? null, lifecycleCycles, soak, crashIsolated: true })}\n`);
   }
 } catch (error) {
   process.stderr.write(`${logs.join("")}\n`);
@@ -183,13 +231,12 @@ async function runSoak(target, durationMs) {
   let sessions = 1;
   const heapSamples = [];
   while (Date.now() - startedAt < durationMs) {
-    const page = await evaluate(target, `({ result: document.body.innerText.includes('本轮完成'), welcome: document.body.innerText.includes('开始随机任务') })`);
+    const page = await evaluate(target, `({ result: Boolean(document.querySelector('.result-card')), intro: Boolean(document.querySelector('.intro-card')) })`);
     if (page.result) {
       await evaluate(target, `document.querySelector('[data-action="again"]')?.click()`);
       sessions += 1;
-    } else if (page.welcome) {
-      await evaluate(target, `document.querySelector('[data-action="start"]')?.click()`);
-      sessions += 1;
+    } else if (page.intro) {
+      await evaluate(target, `document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', bubbles: true }))`);
     }
     const heapUsage = await sendCdp(target.webSocketDebuggerUrl, "Runtime.getHeapUsage", {});
     const heap = heapUsage.usedSize;

@@ -3,16 +3,34 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { isTaskId, type BrainPetTaskId, type BrainPetTaskResult } from "./task-contract.js";
+import { createTaskProgress, evaluateBrainPetResult, localDateKey, type BrainPetProgressionOutcome, type BrainPetTaskProgress, type PlayableBrainPetTaskId } from "./progression.js";
+import { getBrainPetTaskManifest, isPlayableBrainPetTaskId, listPlayableBrainPetTaskIds } from "./task-registry.js";
 
 export interface BrainPetPersistedState {
-  readonly version: 1;
+  readonly version: 2;
   readonly totalSessions: number;
   readonly highScores: Partial<Record<BrainPetTaskId, number>>;
   readonly recentResults: readonly BrainPetTaskResult[];
+  readonly taskProgress: Readonly<Record<PlayableBrainPetTaskId, BrainPetTaskProgress>>;
+  readonly recentTaskIds: readonly PlayableBrainPetTaskId[];
+  readonly dailyCompletion: { readonly localDate: string; readonly count: number };
 }
 
-export function createBrainPetPersistedState(): BrainPetPersistedState {
-  return { version: 1, totalSessions: 0, highScores: {}, recentResults: [] };
+export interface BrainPetAppendResult {
+  readonly state: BrainPetPersistedState;
+  readonly outcome: BrainPetProgressionOutcome | null;
+}
+
+export function createBrainPetPersistedState(now = new Date()): BrainPetPersistedState {
+  return {
+    version: 2,
+    totalSessions: 0,
+    highScores: {},
+    recentResults: [],
+    taskProgress: Object.fromEntries(listPlayableBrainPetTaskIds().map((taskId) => [taskId, createTaskProgress(getBrainPetTaskManifest(taskId))])) as unknown as BrainPetPersistedState["taskProgress"],
+    recentTaskIds: [],
+    dailyCompletion: { localDate: localDateKey(now), count: 0 },
+  };
 }
 
 export function loadBrainPetState(path: string): BrainPetPersistedState {
@@ -23,13 +41,37 @@ export function loadBrainPetState(path: string): BrainPetPersistedState {
   }
 }
 
-export function appendBrainPetResult(state: BrainPetPersistedState, result: BrainPetTaskResult): BrainPetPersistedState {
+export function appendBrainPetResult(state: BrainPetPersistedState, result: BrainPetTaskResult, now = new Date()): BrainPetAppendResult {
   const previousHigh = state.highScores[result.taskId] ?? 0;
+  const dateKey = localDateKey(now);
+  const dailyCompletion = state.dailyCompletion.localDate === dateKey ? state.dailyCompletion : { localDate: dateKey, count: 0 };
+  if (!isPlayableBrainPetTaskId(result.taskId)) {
+    return {
+      state: { ...state, totalSessions: state.totalSessions + 1, highScores: { ...state.highScores, [result.taskId]: Math.max(previousHigh, result.score) }, recentResults: [result, ...state.recentResults].slice(0, 20), dailyCompletion },
+      outcome: null,
+    };
+  }
+  const manifest = getBrainPetTaskManifest(result.taskId);
+  const previousProgress = state.taskProgress[result.taskId] ?? createTaskProgress(manifest);
+  const outcome = evaluateBrainPetResult(result, manifest, previousProgress);
+  const storedResult: BrainPetTaskResult = { ...result, progression: { passed: outcome.passed, previousLevel: outcome.previousLevel, nextLevel: outcome.nextLevel, accuracy: outcome.accuracy } };
+  const progress: BrainPetTaskProgress = {
+    currentLevel: Math.max(previousProgress.currentLevel, outcome.nextLevel),
+    clearedThroughLevel: outcome.passed ? Math.max(previousProgress.clearedThroughLevel, result.level) : previousProgress.clearedThroughLevel,
+    highScoresByLevel: { ...previousProgress.highScoresByLevel, [String(result.level)]: Math.max(previousProgress.highScoresByLevel[String(result.level)] ?? 0, result.score) },
+    parameterVersion: manifest.difficulty.parameterVersion,
+  };
   return {
-    version: 1,
-    totalSessions: state.totalSessions + 1,
-    highScores: { ...state.highScores, [result.taskId]: Math.max(previousHigh, result.score) },
-    recentResults: [result, ...state.recentResults].slice(0, 20),
+    state: {
+      version: 2,
+      totalSessions: state.totalSessions + 1,
+      highScores: { ...state.highScores, [result.taskId]: Math.max(previousHigh, result.score) },
+      recentResults: [storedResult, ...state.recentResults].slice(0, 20),
+      taskProgress: { ...state.taskProgress, [result.taskId]: progress },
+      recentTaskIds: [result.taskId, ...state.recentTaskIds].slice(0, 2),
+      dailyCompletion: { localDate: dateKey, count: dailyCompletion.count + 1 },
+    },
+    outcome,
   };
 }
 
@@ -41,7 +83,8 @@ export async function saveBrainPetState(path: string, state: BrainPetPersistedSt
 }
 
 export function parseBrainPetState(value: unknown): BrainPetPersistedState {
-  if (!isRecord(value) || value.version !== 1 || !Number.isInteger(value.totalSessions) || (value.totalSessions as number) < 0) return createBrainPetPersistedState();
+  const fallback = createBrainPetPersistedState();
+  if (!isRecord(value) || (value.version !== 1 && value.version !== 2) || !Number.isInteger(value.totalSessions) || (value.totalSessions as number) < 0) return fallback;
   const highScores: Partial<Record<BrainPetTaskId, number>> = {};
   if (isRecord(value.highScores)) {
     for (const [taskId, score] of Object.entries(value.highScores)) {
@@ -49,7 +92,27 @@ export function parseBrainPetState(value: unknown): BrainPetPersistedState {
     }
   }
   const recentResults = Array.isArray(value.recentResults) ? value.recentResults.filter(isPersistedResult).slice(0, 20) : [];
-  return { version: 1, totalSessions: value.totalSessions as number, highScores, recentResults };
+  if (value.version === 1) return { ...fallback, totalSessions: value.totalSessions as number, highScores, recentResults, recentTaskIds: recentResults.map((result) => result.taskId).filter(isPlayableBrainPetTaskId).slice(0, 2) };
+  const taskProgress = { ...fallback.taskProgress };
+  if (isRecord(value.taskProgress)) {
+    for (const taskId of listPlayableBrainPetTaskIds()) {
+      const parsed = parseTaskProgress(value.taskProgress[taskId], getBrainPetTaskManifest(taskId));
+      if (parsed) taskProgress[taskId] = parsed;
+    }
+  }
+  const recentTaskIds = Array.isArray(value.recentTaskIds) ? value.recentTaskIds.filter(isPlayableBrainPetTaskId).slice(0, 2) : [];
+  const dailyCompletion = isRecord(value.dailyCompletion) && typeof value.dailyCompletion.localDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.dailyCompletion.localDate) && Number.isInteger(value.dailyCompletion.count) && (value.dailyCompletion.count as number) >= 0
+    ? { localDate: value.dailyCompletion.localDate, count: value.dailyCompletion.count as number }
+    : fallback.dailyCompletion;
+  return { version: 2, totalSessions: value.totalSessions as number, highScores, recentResults, taskProgress, recentTaskIds, dailyCompletion };
+}
+
+function parseTaskProgress(value: unknown, manifest: ReturnType<typeof getBrainPetTaskManifest>): BrainPetTaskProgress | null {
+  if (!isRecord(value) || !Number.isInteger(value.currentLevel) || !Number.isInteger(value.clearedThroughLevel) || !isRecord(value.highScoresByLevel) || typeof value.parameterVersion !== "string") return null;
+  const currentLevel = Math.max(1, Math.min(manifest.difficulty.maxLevel, value.currentLevel as number));
+  const highScoresByLevel: Record<string, number> = {};
+  for (const [level, score] of Object.entries(value.highScoresByLevel)) if (/^\d+$/.test(level) && typeof score === "number" && Number.isFinite(score) && score >= 0) highScoresByLevel[level] = Math.round(score);
+  return { currentLevel, clearedThroughLevel: Math.max(0, Math.min(manifest.difficulty.maxLevel, value.clearedThroughLevel as number)), highScoresByLevel, parameterVersion: manifest.difficulty.parameterVersion };
 }
 
 function isPersistedResult(value: unknown): value is BrainPetTaskResult {
@@ -61,7 +124,9 @@ function isPersistedResult(value: unknown): value is BrainPetTaskResult {
     && Number.isInteger(value.incorrect)
     && Number.isInteger(value.missed)
     && Number.isInteger(value.durationMs)
+    && typeof value.startedAt === "string" && value.startedAt.length <= 64
     && typeof value.completedAt === "string" && value.completedAt.length <= 64
+    && value.completionStatus === "completed"
     && typeof value.taskVersion === "string"
     && typeof value.assetVersion === "string"
     && value.difficultyPolicyVersion === "brainpet-block-v1"

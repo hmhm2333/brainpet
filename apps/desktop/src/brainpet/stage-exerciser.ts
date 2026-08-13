@@ -1,5 +1,6 @@
 import { createBrainPetRuntimeSnapshot, createDeterministicRandom, reduceBrainPetRuntime } from "./runtime-core.js";
 import type { BrainPetTaskId, BrainPetTaskResult } from "./task-contract.js";
+import { getBrainPetDifficultyParameters, getBrainPetTaskManifest } from "./task-registry.js";
 
 export interface BrainPetExerciseReport {
   readonly cycles: number;
@@ -29,10 +30,12 @@ export function runBrainPetStageExercise(options: {
     if (previousTask && previousTask !== taskId) moduleSwitches += 1;
     previousTask = taskId;
     const seed = cycle + 1;
+    const manifest = getBrainPetTaskManifest(taskId);
+    const parameters = getBrainPetDifficultyParameters(taskId, 1);
     const random = createDeterministicRandom(seed);
     state = reduceBrainPetRuntime(state, { type: "open-requested", atMs: now++ });
     state = reduceBrainPetRuntime(state, { type: "stage-ready", atMs: now++ });
-    state = reduceBrainPetRuntime(state, { type: "session-started", atMs: now++, session: { taskId, seed, durationMs: 45_000, level: 1, difficultyPolicyVersion: "brainpet-block-v1" } });
+    state = reduceBrainPetRuntime(state, { type: "session-started", atMs: now++, session: { taskId, seed, durationMs: manifest.durationMs, level: 1, difficultyPolicyVersion: manifest.difficulty.policyVersion, parameterVersion: manifest.difficulty.parameterVersion, parameters, blockCount: manifest.difficulty.blockCount } });
     checksum = (checksum + Math.floor(random() * 1_000_000)) >>> 0;
     const shouldCrash = Boolean(options.crashEvery && (cycle + 1) % options.crashEvery === 0);
     if (shouldCrash) {
@@ -41,7 +44,7 @@ export function runBrainPetStageExercise(options: {
       state = reduceBrainPetRuntime(state, { type: "closed", atMs: now++ });
       continue;
     }
-    const result: BrainPetTaskResult = { taskId, seed, score: 100, correct: 1, incorrect: 0, missed: 0, durationMs: 45_000, completedAt: "2026-08-13T00:00:00.000Z", taskVersion: "1.0.0", assetVersion: "1.0.0", difficultyPolicyVersion: "brainpet-block-v1", scoreVersion: "brainpet-score-v1", level: 1, falseAlarms: 0, meanReactionTimeMs: 300, trials: [], quality: { valid: true, focusLossCount: 0, pausedMs: 0, droppedFrameCount: 0, longFrameCount: 0, maxFrameMs: 16.7, flags: [] }, petEvents: ["complete"] };
+    const result: BrainPetTaskResult = { taskId, seed, score: 100, correct: 1, incorrect: 0, missed: 0, durationMs: manifest.durationMs, startedAt: "2026-08-13T00:00:00.000Z", completedAt: "2026-08-13T00:00:45.000Z", completionStatus: "completed", taskVersion: manifest.taskVersion, assetVersion: manifest.assetVersion, difficultyPolicyVersion: manifest.difficulty.policyVersion, parameterVersion: manifest.difficulty.parameterVersion, parameters, blockCount: manifest.difficulty.blockCount, scoreVersion: "brainpet-score-v1", level: 1, falseAlarms: 0, meanReactionTimeMs: 300, trials: [], quality: { valid: true, focusLossCount: 0, pausedMs: 0, droppedFrameCount: 0, longFrameCount: 0, maxFrameMs: 16.7, flags: [] }, petEvents: ["complete"] };
     state = reduceBrainPetRuntime(state, { type: "session-finished", atMs: now++, result });
     state = reduceBrainPetRuntime(state, { type: "settled", atMs: now++ });
     state = reduceBrainPetRuntime(state, { type: "close-requested", atMs: now++ });

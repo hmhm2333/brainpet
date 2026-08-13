@@ -1,5 +1,5 @@
 import type { BrainPetTaskId, BrainPetTaskInput, BrainPetTaskManifest, BrainPetTaskResult, BrainPetTrialRecord } from "../../../brainpet/task-contract.js";
-import { getBrainPetTaskManifest } from "../../../brainpet/task-registry.js";
+import { getBrainPetDifficultyParameters, getBrainPetTaskManifest } from "../../../brainpet/task-registry.js";
 
 export interface BrainPetTaskFrame {
   readonly eyebrow: string;
@@ -11,6 +11,8 @@ export interface BrainPetTaskFrame {
   readonly choices?: readonly string[];
   readonly feedback?: "correct" | "incorrect" | "neutral";
   readonly feedbackText?: string;
+  readonly primarySurface?: boolean;
+  readonly combo?: number;
   readonly progress: number;
   readonly score: number;
 }
@@ -19,7 +21,7 @@ export interface BrainPetTaskModule {
   readonly manifest: BrainPetTaskManifest;
   readonly frame: BrainPetTaskFrame;
   readonly finished: boolean;
-  start(seed: number, level: number, nowMs: number): void;
+  start(seed: number, level: number, nowMs: number, parameters?: Readonly<Record<string, number | string | boolean>>): void;
   input(input: BrainPetTaskInput): void;
   tick(nowMs: number): void;
   result(nowMs: number): BrainPetTaskResult;
@@ -41,26 +43,32 @@ abstract class BaseTask implements BrainPetTaskModule {
   protected seed = 1;
   protected level = 1;
   protected startedAt = 0;
+  protected startedAtIso = "";
   protected correct = 0;
   protected incorrect = 0;
   protected missed = 0;
   protected falseAlarms = 0;
   protected score = 0;
+  protected combo = 0;
   protected trials: BrainPetTrialRecord[] = [];
   protected random: () => number = () => 0;
+  protected parameters: Readonly<Record<string, number | string | boolean>> = {};
 
-  start(seed: number, level: number, nowMs: number): void {
+  start(seed: number, level: number, nowMs: number, parameters = getBrainPetDifficultyParameters(this.manifest.id, level)): void {
     this.seed = seed >>> 0 || 1;
     this.level = level;
     this.startedAt = nowMs;
+    this.startedAtIso = new Date().toISOString();
     this.correct = 0;
     this.incorrect = 0;
     this.missed = 0;
     this.falseAlarms = 0;
     this.score = 0;
+    this.combo = 0;
     this.trials = [];
     this.finished = false;
     this.random = seededRandom(this.seed);
+    this.parameters = { ...parameters };
     this.onStart(nowMs);
   }
 
@@ -77,10 +85,15 @@ abstract class BaseTask implements BrainPetTaskModule {
       incorrect: this.incorrect,
       missed: this.missed,
       durationMs: Math.min(this.manifest.durationMs, Math.max(0, nowMs - this.startedAt)),
+      startedAt: this.startedAtIso,
       completedAt: new Date().toISOString(),
+      completionStatus: "completed",
       taskVersion: this.manifest.taskVersion,
       assetVersion: this.manifest.assetVersion,
       difficultyPolicyVersion: "brainpet-block-v1",
+      parameterVersion: this.manifest.difficulty.parameterVersion,
+      parameters: this.parameters,
+      blockCount: this.manifest.difficulty.blockCount,
       scoreVersion: "brainpet-score-v1",
       level: this.level,
       falseAlarms: this.falseAlarms,
@@ -93,6 +106,15 @@ abstract class BaseTask implements BrainPetTaskModule {
 
   protected progress(nowMs: number): number {
     return Math.min(1, Math.max(0, (nowMs - this.startedAt) / this.manifest.durationMs));
+  }
+
+  protected blockIndex(nowMs: number): 1 | 2 | 3 {
+    return Math.min(3, Math.floor(this.progress(nowMs) * this.manifest.difficulty.blockCount) + 1) as 1 | 2 | 3;
+  }
+
+  protected numberParameter(name: string, fallback: number): number {
+    const value = this.parameters[name];
+    return typeof value === "number" && Number.isFinite(value) ? value : fallback;
   }
 }
 
@@ -108,13 +130,26 @@ class CargoSignalTask extends BaseTask {
   private stimulusPresentedAt = 0;
   private stimulusPlannedAt = 0;
   private currentStimulusId = "";
+  private anticipationRecorded = false;
 
   protected onStart(nowMs: number): void {
     this.nextStimulus(nowMs);
   }
 
   input(input: BrainPetTaskInput): void {
-    if (input.type !== "primary" || this.finished || this.answered || input.atMs > this.stimulusEndsAt) return;
+    if (input.type !== "primary" || this.finished) return;
+    if (input.atMs > this.stimulusEndsAt) {
+      if (!this.anticipationRecorded && input.atMs < this.nextStimulusAt) {
+        this.anticipationRecorded = true;
+        this.incorrect += 1;
+        this.combo = 0;
+        this.score -= 40;
+        this.trials.push({ stimulusId: `cargo-anticipation-${this.stimulusCounter}`, stimulusKind: "anticipation", blockIndex: this.blockIndex(input.atMs), plannedAtMs: this.nextStimulusAt, presentedAtMs: input.atMs, inputType: "primary", inputAtMs: input.atMs, correct: false, reactionTimeMs: 0 });
+        this.showFeedback(false, "别着急，等货物出现", input.atMs);
+      }
+      return;
+    }
+    if (this.answered) return;
     this.answered = true;
     if (this.isGo) this.mark(true, "装箱成功！", input.atMs);
     else {
@@ -150,16 +185,18 @@ class CargoSignalTask extends BaseTask {
   }
 
   private nextStimulus(nowMs: number, plannedAtMs = nowMs): void {
-    this.isGo = this.random() > 0.28;
+    const blockIndex = this.blockIndex(nowMs);
+    this.isGo = this.random() < this.numberParameter("goProbabilityPercent", 72) / 100;
     this.answered = false;
-    this.stimulusEndsAt = nowMs + Math.max(560, 980 - this.level * 35);
+    this.anticipationRecorded = false;
+    this.stimulusEndsAt = nowMs + Math.max(500, this.numberParameter("responseWindowMs", 1_050) - (blockIndex - 1) * this.numberParameter("blockStepMs", 70));
     this.nextStimulusAt = this.stimulusEndsAt + 260;
     this.stimulusPresentedAt = nowMs;
     this.stimulusPlannedAt = plannedAtMs;
     this.currentStimulusId = `cargo-${this.stimulusCounter += 1}`;
     const symbol = pick(this.random, CARGO_SYMBOLS);
     this.frame = {
-      eyebrow: "信号装箱",
+      eyebrow: `第 ${this.level} 关 · 区段 ${blockIndex}/3`,
       title: this.isGo ? "蓝印货物" : "红印货物",
       instruction: this.isGo ? "点击 / 空格：装箱" : "不要操作：放过",
       symbol,
@@ -167,6 +204,8 @@ class CargoSignalTask extends BaseTask {
       progress: this.progress(nowMs),
       score: Math.max(0, Math.round(this.score)),
       feedback: "neutral",
+      primarySurface: true,
+      combo: this.combo,
     };
   }
 
@@ -174,6 +213,7 @@ class CargoSignalTask extends BaseTask {
     this.trials.push({
       stimulusId: this.currentStimulusId,
       stimulusKind: this.isGo ? "go" : "no-go",
+      blockIndex: this.blockIndex(this.stimulusPresentedAt),
       plannedAtMs: this.stimulusPlannedAt,
       presentedAtMs: this.stimulusPresentedAt,
       inputType,
@@ -187,16 +227,18 @@ class CargoSignalTask extends BaseTask {
     if (correct) {
       this.correct += 1;
       this.score += 100;
+      this.combo += 1;
     } else {
       this.incorrect += 1;
       this.score -= 40;
+      this.combo = 0;
     }
     this.showFeedback(correct, text, nowMs);
   }
 
   private showFeedback(correct: boolean, text: string, nowMs: number): void {
     this.feedbackUntil = nowMs + 420;
-    this.frame = { ...this.frame, feedback: correct ? "correct" : "incorrect", feedbackText: text };
+    this.frame = { ...this.frame, feedback: correct ? "correct" : "incorrect", feedbackText: text, primarySurface: false };
   }
 }
 
@@ -214,12 +256,13 @@ class PackRefreshTask extends BaseTask {
   private roundPlannedAt = 0;
 
   protected onStart(nowMs: number): void {
-    this.slots = shuffled(this.random, PACK_SYMBOLS).slice(0, 3);
+    const capacity = Math.round(this.numberParameter("capacity", 3));
+    this.slots = shuffled(this.random, PACK_SYMBOLS).slice(0, capacity);
     this.awaitingChoice = false;
     this.roundEndsAt = nowMs + 1_800;
     this.frame = {
-      eyebrow: "第一关 · 规则测试",
-      title: "先记住行囊里的 3 件物品",
+      eyebrow: `第 ${this.level} 关 · 规则测试`,
+      title: `先记住行囊里的 ${capacity} 件物品`,
       instruction: "新物品进入后，找出刚被移出的那件",
       symbol: "B",
       slots: [...this.slots],
@@ -238,9 +281,11 @@ class PackRefreshTask extends BaseTask {
     if (correct) {
       this.correct += 1;
       this.score += 140;
+      this.combo += 1;
     } else {
       this.incorrect += 1;
       this.score -= 35;
+      this.combo = 0;
     }
     this.feedbackUntil = input.atMs + 520;
     this.frame = { ...this.frame, feedback: correct ? "correct" : "incorrect", feedbackText: correct ? "更新正确！" : `刚移出的是 ${this.dropped}` };
@@ -280,9 +325,10 @@ class PackRefreshTask extends BaseTask {
     this.roundPresentedAt = nowMs;
     this.roundPlannedAt = plannedAtMs;
     this.roundCounter += 1;
-    this.roundEndsAt = nowMs + Math.max(1_700, 3_200 - this.level * 80);
+    const blockIndex = this.blockIndex(nowMs);
+    this.roundEndsAt = nowMs + Math.max(1_500, this.numberParameter("responseWindowMs", 3_300) - (blockIndex - 1) * this.numberParameter("blockStepMs", 140));
     this.frame = {
-      eyebrow: "行囊更新",
+      eyebrow: `第 ${this.level} 关 · 区段 ${blockIndex}/3`,
       title: "新物品进入，哪件刚被移出？",
       instruction: "点击左 / 右答案，或按 ← / →",
       symbol: this.slots.at(-1)!,
@@ -292,6 +338,7 @@ class PackRefreshTask extends BaseTask {
       progress: this.progress(nowMs),
       score: Math.max(0, Math.round(this.score)),
       feedback: "neutral",
+      combo: this.combo,
     };
   }
 
@@ -299,6 +346,7 @@ class PackRefreshTask extends BaseTask {
     this.trials.push({
       stimulusId: `pack-${this.roundCounter}`,
       stimulusKind: "continuous-update",
+      blockIndex: this.blockIndex(this.roundPresentedAt),
       plannedAtMs: this.roundPlannedAt,
       presentedAtMs: this.roundPresentedAt,
       inputType,
@@ -321,7 +369,7 @@ class StageExerciserTask extends BaseTask {
     if (input.type === "primary" || input.type === "secondary") {
       this.correct += 1;
       this.score += 10;
-      this.trials.push({ stimulusId: `exercise-${this.correct}`, stimulusKind: "input-echo", plannedAtMs: input.atMs, presentedAtMs: input.atMs, inputType: input.type, inputAtMs: input.atMs, correct: true, reactionTimeMs: 0 });
+      this.trials.push({ stimulusId: `exercise-${this.correct}`, stimulusKind: "input-echo", blockIndex: this.blockIndex(input.atMs), plannedAtMs: input.atMs, presentedAtMs: input.atMs, inputType: input.type, inputAtMs: input.atMs, correct: true, reactionTimeMs: 0 });
       this.frame = { ...this.frame, feedback: "correct", feedbackText: `INPUT ${this.correct} OK` };
     }
   }
