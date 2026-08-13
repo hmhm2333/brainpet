@@ -15,7 +15,7 @@ test("physical acceptance harness is receipt-driven and does not automate destru
 });
 
 test("interactive receipt covers the unresolved physical release checks", () => {
-  for (const check of ["secondary-display-edges", "mixed-dpi", "lock-unlock", "agent-completion", "novice-rule-comprehension", "dynamic-visual"]) {
+  for (const check of ["secondary-display-edges", "mixed-dpi", "lock-unlock", "agent-completion", "parameter-owner-approval", "novice-rule-comprehension", "dynamic-visual"]) {
     assert.match(script, new RegExp(check));
   }
   assert.match(script, /overallStatus = if \(\$requiredPassed/);

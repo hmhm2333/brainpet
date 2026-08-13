@@ -1,6 +1,6 @@
 # BrainPet V1 产品需求与开发计划
 
-状态：V1 开发验收完成；Runtime/Stage 基础设施门与两项任务样本已通过，外部物理放行待复核
+状态：V1 开发验收完成；Runtime/Stage 基础设施门与两项任务样本已通过，外部物理/内容放行待复核
 日期：2026-08-14
 适用分支：`codex/foundation`
 
@@ -591,6 +591,8 @@ V1 使用分块、可解释的确定性策略：
 
 ### M5：玩法与角色视觉定型
 
+实现规格：`docs/brainpet-v1-visual-system.md`；参数冻结表：`docs/brainpet-v1-parameter-freeze.md`。
+
 工作：
 
 - 完成两张 `Task-to-Game Mapping` 与污染检查；
@@ -623,6 +625,8 @@ V1 使用分块、可解释的确定性策略：
 暂估：4–7 个聚焦工作日。
 
 ### M8：整合 QA 与私测包
+
+逐项完成审计：`docs/brainpet-v1-completion-audit.md`；可重复证据：`docs/brainpet-v1-acceptance.md`。
 
 工作：
 

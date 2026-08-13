@@ -14,7 +14,7 @@ $ErrorActionPreference = "Stop"
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrWhiteSpace($PortablePath)) { $PortablePath = Join-Path $scriptDirectory "..\dist-electron\BrainPet-3.4.0-win-x64.exe" }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path $scriptDirectory "..\..\..\output\physical-acceptance" }
-$scriptVersion = "brainpet-physical-v1.1"
+$scriptVersion = "brainpet-release-v1.2"
 $startedAt = Get-Date
 $runId = $startedAt.ToString("yyyyMMdd-HHmmss")
 $receiptDirectory = Join-Path ([System.IO.Path]::GetFullPath($OutputDirectory)) $runId
@@ -168,6 +168,7 @@ if ($RunInteractive) {
   $checks += Read-Check -Id "mixed-dpi" -Prompt "Confirm that the physical displays use different scaling and that stage size, pixel edges, and hit targets remain correct." -Available ($displays.Count -ge 2 -and $distinctScales.Count -ge 2)
   $checks += Read-Check -Id "lock-unlock" -Prompt "During a task, press Win+L yourself. After unlock, the task must remain paused and resume from the same progress without counting lock time."
   $checks += Read-Check -Id "agent-completion" -Prompt "Have a real Agent finish during a task. The current trial/session must not close or reset; the result page must show the Agent completion notice."
+  $checks += Read-Check -Id "parameter-owner-approval" -Prompt "Have the cognitive-task owner review docs/brainpet-v1-parameter-freeze.md and confirm the V1 parameter boundaries and contamination constraints."
   $checks += Read-Check -Id "novice-rule-comprehension" -Prompt "Ask a first-time player to start without reading external instructions. By the end of level 1, they must correctly explain and perform each task rule without a separate tutorial page."
   $checks += Read-Check -Id "dynamic-visual" -Prompt "Play one full round of each task. Check overflow, pixel clarity, stimulus distinction, feedback flicker, pause/end actions, and accidental default HTML controls."
   $requiredPassed = @($checks | Where-Object { $_.status -ne "pass" }).Count -eq 0

@@ -17,7 +17,7 @@
 | renderer 异常不拖垮宿主 | Electron `Page.crash` 后宠物 target 仍存在 | 通过 |
 | feature flag 完全回退 | `OPENPETS_BRAINPET_ENABLED=0` 时无热点、无 Stage | 通过 |
 | 第二模块不改基础设施 | Stage Exerciser、cargo-signal、pack-refresh 通过同一 registry/contract | 通过 |
-| 状态机、生命周期、结果与清理测试 | BrainPet 专项 Node 测试 + Electron smoke/stress | 通过 |
+| 状态机、生命周期、结果与清理测试 | 42 项 BrainPet 专项 Node 测试 + Electron smoke/stress | 通过 |
 
 ## Runtime / Stage 合同
 
@@ -36,14 +36,16 @@
 - `docs/task-mapping-pack-refresh.md`：固定容量持续更新映射与污染检查。
 - 两款任务均为 45 秒、随机直达、第一关即规则测试、同一像素世界、同一输入/计时/结算合同。
 - 持续更新首轮先显示初始集合，再进行新项目进入和移出判断，避免首题猜测。
+- 持续更新的两个候选均不出现在更新后集合，且只有正确候选属于上一集合；新项目不来自上一集合，无法只靠当前画面对照绕过记忆。
 - 相同 seed/参数可复现；正式 task module 不引用 Electron、文件系统或持久化 API。
+- 当前工程参数及公式见 `docs/brainpet-v1-parameter-freeze.md`；具体阈值仍需认知任务负责人批准。
 
 ## 视觉与实机
 
-- 目标舞台 640×360；本机 150% Windows 缩放实测内容区 640×360，最终源码 Electron 完整局打开 213ms，unpacked 183ms，最终 portable 包内暖启动 178ms。
+- 目标舞台 640×360；本机 150% Windows 缩放实测内容区 640×360，最终源码 Electron 完整局打开 212ms，unpacked 183ms，最终 portable 包内暖启动 200ms。
 - 宠物移动后舞台跟随；失焦自动暂停/恢复；按钮可点击区域 30×30。
 - 介绍、Stage Exerciser、Go/No-Go、持续更新、结算页、unpacked 和 portable package 均有 Electron 实机截图留在本地 `output/playwright`（该目录不进入 Git）；最终视觉检查未发现文字/按钮溢出、默认 HTML 控件或像素缩放模糊。
-- branded portable 私测包：`apps/desktop/dist-electron/BrainPet-3.4.0-win-x64.exe`，151,448,856 bytes，SHA256 `3B8BA3EF63C79D46EDB8BCEBDEC373A9CFAF2DCC78BBB2EDF0557A031A4C1219`；首次解压启动约 56 秒，包内舞台实测 640×360、178ms 打开并通过锚定、失焦暂停和故障隔离。
+- branded portable 私测包：`apps/desktop/dist-electron/BrainPet-3.4.0-win-x64.exe`，151,458,261 bytes，SHA256 `9CB6D785AAC91E9BC05E42DB025D4B8588EB2F408B0400A680465301AB5EA6B0`；首次解压启动约 57 秒，包内舞台实测 640×360、200ms 打开并通过锚定、失焦暂停和故障隔离。
 - 一局 45 秒 Go/No-Go 完成链路实测：35 正确、0 失误、0 漏答、3500 分、升至第 2 关；成绩质量有效，长帧诊断保留但最低 30 FPS 有效节奏未失守。
 - 未使用竞品名称、角色、贴图、音效或关卡数据；视觉为原创掌机像素表达。
 
@@ -56,14 +58,15 @@
 
 ## 外部物理复核步骤（V1 最终放行前）
 
-当前开发机无法独立完成以下四项，不能以模拟结果代替：
+当前开发机无法独立完成以下五项，不能以模拟结果代替：
 
 1. 双显示器：在 100%/125%/150% 的实际组合中，把宠物分别拖到两块屏幕的四个边缘；每次打开舞台，确认舞台在当前 work area 内、跟随宠物、任务栏任意边缘均不遮挡。
 2. 锁屏与 Agent 并发：任务进行中按 `Win+L`，解锁后确认仍显示暂停、点击继续后时钟从原进度恢复；让 Agent 在任务中完成一次工作，确认宠物状态可变化但舞台不关闭、不重置 session、不抢占其他应用焦点。
-3. 首次用户规则理解：请未看过产品说明的用户直接开始；不经过独立教程页，在第一关结束前能正确说明并执行两款任务规则。
-4. 独立动态视觉评审：查看一轮 Go/No-Go 和一轮持续更新的实机录屏，逐项确认文字不溢出、像素不糊、红/蓝刺激可区分、正误反馈不闪烁、暂停/结束动作清楚，且画面没有默认 HTML 控件或诊断占位。
+3. 参数负责人批准：认知任务负责人核对 `docs/brainpet-v1-parameter-freeze.md` 的反应窗、Go 比例、容量、block 步长、通关阈值和污染约束。
+4. 首次用户规则理解：请未看过产品说明的用户直接开始；不经过独立教程页，在第一关结束前能正确说明并执行两款任务规则。
+5. 独立动态视觉评审：查看一轮 Go/No-Go 和一轮持续更新的实机录屏，逐项确认文字不溢出、像素不糊、红/蓝刺激可区分、正误反馈不闪烁、暂停/结束动作清楚，且画面没有默认 HTML 控件或诊断占位。
 
-复核人运行 `powershell -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/brainpet-physical-acceptance.ps1 -RunInteractive`。脚本会在 `output/physical-acceptance/<时间戳>` 生成 JSON 与 Markdown 回执，记录机器环境、显示器、DPI、便携包哈希、逐项结论和证据路径；它不会自动锁屏、修改显示设置或关闭进程。以上项目没有一份 `overallStatus: passed` 的外部回执前，状态只能是“开发验收完成，V1 物理放行待复核”，不能写“全部验收通过”。
+复核人运行 `powershell -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/brainpet-physical-acceptance.ps1 -RunInteractive`。脚本会在 `output/physical-acceptance/<时间戳>` 生成 JSON 与 Markdown 回执，记录机器环境、显示器、DPI、便携包哈希、逐项结论和证据路径；它不会自动锁屏、修改显示设置或关闭进程。以上项目没有一份 `overallStatus: passed` 的外部回执前，状态只能是“开发验收完成，V1 物理/内容放行待复核”，不能写“全部验收通过”。
 
 ## 回退
 

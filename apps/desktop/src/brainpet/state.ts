@@ -52,7 +52,8 @@ export function appendBrainPetResult(state: BrainPetPersistedState, result: Brai
     };
   }
   const manifest = getBrainPetTaskManifest(result.taskId);
-  const previousProgress = state.taskProgress[result.taskId] ?? createTaskProgress(manifest);
+  const storedProgress = state.taskProgress[result.taskId];
+  const previousProgress = storedProgress?.parameterVersion === manifest.difficulty.parameterVersion ? storedProgress : createTaskProgress(manifest);
   const outcome = evaluateBrainPetResult(result, manifest, previousProgress);
   const storedResult: BrainPetTaskResult = { ...result, progression: { passed: outcome.passed, previousLevel: outcome.previousLevel, nextLevel: outcome.nextLevel, accuracy: outcome.accuracy } };
   const progress: BrainPetTaskProgress = {
@@ -109,6 +110,7 @@ export function parseBrainPetState(value: unknown): BrainPetPersistedState {
 
 function parseTaskProgress(value: unknown, manifest: ReturnType<typeof getBrainPetTaskManifest>): BrainPetTaskProgress | null {
   if (!isRecord(value) || !Number.isInteger(value.currentLevel) || !Number.isInteger(value.clearedThroughLevel) || !isRecord(value.highScoresByLevel) || typeof value.parameterVersion !== "string") return null;
+  if (value.parameterVersion !== manifest.difficulty.parameterVersion) return createTaskProgress(manifest);
   const currentLevel = Math.max(1, Math.min(manifest.difficulty.maxLevel, value.currentLevel as number));
   const highScoresByLevel: Record<string, number> = {};
   for (const [level, score] of Object.entries(value.highScoresByLevel)) if (/^\d+$/.test(level) && typeof score === "number" && Number.isFinite(score) && score >= 0) highScoresByLevel[level] = Math.round(score);

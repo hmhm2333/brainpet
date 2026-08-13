@@ -28,11 +28,11 @@ test("runtime rejects illegal transitions and mismatched results", () => {
 });
 
 function resultFixture(taskId: "cargo-signal" | "pack-refresh", seed: number, score: number) {
-  return { taskId, seed, score, correct: 8, incorrect: 1, missed: 1, durationMs: 45_000, startedAt: "2026-08-13T00:00:00.000Z", completedAt: "2026-08-13T00:00:45.000Z", completionStatus: "completed" as const, taskVersion: "1.1.0", assetVersion: "1.0.0", difficultyPolicyVersion: "brainpet-block-v1", parameterVersion: "1.0.0", parameters: { responseWindowMs: 1050, blockStepMs: 70, goProbabilityPercent: 72, similarityTier: 1 }, blockCount: 3 as const, scoreVersion: "brainpet-score-v1", level: 1, falseAlarms: 0, meanReactionTimeMs: 350, trials: [], quality: { valid: true, focusLossCount: 0, pausedMs: 0, droppedFrameCount: 0, longFrameCount: 0, maxFrameMs: 16.7, flags: [] }, petEvents: ["complete" as const] };
+  return { taskId, seed, score, correct: 8, incorrect: 1, missed: 1, durationMs: 45_000, startedAt: "2026-08-13T00:00:00.000Z", completedAt: "2026-08-13T00:00:45.000Z", completionStatus: "completed" as const, taskVersion: "1.1.0", assetVersion: "1.0.0", difficultyPolicyVersion: "brainpet-block-v1", parameterVersion: "1.1.0", parameters: { responseWindowMs: 1050, blockStepMs: 70, goProbabilityPercent: 72 }, blockCount: 3 as const, scoreVersion: "brainpet-score-v1", level: 1, falseAlarms: 0, meanReactionTimeMs: 350, trials: [], quality: { valid: true, focusLossCount: 0, pausedMs: 0, droppedFrameCount: 0, longFrameCount: 0, maxFrameMs: 16.7, flags: [] }, petEvents: ["complete" as const] };
 }
 
 function session(seed: number) {
-  return { taskId: "cargo-signal" as const, seed, durationMs: 45_000, level: 1, difficultyPolicyVersion: "brainpet-block-v1", parameterVersion: "1.0.0", parameters: { responseWindowMs: 1050, blockStepMs: 70, goProbabilityPercent: 72, similarityTier: 1 }, blockCount: 3 as const };
+  return { taskId: "cargo-signal" as const, seed, durationMs: 45_000, level: 1, difficultyPolicyVersion: "brainpet-block-v1", parameterVersion: "1.1.0", parameters: { responseWindowMs: 1050, blockStepMs: 70, goProbabilityPercent: 72 }, blockCount: 3 as const };
 }
 
 test("seeded random and task selection are reproducible", () => {

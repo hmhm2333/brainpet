@@ -1,12 +1,14 @@
 # BrainPet foundation plan
 
-Implementation status (2026-08-13): the Host Adapter, Runtime Core, task
-contract, Stage Exerciser, local result store, pixel stage, and two first-party
-task modules are implemented on `codex/foundation`. The 100-cycle virtual soak,
-deterministic task tests, real Electron pet-to-stage smoke test, renderer crash
-isolation, visual screenshots, and unpacked Windows package contract pass.
-Final character art, task parameter review, sound, lock-screen behavior, and a
-signed installer remain later hardening work.
+Implementation status (2026-08-14): the Host Adapter, Runtime Core, task
+contract, Stage Exerciser, local result store, pixel stage, two first-party
+task modules, shared visual system, local sound feedback, portable package and
+rollback path are implemented on `codex/foundation`. The 100-cycle real
+Electron lifecycle test, 30-minute soak, deterministic task tests, complete
+round, renderer crash isolation, static visual review and package smoke pass.
+The remaining release gates are listed in `brainpet-v1-completion-audit.md`:
+mixed-DPI physical displays, real lock/Agent concurrency, parameter-owner
+approval, first-time comprehension and independent dynamic visual review.
 
 ## Confirmed product decisions
 
@@ -166,8 +168,8 @@ Record sessions locally and translate them into restrained pet feedback:
 
 ## Deferred decisions
 
-- Final character and visual identity.
-- Whether the accessory is embedded in sprites or host-rendered above them.
+- A proprietary fixed BrainPet character beyond the current active OpenPets pet.
+- Whether a later accessory is embedded in every pet spritesheet; V1 uses a host-rendered `B` accessory.
 - Commercial model, open-source boundary, accounts, cloud services, and stores.
 - Competitive rankings, anti-cheat, adaptive training, and long-term progression.
 - Final product claims and evidence language.

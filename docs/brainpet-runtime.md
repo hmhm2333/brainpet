@@ -62,7 +62,7 @@ V1 注册三个模块：`stage-exerciser`（基础设施验收）、`cargo-signa
 - `node --test apps/desktop/.test-dist/tests/brainpet-*.test.js`：状态机、逻辑时钟、质量监测、确定性、任务合同、存储和任务指标。
 - `pnpm --filter @open-pets/desktop test:brainpet-electron`：从真实宠物按钮打开舞台，验证失焦暂停/恢复、640×360、Stage Exerciser 和 renderer 崩溃隔离。
 - `pnpm --filter @open-pets/desktop test:brainpet-physical-inventory`：只读盘点当前 Windows、显示器/DPI、便携包哈希与签名，并在 `output/physical-acceptance` 写入时间戳回执。
-- `powershell -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/brainpet-physical-acceptance.ps1 -RunInteractive`：由复核人执行双屏边缘、混合 DPI、真实锁屏、真实 Agent 完成和动态视觉检查；脚本不会自动锁屏或改显示设置，只有全部物理条件和检查均通过才出具 `passed`。
+- `powershell -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/brainpet-physical-acceptance.ps1 -RunInteractive`：由复核人执行双屏边缘、混合 DPI、真实锁屏、真实 Agent 完成、参数负责人批准、新手理解和独立动态视觉检查；脚本不会自动锁屏或改显示设置，只有全部物理与内容检查均通过才出具 `passed`。
 - `pnpm --filter @open-pets/desktop test:brainpet-stress`：真实 Electron 窗口连续开启、开始 session、关闭 100 次。
 - `pnpm --filter @open-pets/desktop test:brainpet-rollback`：关闭 feature flag 后，宠物热点与舞台均不存在。
 - `pnpm --filter @open-pets/desktop test:brainpet-soak`：真实 Electron 舞台持续 30 分钟，反复 session，并通过 CDP 采样 renderer JS heap。

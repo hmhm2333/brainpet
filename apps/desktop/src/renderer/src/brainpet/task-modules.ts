@@ -28,7 +28,7 @@ export interface BrainPetTaskModule {
 }
 
 const CARGO_SYMBOLS = ["◆", "●", "▲", "■", "✦", "⬟"] as const;
-const PACK_SYMBOLS = ["⚙", "✦", "◆", "●", "▲", "■"] as const;
+const PACK_SYMBOLS = ["⚙", "✦", "◆", "●", "▲", "■", "★", "⬢", "✚", "◇"] as const;
 
 export function createTaskModule(taskId: BrainPetTaskId): BrainPetTaskModule {
   if (taskId === "cargo-signal") return new CargoSignalTask();
@@ -316,10 +316,14 @@ class PackRefreshTask extends BaseTask {
   }
 
   private nextRound(nowMs: number, plannedAtMs = nowMs): void {
+    const previousSlots = [...this.slots];
     this.dropped = this.slots.shift()!;
-    const available = PACK_SYMBOLS.filter((item) => !this.slots.includes(item));
-    this.slots.push(pick(this.random, available));
-    const distractor = pick(this.random, PACK_SYMBOLS.filter((item) => item !== this.dropped));
+    const newItem = pick(this.random, PACK_SYMBOLS.filter((item) => !previousSlots.includes(item)));
+    this.slots.push(newItem);
+    // Both answers stay outside the updated set, so the player cannot solve the
+    // trial by comparing candidates with what is currently visible. Exactly one
+    // candidate belonged to the previous set: the item that was removed.
+    const distractor = pick(this.random, PACK_SYMBOLS.filter((item) => !previousSlots.includes(item) && !this.slots.includes(item)));
     this.choices = this.random() > 0.5 ? [this.dropped, distractor] : [distractor, this.dropped];
     this.awaitingChoice = true;
     this.roundPresentedAt = nowMs;
