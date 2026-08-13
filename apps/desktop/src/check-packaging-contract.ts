@@ -47,6 +47,7 @@ assert.match(builderConfig, /node_modules\/\*\*/);
 assert.match(builderConfig, /dist\/\*\*/);
 assert.match(builderConfig, /control-center-preload\.cjs/);
 assert.match(builderConfig, /pet-preload\.cjs/);
+assert.match(builderConfig, /brainpet-preload\.cjs/, "desktop packages must include the BrainPet stage bridge.");
 assert.match(builderConfig, /plugin-sdk-preload\.cjs/);
 assert.match(builderConfig, /plugin-command-form-preload\.cjs/);
 assert.match(builderConfig, /assets\/\*\*/);
@@ -55,6 +56,9 @@ assert.match(builderConfig, /icon:\s*assets\/app-icon\.icns/);
 
 assert.ok(existsSync(join(appDir, "control-center-preload.cjs")), "control-center-preload.cjs must exist for Control Center IPC.");
 assert.ok(existsSync(join(appDir, "pet-preload.cjs")), "pet-preload.cjs must exist for pet window motion state updates.");
+assert.ok(existsSync(join(appDir, "brainpet-preload.cjs")), "brainpet-preload.cjs must exist for the isolated training stage.");
+assert.ok(existsSync(join(appDir, "src", "renderer", "brainpet.html")), "BrainPet must keep a separate renderer entry.");
+assert.ok(existsSync(join(appDir, "dist", "renderer", "brainpet.html")), "the production renderer build must emit brainpet.html.");
 assert.ok(existsSync(join(appDir, "plugin-sdk-preload.cjs")), "plugin-sdk-preload.cjs must exist for JavaScript plugin SDK hosting.");
 assert.ok(existsSync(join(appDir, "plugin-command-form-preload.cjs")), "plugin-command-form-preload.cjs must exist for plugin command forms.");
 assert.ok(existsSync(join(appDir, "assets", "tray-icon.png")), "tray icon must exist for packaging.");
@@ -109,7 +113,7 @@ assert.doesNotMatch(mainSource + lifecycleSource + windowsSource + localIpcSourc
 assert.match(appStateSource, /activity:\s*{[\s\S]*messagesSent/, "local dashboard activity counters must remain in app state without analytics identity fields.");
 assert.doesNotMatch(appStateSource, /distinctId|OpenPetsAnalyticsState|DesktopAnalyticsConsentState|recordDesktopAppStarted|markFirstAgentReactionTracked/, "app state must not retain PostHog identity or consent fields.");
 assert.match(mainSource, /isLinux && !allowWayland[\s\S]*?appendSwitch\("ozone-platform", "x11"\)/, "Linux desktop pets must force X11/Xwayland because native Wayland blocks always-on-top and programmatic window positioning.");
-assert.match(mainSource, /if \(process\.platform === "linux"\) \{\n\s*const isKde = \(process\.env\.XDG_CURRENT_DESKTOP \?\? ""\)\.toLowerCase\(\)\.includes\("kde"\);\n\s*app\.commandLine\.appendSwitch\("password-store", isKde \? "kwallet6" : "gnome-libsecret"\);\n\s*\} else \{\n\s*app\.commandLine\.appendSwitch\("password-store", "basic"\);\n\s*\}/, "Linux desktop must gate password-store as kwallet6 on KDE sessions, gnome-libsecret elsewhere on Linux, with basic only in the non-Linux else branch; an unconditional switch would disable Electron safeStorage and break plugin secret saves with 'Secret storage encryption is unavailable on this system'.");
+assert.match(mainSource, /if \(process\.platform === "linux"\) \{\r?\n\s*const isKde = \(process\.env\.XDG_CURRENT_DESKTOP \?\? ""\)\.toLowerCase\(\)\.includes\("kde"\);\r?\n\s*app\.commandLine\.appendSwitch\("password-store", isKde \? "kwallet6" : "gnome-libsecret"\);\r?\n\s*\} else \{\r?\n\s*app\.commandLine\.appendSwitch\("password-store", "basic"\);\r?\n\s*\}/, "Linux desktop must gate password-store as kwallet6 on KDE sessions, gnome-libsecret elsewhere on Linux, with basic only in the non-Linux else branch; an unconditional switch would disable Electron safeStorage and break plugin secret saves with 'Secret storage encryption is unavailable on this system'.");
 const passwordStoreValues = [...mainSource.matchAll(/"(kwallet6|gnome-libsecret|basic)"/g)].map((match) => match[1]);
 assert.deepStrictEqual(passwordStoreValues, ["kwallet6", "gnome-libsecret", "basic"], "desktop must set password-store to exactly these three values (kwallet6 on KDE, gnome-libsecret elsewhere on Linux, basic otherwise); any extra or unconditional switch would override the backend and re-break plugin secret saves.");
 assert.match(mainSource, /OPENPETS_ALLOW_WAYLAND/, "Linux X11 override must support the OPENPETS_ALLOW_WAYLAND opt-out escape hatch.");

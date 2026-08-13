@@ -7,10 +7,10 @@ history through the read-only `upstream` remote and a local preservation ref.
 
 Tagline: **Train your brain. Grow your pet.**
 
-## Current objective
+## Current V1 slice
 
-Build a stable reusable runtime and stage first, then prove this loop with two
-formal game modules:
+The stable reusable runtime and stage are implemented and verified first. The
+current vertical slice proves this loop with two replaceable game modules:
 
 1. The user clicks a visible accessory or body-area control on the pet.
 2. The pet launches a small transparent, frameless training surface nearby.
@@ -31,7 +31,7 @@ formal game modules:
 - Define a runtime-neutral task module contract.
 - Pass the infrastructure stress, soak, DPI, multi-display, failure, and second-
   dummy-module gates before formal game development begins.
-- Ship one go/no-go task and one continuous-updating / avoid-repetition task,
+- Ship one go/no-go task and one fixed-capacity continuous-updating task,
   with original game expression and no separate tutorial flow.
 - Store results locally and map completion/performance to pet feedback.
 
@@ -71,6 +71,9 @@ pnpm --filter @open-pets/desktop test
 Feature work must also add the narrowest behavior-level tests for hotspot hit
 testing, overlay lifecycle, runtime state transitions, monotonic timing, input
 normalization, plugin isolation, task result validation, and abnormal cleanup.
+
+BrainPet-specific verification commands and the Electron crash-isolation smoke
+test are documented in `docs/brainpet-runtime.md`.
 
 ## Lifecycle
 

@@ -21,6 +21,7 @@
     "package": "pnpm package:preflight && pnpm build && node scripts/clean-package-output.cjs && electron-builder",
     "package:dir": "pnpm package:preflight && pnpm build && node scripts/clean-package-output.cjs && electron-builder --dir && node dist/check-packaging-contract.js --output",
     "test": "node scripts/run-tests.mjs",
+    "test:brainpet-electron": "pnpm build && node scripts/brainpet-electron-smoke.mjs",
     "build:deps": "pnpm --filter \"@open-pets/desktop^...\" build",
     "test:build": "pnpm build:deps && tsc -p tsconfig.tests.json",
     "check": "pnpm typecheck && pnpm build && pnpm test",

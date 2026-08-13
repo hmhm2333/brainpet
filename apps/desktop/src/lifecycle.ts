@@ -9,6 +9,7 @@ import { closeAllLanVisitingPets } from "./lan-pet-controller.js";
 import { stopPluginService } from "./plugin-service.js";
 import { shutdownPluginVoice } from "./plugin-voice.js";
 import { focusOpenTaskWindows } from "./windows.js";
+import { shutdownBrainPetHost } from "./brainpet/host.js";
 
 let intentionalQuit = false;
 let cleanupStarted = false;
@@ -49,6 +50,7 @@ export function installAppLifecycle(): void {
       stopLocalIpcServer();
       closeAllLanVisitingPets();
       closeAllAgentPets();
+      await shutdownBrainPetHost();
       destroyDefaultPet();
       cleanupFinished = true;
       app.quit();

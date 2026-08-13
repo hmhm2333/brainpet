@@ -1,0 +1,57 @@
+export const BRAINPET_TASK_API_VERSION = 1 as const;
+
+export type BrainPetTaskId = "stage-exerciser" | "cargo-signal" | "pack-refresh";
+
+export interface BrainPetTaskManifest {
+  readonly apiVersion: typeof BRAINPET_TASK_API_VERSION;
+  readonly id: BrainPetTaskId;
+  readonly title: string;
+  readonly durationMs: number;
+  readonly supportsSeed: true;
+}
+
+export interface BrainPetTaskSessionConfig {
+  readonly taskId: BrainPetTaskId;
+  readonly seed: number;
+  readonly durationMs: number;
+  readonly level: number;
+}
+
+export type BrainPetTaskInput =
+  | { readonly type: "primary"; readonly atMs: number }
+  | { readonly type: "secondary"; readonly atMs: number }
+  | { readonly type: "pause"; readonly atMs: number }
+  | { readonly type: "resume"; readonly atMs: number };
+
+export interface BrainPetTaskResult {
+  readonly taskId: BrainPetTaskId;
+  readonly seed: number;
+  readonly score: number;
+  readonly correct: number;
+  readonly incorrect: number;
+  readonly missed: number;
+  readonly durationMs: number;
+  readonly completedAt: string;
+}
+
+export function validateBrainPetTaskManifest(value: unknown): BrainPetTaskManifest {
+  if (!isRecord(value)) throw new Error("BrainPet task manifest must be an object.");
+  if (value.apiVersion !== BRAINPET_TASK_API_VERSION) throw new Error("Unsupported BrainPet task API version.");
+  if (!isTaskId(value.id)) throw new Error("Unknown BrainPet task id.");
+  if (typeof value.title !== "string" || value.title.trim().length === 0 || value.title.length > 48) {
+    throw new Error("BrainPet task title must contain 1-48 characters.");
+  }
+  if (!Number.isInteger(value.durationMs) || (value.durationMs as number) < 10_000 || (value.durationMs as number) > 120_000) {
+    throw new Error("BrainPet task duration must be between 10 and 120 seconds.");
+  }
+  if (value.supportsSeed !== true) throw new Error("BrainPet V1 tasks must support deterministic seeds.");
+  return value as unknown as BrainPetTaskManifest;
+}
+
+export function isTaskId(value: unknown): value is BrainPetTaskId {
+  return value === "stage-exerciser" || value === "cargo-signal" || value === "pack-refresh";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

@@ -4,6 +4,8 @@
 
 Core TypeScript source for the OpenPets desktop application. Organized into: lifecycle management, state persistence, Control Center and pet windows, IPC server, agent integrations, pet installation/management, and declarative plus JavaScript plugin runtimes.
 
+BrainPet adds an infrastructure-first training path under `brainpet/`: pure stage geometry, a deterministic runtime state machine, and a versioned task contract. Electron window ownership stays in a Host Adapter so task modules never depend on desktop APIs.
+
 ## Design/Patterns
 
 - **Modular Controllers**: Separate controllers for default pet vs agent pets (lease-based)

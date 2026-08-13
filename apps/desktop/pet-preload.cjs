@@ -154,12 +154,19 @@ const installPetSenses = () => {
     if (event.button !== 0) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
+    if (target.closest("[data-brainpet-trigger]")) {
+      event.preventDefault();
+      event.stopPropagation();
+      sendPetEvent("brainpet:trainingRequested", {});
+      return;
+    }
     if (!target.closest(".pet-hitbox, .pet-shell")) return;
     if (Date.now() < suppressClickUntil) return;
     sendPetEvent("pet:clicked", {});
   });
   document.addEventListener("dblclick", (event) => {
     const target = event.target;
+    if (target instanceof Element && target.closest("[data-brainpet-trigger]")) return;
     if (!(target instanceof Element) || !target.closest(".pet-hitbox, .pet-shell")) return;
     sendPetEvent("pet:doubleClicked", {});
   });
@@ -363,6 +370,7 @@ const installMouseInterop = () => {
   document.addEventListener("mousedown", (event) => {
     const target = getInteractiveTarget(event);
     setInteractiveHit(Boolean(target));
+    if (target?.closest("[data-brainpet-trigger]")) return;
     if (event.button !== 0 || !target?.closest(".pet-hitbox, .pet-shell")) return;
     if (usesNativePetDrag()) return;
     event.preventDefault();

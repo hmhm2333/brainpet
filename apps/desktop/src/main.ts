@@ -21,6 +21,7 @@ import { initializePluginService } from "./plugin-service.js";
 import { createAppTray, refreshTrayMenu } from "./tray.js";
 import { checkForGitHubReleaseUpdate } from "./update-checker.js";
 import { installInternalUiHandlers, installInternalUiProtocol } from "./windows.js";
+import { initializeBrainPetHost } from "./brainpet/host.js";
 
 // OpenPets stores plugin secrets via Electron safeStorage, which requires a
 // real encryption backend. On Linux use the keyring so safeStorage can
@@ -113,6 +114,7 @@ if (!gotSingleInstanceLock) {
     installInternalUiHandlers();
     createAppTray();
     installDefaultPetDisplayHandlers();
+    initializeBrainPetHost();
     await startLocalIpcServer();
     releaseStartupInstallLock();
     const roots = parseDevPluginEnv(process.env.OPENPETS_DEV_PLUGIN_ROOTS);

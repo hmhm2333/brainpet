@@ -1,5 +1,13 @@
 # BrainPet foundation plan
 
+Implementation status (2026-08-13): the Host Adapter, Runtime Core, task
+contract, Stage Exerciser, local result store, pixel stage, and two first-party
+task modules are implemented on `codex/foundation`. The 100-cycle virtual soak,
+deterministic task tests, real Electron pet-to-stage smoke test, renderer crash
+isolation, visual screenshots, and unpacked Windows package contract pass.
+Final character art, task parameter review, sound, lock-screen behavior, and a
+signed installer remain later hardening work.
+
 ## Confirmed product decisions
 
 - BrainPet is a desktop brain-training pet built from OpenPets.
@@ -133,10 +141,10 @@ Do not begin formal game development until:
 Implement only enough variety to validate the contract:
 
 1. A response-inhibition task using a generic go/no-go paradigm.
-2. A working-memory task using a continuous-updating / avoid-repetition
-   paradigm with original presentation. Its collection boundary, repetition
-   rules, reset conditions, and difficulty parameters require an approved
-   task-to-game mapping and contamination review.
+2. A working-memory task using a fixed-capacity continuous-updating paradigm
+   with original presentation. Its capacity, update timing, choice generation,
+   and difficulty parameters require an approved task-to-game mapping and
+   contamination review.
 
 These are demonstrations, not a finalized cognitive curriculum. Parameters and
 scoring remain transparent and versioned.

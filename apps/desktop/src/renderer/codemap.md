@@ -14,5 +14,6 @@ Vite renderer workspace for the desktop React/Tailwind Control Center. It owns t
 ## Key Files
 
 - `index.html`: Vite HTML entry mounting the React app.
+- `brainpet.html`: isolated transparent BrainPet Stage entry; it uses the narrow `brainpet-preload.cjs` bridge and loads task modules through a shared contract.
 - `src/main.tsx`: Route shell and pages for Dashboard, Pets, Integrations, Plugins, and Settings.
 - `src/styles.css`: Tailwind directives plus Control Center component styling.

@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "..");
 
-const preloadChecks = ["control-center-preload.cjs", "pet-preload.cjs", "plugin-sdk-preload.cjs", "panel-preload.cjs"];
+const preloadChecks = ["control-center-preload.cjs", "pet-preload.cjs", "brainpet-preload.cjs", "plugin-sdk-preload.cjs", "panel-preload.cjs"];
 const behaviorTests = [
   ".test-dist/tests/lease-manager.test.js",
   ".test-dist/tests/lease-manager-fixes.test.js",
@@ -71,6 +71,12 @@ const behaviorTests = [
   ".test-dist/tests/plugin-agent-activity.test.js",
   ".test-dist/tests/pet-window-wayland-predicate.test.js",
   ".test-dist/tests/pet-window-mouse-forwarding-predicate.test.js",
+  ".test-dist/tests/brainpet-geometry.test.js",
+  ".test-dist/tests/brainpet-runtime-core.test.js",
+  ".test-dist/tests/brainpet-task-contract.test.js",
+  ".test-dist/tests/brainpet-state.test.js",
+  ".test-dist/tests/brainpet-stage-exerciser.test.js",
+  ".test-dist/tests/brainpet-task-modules.test.js",
 ];
 const contractTests = [
   ".test-dist/contracts/local-ipc-protocol.contract.js",
