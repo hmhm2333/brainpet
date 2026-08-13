@@ -25,10 +25,14 @@ test("pack refresh task accepts both generic choice inputs through the same cont
   const task = createTaskModule("pack-refresh");
   task.start(99, 3, 0);
   assert.equal(task.frame.slots?.length, 3);
-  assert.equal(task.frame.choices?.length, 2);
-  task.input({ type: "secondary", atMs: 500 });
-  task.tick(600);
-  const result = task.result(600);
+  const initialChoices = task.frame.choices;
+  assert.equal(initialChoices, undefined);
+  task.tick(1_800);
+  const updatedChoices = task.frame.choices as readonly string[] | undefined;
+  assert.equal(updatedChoices?.length, 2);
+  task.input({ type: "secondary", atMs: 2_000 });
+  task.tick(2_100);
+  const result = task.result(2_100);
   assert.equal(result.correct + result.incorrect, 1);
   assert.equal(Number.isFinite(result.score), true);
 });
@@ -38,7 +42,7 @@ test("stage exerciser is a replaceable task module, not a host special case", ()
   task.start(1, 1, 0);
   task.input({ type: "primary", atMs: 100 });
   task.input({ type: "secondary", atMs: 200 });
-  task.tick(10_000);
+  task.tick(45_000);
   assert.equal(task.finished, true);
-  assert.equal(task.result(10_000).correct, 2);
+  assert.equal(task.result(45_000).correct, 2);
 });

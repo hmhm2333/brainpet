@@ -1079,6 +1079,9 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
 }
 
 function createPetBodyMarkup(stageLabel: string, bubble: string, spriteMarkup: string, pinnedBubble = "", hasPinned = false): string {
+  const brainPetTrigger = process.env.OPENPETS_BRAINPET_ENABLED === "0"
+    ? ""
+    : `<button class="brainpet-trigger" type="button" data-brainpet-trigger aria-label="打开 BrainPet 训练" title="BrainPet 训练"><span aria-hidden="true">B</span></button>`;
   return `<div class="stage${hasPinned ? " has-pinned" : ""}" aria-label="${stageLabel}">
     ${pinnedBubble}
     ${bubble}
@@ -1087,7 +1090,7 @@ function createPetBodyMarkup(stageLabel: string, bubble: string, spriteMarkup: s
         ${spriteMarkup}
       </div>
     </div>
-    <button class="brainpet-trigger" type="button" data-brainpet-trigger aria-label="打开 BrainPet 训练" title="BrainPet 训练"><span aria-hidden="true">B</span></button>
+    ${brainPetTrigger}
   </div>`;
 }
 

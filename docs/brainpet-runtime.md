@@ -49,13 +49,25 @@ idle → opening → ready → running ⇄ paused → settling → ready
 - `apiVersion: 1`
 - 固定任务 id、短标题、10–120 秒时长
 - `supportsSeed: true`
+- 独立的 `taskVersion / assetVersion / difficultyPolicyVersion / scoreVersion`
 - 只接受 `primary / secondary / pause / resume` 四类通用输入
-- 统一输出 `score / correct / incorrect / missed / durationMs`
+- 统一输出原始试次、计划/实际呈现时间、输入时间、反应时、命中/遗漏/虚报、娱乐分数和宠物事件
+- 统一携带失焦、暂停、掉帧、长帧和成绩有效性标记
 
 V1 注册三个模块：`stage-exerciser`（基础设施验收）、`cargo-signal`（Go/No-Go）和 `pack-refresh`（持续更新）。正式游戏只能在 Stage Exerciser 完成 100 次开关、30 分钟 soak、DPI/多显示器、崩溃隔离和固定 seed 验收后进入主线。
 
 ## 可重复验收
 
 - `pnpm --filter @open-pets/desktop test:build`：编译全部主进程行为测试。
-- `node apps/desktop/.test-dist/tests/brainpet-stage-exerciser.test.js`：100 次生命周期、两个模块交替、虚拟 30 分钟 soak、每 10 次一次异常退出。
-- `pnpm --filter @open-pets/desktop test:brainpet-electron`：启动隔离 Electron 实例，从真实宠物按钮打开舞台，校验 640×360、进入 Stage Exerciser、截取实机画面，并令舞台 renderer 崩溃以确认宠物宿主仍存活。
+- `node --test apps/desktop/.test-dist/tests/brainpet-*.test.js`：状态机、逻辑时钟、质量监测、确定性、任务合同、存储和任务指标。
+- `pnpm --filter @open-pets/desktop test:brainpet-electron`：从真实宠物按钮打开舞台，验证失焦暂停/恢复、640×360、Stage Exerciser 和 renderer 崩溃隔离。
+- `pnpm --filter @open-pets/desktop test:brainpet-stress`：真实 Electron 窗口连续开启、开始 session、关闭 100 次。
+- `pnpm --filter @open-pets/desktop test:brainpet-rollback`：关闭 feature flag 后，宠物热点与舞台均不存在。
+- `pnpm --filter @open-pets/desktop test:brainpet-soak`：真实 Electron 舞台持续 30 分钟，反复 session，并通过 CDP 采样 renderer JS heap。
+- `pnpm --filter @open-pets/desktop package:brainpet:portable`：保留 OpenPets 源码身份和打包合同，同时产出 BrainPet 品牌的 portable 私测 EXE；正式分发前仍需代码签名。
+
+## 渲染决策
+
+V1 使用 Electron sandbox renderer + DOM/CSS 像素舞台，不引入 PixiJS。当前两款任务只需要少量离散 sprite、层、反馈动画和 HUD；DOM/CSS 版本的生产构建约 17 kB JavaScript、9 kB CSS，透明窗口实测 640×360 下可由统一 `requestAnimationFrame` 监测掉帧。若后续任务需要大量 sprite、camera 或粒子，再以同一 Task Contract 替换 Stage renderer，不改变 Host、Runtime 或持久化主流程。
+
+这不是把网页卡片搬到桌面：用户版本没有浏览器导航、默认 HTML 控件或任意网络能力；窗口、沙箱和生命周期均由 Host 管理，UI 只是 Stage 的渲染实现。

@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { appendBrainPetResult, createBrainPetPersistedState, parseBrainPetState } from "../src/brainpet/state.js";
 
-const result = { taskId: "cargo-signal", seed: 7, score: 720, correct: 8, incorrect: 1, missed: 0, durationMs: 45_000, completedAt: "2026-08-13T00:00:00.000Z" } as const;
+const result = { taskId: "cargo-signal", seed: 7, score: 720, correct: 8, incorrect: 1, missed: 0, durationMs: 45_000, completedAt: "2026-08-13T00:00:00.000Z", taskVersion: "1.0.0", assetVersion: "1.0.0", difficultyPolicyVersion: "brainpet-block-v1", scoreVersion: "brainpet-score-v1", level: 1, falseAlarms: 0, meanReactionTimeMs: 350, trials: [], quality: { valid: true, focusLossCount: 0, pausedMs: 0, droppedFrameCount: 0, longFrameCount: 0, maxFrameMs: 16.7, flags: [] }, petEvents: ["complete"] } as const;
 
 test("BrainPet state records bounded recent results and high scores", () => {
   let state = createBrainPetPersistedState();

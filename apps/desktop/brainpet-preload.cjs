@@ -7,4 +7,14 @@ contextBridge.exposeInMainWorld("brainPet", Object.freeze({
   ready: () => ipcRenderer.send("brainpet:stage-ready"),
   report: (event) => ipcRenderer.send("brainpet:stage-event", event),
   close: () => ipcRenderer.send("brainpet:stage-close"),
+  onHostEvent: (listener) => {
+    if (typeof listener !== "function") return () => {};
+    const handler = (_event, value) => {
+      if (!value || (value.type !== "pause" && value.type !== "resume")) return;
+      if (value.reason !== "lock-screen" && value.reason !== "suspend") return;
+      listener(Object.freeze({ type: value.type, reason: value.reason }));
+    };
+    ipcRenderer.on("brainpet:host-event", handler);
+    return () => ipcRenderer.off("brainpet:host-event", handler);
+  },
 }));

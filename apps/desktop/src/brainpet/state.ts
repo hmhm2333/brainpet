@@ -61,7 +61,18 @@ function isPersistedResult(value: unknown): value is BrainPetTaskResult {
     && Number.isInteger(value.incorrect)
     && Number.isInteger(value.missed)
     && Number.isInteger(value.durationMs)
-    && typeof value.completedAt === "string" && value.completedAt.length <= 64;
+    && typeof value.completedAt === "string" && value.completedAt.length <= 64
+    && typeof value.taskVersion === "string"
+    && typeof value.assetVersion === "string"
+    && value.difficultyPolicyVersion === "brainpet-block-v1"
+    && value.scoreVersion === "brainpet-score-v1"
+    && Number.isInteger(value.level)
+    && Number.isInteger(value.falseAlarms)
+    && (value.meanReactionTimeMs === null || Number.isFinite(value.meanReactionTimeMs))
+    && Array.isArray(value.trials)
+    && isRecord(value.quality)
+    && typeof value.quality.valid === "boolean"
+    && Array.isArray(value.petEvents);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

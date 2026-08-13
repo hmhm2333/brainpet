@@ -4,7 +4,7 @@ interface BrainPetStageBootstrap {
   readonly apiVersion: 1;
   readonly mode: "stage-exerciser" | "training";
   readonly suggestedSeed: number;
-  readonly availableTasks: readonly ["cargo-signal", "pack-refresh"];
+  readonly availableTasks: readonly BrainPetTaskId[];
   readonly lastResult: BrainPetTaskResult | null;
   readonly highScores: Partial<Record<BrainPetTaskId, number>>;
 }
@@ -20,6 +20,7 @@ interface BrainPetBridge {
     | { readonly type: "settled" }
   ): void;
   close(): void;
+  onHostEvent(listener: (event: { readonly type: "pause" | "resume"; readonly reason: "lock-screen" | "suspend" }) => void): () => void;
 }
 
 declare global {
