@@ -135,6 +135,27 @@ try {
     assert.doesNotMatch(completion.text, /成绩不计有效/);
     assert.equal(completion.hasRetry, true, "result must offer a same-level retry");
     await delay(1_500);
+    completion.layout = await evaluate(stageTarget, `(() => {
+      const content = document.querySelector('.result-content');
+      if (!(content instanceof HTMLElement)) return null;
+      const container = content.getBoundingClientRect();
+      const selectors = ['.pixel-kicker', '.score-medal', '.best-score', '.daily-stamp', '.agent-notice', '.result-stats', '.quality-note', '.result-actions', '.auto-close'];
+      const items = selectors.flatMap((selector) => {
+        const element = content.querySelector(selector);
+        if (!(element instanceof HTMLElement)) return [];
+        const rect = element.getBoundingClientRect();
+        return [{ selector, top: rect.top, bottom: rect.bottom, height: rect.height }];
+      });
+      return { top: container.top, bottom: container.bottom, items };
+    })()`);
+    assert.ok(completion.layout, "result layout must exist");
+    for (const item of completion.layout.items) {
+      assert.equal(item.height > 0, true, `${item.selector} must not collapse`);
+      assert.equal(item.top >= completion.layout.top - 1 && item.bottom <= completion.layout.bottom + 1, true, `${item.selector} must remain inside the result surface`);
+    }
+    for (let index = 1; index < completion.layout.items.length; index += 1) {
+      assert.equal(completion.layout.items[index].top >= completion.layout.items[index - 1].bottom - 1, true, `${completion.layout.items[index].selector} must not overlap the previous result row`);
+    }
     resultOutputPath = outputPath.replace(/(\.[^.]+)$/, "-result$1");
     const resultScreenshot = await sendCdp(stageTarget.webSocketDebuggerUrl, "Page.captureScreenshot", { format: "png", fromSurface: true });
     await writeFile(resultOutputPath, Buffer.from(resultScreenshot.data, "base64"));

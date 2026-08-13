@@ -1,7 +1,7 @@
 # BrainPet V1 产品需求与开发计划
 
-状态：V1 垂直切片已实现；Runtime/Stage 基础设施门与两项任务样本已通过，任务参数与最终角色美术待专项评审
-日期：2026-08-13  
+状态：V1 开发验收完成；Runtime/Stage 基础设施门与两项任务样本已通过，外部物理放行待复核
+日期：2026-08-14
 适用分支：`codex/foundation`
 
 ## 1. 结论
@@ -10,7 +10,7 @@ BrainPet V1 应交付一个完成度足够高的垂直切片，而不是一个 U
 
 V1 的第一优先级不是制作两款游戏，而是先完成一个稳定、可复用的游戏 Runtime 和小型桌面舞台。Go/No-Go 与持续更新是这个基础设施上的首批内容模块，也是验证基础设施是否真正通用的两个验收样本。在 Runtime 基础设施验收门通过前，不进入正式游戏内容开发。
 
-截至 2026-08-13，代码已按该顺序完成：Host Adapter、Runtime Core、Task Contract、Stage Exerciser 与基础设施门先落地，之后才接入 `cargo-signal` 和 `pack-refresh`。验收证据与可重复命令见 `docs/brainpet-runtime.md`。
+截至 2026-08-14，代码已按该顺序完成：Host Adapter、Runtime Core、Task Contract、Stage Exerciser 与基础设施门先落地，之后才接入 `cargo-signal` 和 `pack-refresh`。验收证据与可重复命令见 `docs/brainpet-runtime.md`。
 
 首版只做两款短任务：
 
@@ -428,14 +428,11 @@ Stage 不需要成为通用游戏引擎。V1 只建设两款短任务确定需�
 
 ### 9.7 渲染技术决策
 
-V1 不直接承诺 Phaser、PixiJS 或纯 Canvas。第一阶段做同一 20–30 秒像素场景的双实现 spike：
+M3 实施时冻结为 Electron sandbox renderer + DOM/CSS 像素舞台，不引入 Canvas/PixiJS。原计划中的 Canvas/PixiJS 双实现 spike 被生产舞台证据替代，这是一次有记录的计划调整，不把未执行的 spike 伪装成完成。
 
-| 方案 | 优点 | 风险 |
-| --- | --- | --- |
-| Canvas 2D + TypeScript | 依赖少、计时和输入链路直接、两款任务足够 | sprite、粒子、场景编排工具需要自建 |
-| PixiJS + TypeScript | sprite、容器、滤镜、资源管理成熟，利于高完成度 | 新依赖与打包体积，需验证沙箱和透明窗口表现 |
+选择依据：两款 V1 任务均是少量离散对象、HUD 和短反馈动画，DOM/CSS 已能提供语义化点击区、确定性状态检查和低成本视觉回归；当前构建约 24.55 kB JavaScript、10.96 kB CSS，真实 Electron 舞台 640×360，便携包内暖启动低于 500 ms，并通过 100 次生命周期和 30 分钟 soak。此时为比较而引入 PixiJS 会增加依赖、包体和沙箱验证面，但不会改善 V1 的用户结果。
 
-选择标准不是“哪个更流行”，而是同一视觉目标下的帧稳定性、像素清晰度、包体、开发速度和可测试性。若 PixiJS 在透明 Electron 窗口中稳定，V1 倾向使用 PixiJS；否则退回 Canvas 2D。
+当单场景同时活动 sprite 明显增加、需要 camera/filter/大量粒子，或 DOM 版本无法维持最低 30 FPS 有效节奏时，重新开启 Canvas/PixiJS 对照；替换只发生在 Stage renderer 内，不修改 Host、Runtime、Task Contract 或持久化合同。
 
 ### 9.8 数据记录
 
@@ -572,7 +569,7 @@ V1 使用分块、可解释的确定性策略：
 
 工作：
 
-- 完成 Canvas 2D/PixiJS 对照 spike 并冻结渲染技术；
+- 依据生产舞台测量冻结渲染技术，并记录替代 Canvas 2D/PixiJS 对照 spike 的原因与重开条件；
 - 实现状态机、时钟、输入、任务注册、session 和持久化；
 - 实现资源、sprite、动画、音效、HUD、暂停、结算和关闭；
 - 接入 Stage Exerciser 和开发模式参数/日志工具。

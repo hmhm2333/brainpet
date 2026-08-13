@@ -70,6 +70,10 @@ V1 注册三个模块：`stage-exerciser`（基础设施验收）、`cargo-signa
 
 ## 渲染决策
 
-V1 使用 Electron sandbox renderer + DOM/CSS 像素舞台，不引入 PixiJS。当前两款任务只需要少量离散 sprite、层、反馈动画和 HUD；DOM/CSS 版本的生产构建约 17 kB JavaScript、9 kB CSS，透明窗口实测 640×360 下可由统一 `requestAnimationFrame` 监测掉帧。若后续任务需要大量 sprite、camera 或粒子，再以同一 Task Contract 替换 Stage renderer，不改变 Host、Runtime 或持久化主流程。
+V1 使用 Electron sandbox renderer + DOM/CSS 像素舞台，不引入 PixiJS。当前两款任务只需要少量离散 sprite、层、反馈动画和 HUD；DOM/CSS 版本的生产构建约 24.55 kB JavaScript、10.96 kB CSS，透明窗口实测 640×360 下可由统一 `requestAnimationFrame` 监测有效帧节奏。若后续任务需要大量 sprite、camera 或粒子，或无法维持最低 30 FPS 有效节奏，再以同一 Task Contract 替换 Stage renderer，不改变 Host、Runtime 或持久化主流程。
+
+原 PRD 设想的 Canvas/PixiJS 双实现 spike 在 M3 被生产舞台测量替代：100 次真实窗口生命周期、30 分钟 soak、便携包内 178 ms 暖启动和动态视觉检查已经覆盖 V1 的决策标准。该调整避免为一次比较引入不进入产品的运行依赖；详细状态以 PRD 9.7 为准。
 
 这不是把网页卡片搬到桌面：用户版本没有浏览器导航、默认 HTML 控件或任意网络能力；窗口、沙箱和生命周期均由 Host 管理，UI 只是 Stage 的渲染实现。
+
+便携私测包使用 `scripts/brainpet-package-portable.mjs` 自动复用工作区已安装的 Electron，避免重复网络下载。该 unsigned 私测产物关闭 EXE 资源编辑；正式分发仍需恢复发布元数据、代码签名和发布证书流程。
