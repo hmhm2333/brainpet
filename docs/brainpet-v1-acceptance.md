@@ -39,10 +39,10 @@
 
 ## 视觉与实机
 
-- 目标舞台 640×360；本机 150% Windows 缩放实测内容区 640×360，打开约 164–204ms。
+- 目标舞台 640×360；本机 150% Windows 缩放实测内容区 640×360，源码 Electron 打开约 160–208ms。
 - 宠物移动后舞台跟随；失焦自动暂停/恢复；按钮可点击区域 30×30。
 - welcome、Stage Exerciser、Go/No-Go、持续更新和 unpacked package 均有 Electron 实机截图留在本地 `output/playwright`（该目录不进入 Git）。
-- branded portable 私测包：`apps/desktop/dist-electron/BrainPet-3.4.0-win-x64.exe`，约 151 MB；首次解压启动需更长等待，包内舞台实测 640×360、354ms 打开并通过故障隔离。
+- branded portable 私测包：`apps/desktop/dist-electron/BrainPet-3.4.0-win-x64.exe`，约 151 MB；首次解压启动需更长等待，最终同版包内舞台实测 640×360、241ms 打开并通过故障隔离。
 - 未使用竞品名称、角色、贴图、音效或关卡数据；视觉为原创掌机像素表达。
 
 ## 已知环境边界
