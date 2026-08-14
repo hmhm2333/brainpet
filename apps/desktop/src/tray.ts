@@ -1,4 +1,5 @@
-import { Menu, shell, Tray, type MenuItemConstructorOptions } from "electron";
+import { app, Menu, shell, Tray, type MenuItemConstructorOptions } from "electron";
+import { basename } from "node:path";
 
 import { getAppStateSnapshot } from "./app-state.js";
 import { createTrayIcon } from "./assets.js";
@@ -11,6 +12,10 @@ import { getUpdateStatus, openUpdateReleasePage } from "./update-checker.js";
 import { getPluginVoiceOperation, subscribePluginVoiceOperation } from "./plugin-voice.js";
 import { createVoiceMenuItems } from "./tray-voice-menu.js";
 import { openControlCenterWindow } from "./windows.js";
+import { resolveDesktopDistributionSettings } from "./distribution-profile.js";
+import { openBrainPetSetupGuide } from "./brainpet-setup-guide.js";
+
+const distribution = resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath));
 
 let tray: Tray | null = null;
 let voiceOperationSubscriptionInstalled = false;
@@ -21,14 +26,14 @@ export function createAppTray(): Tray {
   }
 
   tray = new Tray(createTrayIcon());
-  tray.setToolTip("OpenPets");
+  tray.setToolTip(distribution.displayName);
   if (!voiceOperationSubscriptionInstalled) {
     voiceOperationSubscriptionInstalled = true;
     subscribePluginVoiceOperation(() => refreshTrayMenu());
   }
   refreshTrayMenu();
   info("tray", "created");
-  console.log("OpenPets tray created.");
+  console.log(`${distribution.displayName} tray created.`);
 
   return tray;
 }
@@ -44,7 +49,7 @@ export function refreshTrayMenu(): void {
 
   const menu = Menu.buildFromTemplate([
     {
-      label: "OpenPets",
+      label: distribution.displayName,
       enabled: false,
     },
     ...createUpdateMenuItems(),
@@ -91,6 +96,10 @@ export function refreshTrayMenu(): void {
       label: t("tray.integrations"),
       click: () => openControlCenterWindow("integrations"),
     },
+    ...(distribution.profile === "brainpet" ? [{
+      label: t("tray.brainpetSetup"),
+      click: () => openBrainPetSetupGuide(),
+    }] : []),
     {
       label: t("tray.plugins"),
       click: () => openControlCenterWindow("plugins"),
@@ -102,7 +111,7 @@ export function refreshTrayMenu(): void {
     { type: "separator" },
     {
       label: t("tray.website"),
-      click: () => { void shell.openExternal("https://openpets.dev/"); },
+      click: () => { void shell.openExternal(distribution.profile === "brainpet" ? "https://github.com/hmhm2333/brainpet" : "https://openpets.dev/"); },
     },
     {
       label: t("tray.openLogsFolder"),

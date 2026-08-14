@@ -14,6 +14,8 @@ Supported targets for the first public package:
 - `aarch64-pc-windows-msvc`
 - `x86_64-apple-darwin`
 - `aarch64-apple-darwin`
+- `x86_64-unknown-linux-gnu`
+- `aarch64-unknown-linux-gnu`
 
 The helper is deliberately fail-open: malformed input, a missing runtime, or a
 connection error results in a successful silent exit so an Agent turn is never

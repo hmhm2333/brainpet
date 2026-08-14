@@ -1,0 +1,101 @@
+name: BrainPet portability gate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - "integrations/**"
+      - "native/brainpet-hook/**"
+      - "scripts/brainpet-**"
+      - ".github/workflows/brainpet-portability-gate.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm brainpet:release:test
+
+  native-helper:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { id: windows-x64, os: windows-latest, rust: x86_64-pc-windows-msvc, file: brainpet-hook.exe }
+          - { id: windows-arm64, os: windows-latest, rust: aarch64-pc-windows-msvc, file: brainpet-hook.exe }
+          - { id: macos-x64, os: macos-15-intel, rust: x86_64-apple-darwin, file: brainpet-hook }
+          - { id: macos-arm64, os: macos-14, rust: aarch64-apple-darwin, file: brainpet-hook }
+          - { id: linux-x64, os: ubuntu-latest, rust: x86_64-unknown-linux-gnu, file: brainpet-hook }
+          - { id: linux-arm64, os: ubuntu-24.04-arm, rust: aarch64-unknown-linux-gnu, file: brainpet-hook }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust }}
+      - run: cargo test --manifest-path native/brainpet-hook/Cargo.toml --target ${{ matrix.rust }}
+      - run: cargo build --release --manifest-path native/brainpet-hook/Cargo.toml --target ${{ matrix.rust }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.id }}
+          path: native/brainpet-hook/target/${{ matrix.rust }}/release/${{ matrix.file }}
+          if-no-files-found: error
+
+  runtime-package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { id: windows-x64, os: windows-latest, platform: windows, arch: x64, private: --unsigned-private }
+          - { id: windows-arm64, os: windows-latest, platform: windows, arch: arm64, private: --unsigned-private }
+          - { id: macos-x64, os: macos-15-intel, platform: macos, arch: x64, private: "" }
+          - { id: macos-arm64, os: macos-14, platform: macos, arch: arm64, private: "" }
+          - { id: linux-x64, os: ubuntu-latest, platform: linux, arch: x64, private: "" }
+          - { id: linux-arm64, os: ubuntu-24.04-arm, platform: linux, arch: arm64, private: "" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @open-pets/desktop build
+      - run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target dir ${{ matrix.private }}
+      - run: node apps/desktop/scripts/validate-brainpet-package.mjs --target ${{ matrix.id }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brainpet-runtime-${{ matrix.id }}
+          path: apps/desktop/dist-brainpet/
+          if-no-files-found: error
+
+  assemble-bridge:
+    needs: native-helper
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: output/brainpet-helper-artifacts
+      - run: node integrations/codex/scripts/assemble-bridge-release.mjs --artifacts output/brainpet-helper-artifacts --output output/brainpet-release/brainpet-codex-bridge
+      - run: node integrations/codex/scripts/validate-bridge-release.mjs --plugin-root output/brainpet-release/brainpet-codex-bridge
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brainpet-codex-bridge
+          path: output/brainpet-release/brainpet-codex-bridge
+          if-no-files-found: error

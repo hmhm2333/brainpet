@@ -2,9 +2,9 @@ import { app, powerMonitor } from "electron";
 import { existsSync } from "node:fs";
 import { basename, delimiter, join, resolve } from "node:path";
 
-import { getAppStateSnapshot, initializeAppState, releaseStartupInstallLock } from "./app-state.js";
+import { completeOnboarding, getAppStateSnapshot, initializeAppState, isOnboardingCompleted, releaseStartupInstallLock } from "./app-state.js";
 import { createAppIcon } from "./assets.js";
-import { setLocaleFromPreference } from "./i18n/index.js";
+import { setLocaleFromPreference, t } from "./i18n/index.js";
 import { applyExternalPetReaction, applyExternalPetSay, getDefaultPetPaused, installDefaultPetDisplayHandlers, isDefaultPetVisible, shouldOpenDefaultPetOnLaunch, showDefaultPet } from "./default-pet-controller.js";
 import { installAppLifecycle } from "./lifecycle.js";
 import { initializeLanController, isDefaultPetAwayForLan, startLanController } from "./lan-controller.js";
@@ -25,6 +25,7 @@ import { initializeBrainPetHost } from "./brainpet/host.js";
 import { initializeAgentLifecycleController } from "./agent-lifecycle-controller.js";
 import { isBrainPetFeatureEnabled, resolveDesktopDistributionSettings, shouldUseIsolatedBrainPetUserData } from "./distribution-profile.js";
 import { createBrainPetInstallMarker, writeBrainPetInstallMarker } from "./brainpet-install-marker.js";
+import { shouldShowBrainPetFirstRunGuide } from "./brainpet-first-run.js";
 
 const distribution = resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath));
 if (shouldUseIsolatedBrainPetUserData(distribution.profile, process.argv)) {
@@ -127,7 +128,8 @@ if (!gotSingleInstanceLock) {
     createAppTray();
     installDefaultPetDisplayHandlers();
     initializeAgentLifecycleController();
-    if (isBrainPetFeatureEnabled(distribution, process.env.OPENPETS_BRAINPET_ENABLED)) initializeBrainPetHost();
+    const brainPetFeatureEnabled = isBrainPetFeatureEnabled(distribution, process.env.OPENPETS_BRAINPET_ENABLED);
+    if (brainPetFeatureEnabled) initializeBrainPetHost();
     await startLocalIpcServer();
     releaseStartupInstallLock();
     const roots = parseDevPluginEnv(process.env.OPENPETS_DEV_PLUGIN_ROOTS);
@@ -139,8 +141,13 @@ if (!gotSingleInstanceLock) {
     const pluginService = initializePluginService(app.getPath("userData"), defaultPluginPetApi, app.getVersion(), new ElectronPluginJsHost(), writePluginRuntimeLog, process.env.OPENPETS_DISABLE_PLUGIN_CATALOG === "1" || devPluginMode, resolveBundledOfficialPluginRoots(), !devPluginMode && distribution.seedBundledPlugins, pluginCapabilities, undefined, (sourcePath) => devPluginWatcher?.addPaths([sourcePath]), (sourcePath) => devPluginWatcher?.removePath(sourcePath));
     // Wall-clock schedules (daily/cron/at) re-arm deterministically after sleep.
     powerMonitor.on("resume", () => pluginService.runtime.resyncSchedules());
-    if (shouldOpenDefaultPetOnLaunch()) {
+    const showBrainPetFirstRunGuide = shouldShowBrainPetFirstRunGuide({ profile: distribution.profile, packaged: app.isPackaged, featureEnabled: brainPetFeatureEnabled, onboardingCompleted: isOnboardingCompleted() });
+    if (shouldOpenDefaultPetOnLaunch() || showBrainPetFirstRunGuide) {
       showDefaultPet();
+    }
+    if (showBrainPetFirstRunGuide) {
+      completeOnboarding();
+      setTimeout(() => applyExternalPetSay(t("brainpet.firstRun.guide"), "waving"), 650);
     }
     startLanController();
     try {

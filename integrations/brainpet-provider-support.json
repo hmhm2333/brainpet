@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "dimensions": ["lifecycle", "taskNavigation", "requestActions", "message", "voice"],
+  "statuses": ["implemented", "planned", "unavailable"],
+  "providers": [
+    {
+      "id": "codex",
+      "displayName": "Codex",
+      "delivery": ["native-hook", "node-development-fallback"],
+      "support": { "lifecycle": "implemented", "taskNavigation": "unavailable", "requestActions": "unavailable", "message": "unavailable", "voice": "unavailable" },
+      "evidence": "integrations/codex/plugins/brainpet-codex-bridge/hooks/hooks.json"
+    },
+    {
+      "id": "claude-code",
+      "displayName": "Claude Code",
+      "delivery": [],
+      "support": { "lifecycle": "planned", "taskNavigation": "planned", "requestActions": "planned", "message": "planned", "voice": "planned" }
+    },
+    {
+      "id": "workbuddy",
+      "displayName": "WorkBuddy",
+      "delivery": [],
+      "support": { "lifecycle": "planned", "taskNavigation": "planned", "requestActions": "planned", "message": "planned", "voice": "planned" }
+    },
+    {
+      "id": "deepseek-harness",
+      "displayName": "DeepSeek Harness",
+      "delivery": [],
+      "support": { "lifecycle": "planned", "taskNavigation": "planned", "requestActions": "planned", "message": "planned", "voice": "planned" }
+    }
+  ]
+}

@@ -17,12 +17,14 @@ export const en = {
   "tray.controlCenter": "Control Center...",
   "tray.website": "Website...",
   "tray.integrations": "Integrations...",
+  "tray.brainpetSetup": "BrainPet Setup & Recovery...",
   "tray.plugins": "Plugins...",
   "tray.settings": "Settings...",
   "tray.cancelVoiceListening": "Stop microphone listening",
   "tray.cancelVoiceTranscription": "Cancel transcription",
   "tray.openLogsFolder": "Open Logs Folder...",
   "tray.quit": "Quit OpenPets",
+  "brainpet.firstRun.guide": "Open the tray → BrainPet Setup. Install and trust the Codex Bridge; a new task will wake me.",
 
   // --- Shared ---
   "common.latest": "latest",

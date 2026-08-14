@@ -1,0 +1,71 @@
+appId: dev.brainpet.app
+productName: BrainPet
+executableName: brainpet
+copyright: Copyright © 2026 BrainPet contributors
+
+directories:
+  output: dist-brainpet
+
+artifactName: BrainPet-${version}-${os}-${arch}.${ext}
+
+files:
+  - dist/**
+  - control-center-preload.cjs
+  - pet-preload.cjs
+  - brainpet-preload.cjs
+  - plugin-sdk-preload.cjs
+  - plugin-command-form-preload.cjs
+  - panel-preload.cjs
+  - assets/**
+  - package.json
+
+extraResources:
+  - from: ../../integrations/codex/plugins/brainpet-codex-bridge
+    to: integrations/codex/brainpet-codex-bridge
+    filter:
+      - "**/*"
+      - "!bin/**/*"
+
+asar: true
+asarUnpack:
+  - node_modules/**
+npmRebuild: false
+publish: null
+
+toolsets:
+  appimage: 1.0.3
+
+mac:
+  icon: assets/app-icon.icns
+  category: public.app-category.utilities
+  extendInfo:
+    NSMicrophoneUsageDescription: BrainPet uses your microphone only for one-shot, user-initiated voice input.
+  target:
+    - dmg
+    - zip
+  identity: "-"
+  hardenedRuntime: false
+  gatekeeperAssess: false
+
+win:
+  icon: assets/app-icon.ico
+  target:
+    - nsis
+    - portable
+  verifyUpdateCodeSignature: true
+
+nsis:
+  artifactName: BrainPet-${version}-win-${arch}-setup.${ext}
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  include: build/brainpet-installer.nsh
+
+linux:
+  icon: assets/app-icon.png
+  target:
+    - AppImage
+    - deb
+    - tar.gz
+  category: Utility
+  maintainer: BrainPet contributors

@@ -36,6 +36,8 @@
     "plugins:deploy": "pnpm --dir web deploy",
     "plugins:release": "pnpm plugins:package && pnpm plugins:validate-release && pnpm plugins:publish && pnpm plugins:deploy && pnpm plugins:validate-live",
     "brainpet:bridge:validate-release": "node integrations/codex/scripts/validate-bridge-release.mjs",
+    "brainpet:release:validate-source": "node scripts/validate-brainpet-release-source.mjs",
+    "brainpet:release:test": "pnpm brainpet:release:validate-source && pnpm --filter @open-pets/desktop package:brainpet:matrix && node scripts/test-brainpet-release.mjs",
     "test": "pnpm build && pnpm -r --if-present test",
     "check": "pnpm -r check",
     "typecheck": "pnpm -r typecheck",

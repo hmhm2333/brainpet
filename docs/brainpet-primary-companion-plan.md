@@ -206,6 +206,8 @@ Codex 当前桥接只具备 `observeLifecycle`。在找到并验证公开的动�
 
 ### M5：安装、适配与跨平台验证
 
+实现状态（2026-08-14）：发行基础设施代码完成，公开发布门尚未宣称通过。BrainPet 已有独立 `appId`、可执行文件名、产物目录、更新仓库和 Windows 卸载标记清理；统一打包入口覆盖 Windows/macOS/Linux 的 x64/arm64 六目标。Codex Bridge 同步覆盖六目标 launcher，并新增原生 helper 装配、SHA-256 回执和强制二进制发行验证。首次运行由宠物气泡引导，托盘提供像素风“安装与恢复”回执页；运行时、Bridge 信任和新任务生效分开显示，卸载/恢复语义不混淆。CI 可在六类 runner 上构建 runtime 与 Rust helper，但代码签名、公证、真实 Codex Hook 信任和六平台实机透明窗口仍是公开发行前的人工门。
+
 - BrainPet runtime：Windows x64/arm64、macOS Intel/Apple Silicon、Linux x64/arm64；
 - bridge 层：原生 hook 优先，MCP/CLI wrapper 为降级渠道；
 - 每个 Agent 只写一个小 adapter，不复制 runtime、舞台和 UI；
@@ -214,6 +216,8 @@ Codex 当前桥接只具备 `observeLifecycle`。在找到并验证公开的动�
 - 安装、升级、重新授权、暂停、卸载和 runtime 缺失都有人工回执。
 
 **退出门：** 一次安装后至少 Codex 在新任务中可自动唤醒 BrainPet；卸载 bridge 不影响离线桌宠/训练；卸载 runtime 后 bridge no-op；各平台不要求 Node/npm。
+
+当前 provider 能力以 `integrations/brainpet-provider-support.json` 为唯一机器可读清单：Codex 仅将 lifecycle 标为 implemented；任务跳转、请求操作、消息和语音均保持 unavailable。Claude Code、WorkBuddy 与 DeepSeek Harness 只标 planned，不用“兼容”一词掩盖尚未完成的 adapter。
 
 ## 7. 测试矩阵
 

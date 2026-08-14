@@ -1,9 +1,12 @@
 {
   "name": "brainpet-codex-bridge",
-  "version": "0.1.0",
-  "description": "Privately mirrors Codex lifecycle state to the local BrainPet runtime.",
+  "version": "0.2.0",
+  "description": "Mirrors privacy-minimized Codex lifecycle state to the local BrainPet runtime.",
+  "homepage": "https://github.com/hmhm2333/brainpet",
+  "repository": "https://github.com/hmhm2333/brainpet",
   "author": {
-    "name": "BrainPet"
+    "name": "BrainPet",
+    "url": "https://github.com/hmhm2333/brainpet"
   },
   "license": "MIT",
   "keywords": ["brainpet", "codex", "pet", "lifecycle"],
@@ -13,7 +16,10 @@
     "longDescription": "Sends only local lifecycle state and ephemeral session identifiers to BrainPet. Prompt, response, transcript, and workspace contents are not forwarded.",
     "developerName": "BrainPet",
     "category": "Productivity",
+    "logo": "./assets/brainpet-plugin-icon.svg",
     "capabilities": ["Local lifecycle"],
-    "defaultPrompt": "Explain how BrainPet mirrors local Codex task status."
+    "defaultPrompt": "Explain how BrainPet mirrors local Codex task status.",
+    "websiteURL": "https://github.com/hmhm2333/brainpet",
+    "privacyPolicyURL": "https://github.com/hmhm2333/brainpet/blob/main/PRIVACY.md"
   }
 }
