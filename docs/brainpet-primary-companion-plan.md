@@ -1,6 +1,6 @@
 # BrainPet 主宠替代层：本轮开发计划
 
-> 状态：M1/M2/M3 代码完成；原生 helper 本机编译与跨 DPI 实机验收待发布环境复核
+> 状态：M1/M2/M3/M4 代码完成；真实宿主动作适配、原生 helper 本机编译与跨 DPI 实机验收待后续里程碑复核
 > 日期：2026-08-14
 > 适用分支：`codex/foundation`
 > 目标版本：Primary Companion V0.1
@@ -116,7 +116,7 @@ Agent providers
 - `voice`：宿主语音会话控制；
 - `detailActivity`：宿主提供安全的工具活动类别。
 
-UI 只从当前活动条目的 capability 集合生成操作。没有 capability 就不渲染按钮，不使用灰色假按钮，也不以“复制文本去宿主”冒充集成。
+UI 只从当前活动条目的 capability 集合与 runtime 内已注册 adapter 能力的交集生成操作。事件自身不能注册 adapter 或取得执行能力。没有双重能力证明就不渲染按钮，不使用灰色假按钮，也不以“复制文本去宿主”冒充集成。
 
 ### 5.2 事件与动作分离
 
@@ -193,6 +193,8 @@ Codex 当前桥接只具备 `observeLifecycle`。在找到并验证公开的动�
 **退出门：** 单击、拖动、训练热点和状态徽标不互相抢事件；100 次展开/收起无额外窗口；不同缩放和 DPI 下点击区与视觉一致。
 
 ### M4：P1 宿主动作壳与安全降级
+
+实现状态（2026-08-14）：代码完成。宿主进程新增统一 Action Broker；请求类型覆盖 permission、question、review、open-link、stop、continue，最多 6 个结构化选项。所有可执行控件要求 lifecycle 声明与进程内 provider adapter 双重匹配，并使用宿主生成的 5 分钟 token、动作描述符、到期时间和一次性 nonce。提交期间禁用重复操作，成功消费当前请求，失败保留像素窗格和一行截断错误；未注册 adapter 时只显示“回到 Agent”。Codex 仍仅接入公开可验证的 `observeLifecycle`，所以当前不会出现虚假的授权、停止或回复按钮。
 
 - 建立统一请求类型：permission、question、review、open-link、stop、continue；
 - 请求窗格只渲染 provider 返回的结构化选项；

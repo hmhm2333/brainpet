@@ -59,7 +59,7 @@ try {
   const companionClient = createOpenPetsClient({ discoveryPath });
   const companionNow = Date.now();
   await companionClient.reportAgentActivity({ agent: "codex", sessionId: "smoke-working", turnId: "turn-working", state: "working", occurredAt: companionNow, capabilities: ["observeLifecycle"] });
-  await companionClient.reportAgentActivity({ agent: "claude", sessionId: "smoke-review", turnId: "turn-review", state: "ready", occurredAt: companionNow + 1, capabilities: ["observeLifecycle"] });
+  await companionClient.reportAgentActivity({ agent: "claude", sessionId: "smoke-review", turnId: "turn-review", state: "waiting", occurredAt: companionNow + 1, capabilities: ["observeLifecycle", "respondToRequest"], request: { kind: "permission", requestId: "smoke-request", options: [{ id: "once", label: "Allow once", intent: "runOnce" }, { id: "deny", label: "Deny", intent: "deny" }] } });
   await waitForEvaluation(petTarget, `Boolean(document.querySelector('[data-companion-toggle]'))`, 2_000);
   const companionBadge = await evaluate(petTarget, `(() => {
     const button = document.querySelector('[data-companion-toggle]');
@@ -75,12 +75,14 @@ try {
   const companionTray = await evaluate(petTarget, `({
     expanded: document.querySelector('[data-companion-toggle]')?.getAttribute('aria-expanded'),
     rows: document.querySelectorAll('.primary-companion-item').length,
-    hasHostAction: Boolean(document.querySelector('[data-companion-allow], [data-companion-deny], [data-companion-stop], [data-companion-reply]')),
+    hasHostAction: Boolean(document.querySelector('[data-companion-action]')),
+    hasSafeFallback: Boolean(document.querySelector('.primary-companion-request.is-fallback')),
     fontFamily: getComputedStyle(document.querySelector('.primary-companion-tray')).fontFamily
   })`);
   assert.equal(companionTray.expanded, "true");
   assert.equal(companionTray.rows, 2);
   assert.equal(companionTray.hasHostAction, false, "observe-only providers must not receive fake host action controls");
+  assert.equal(companionTray.hasSafeFallback, true, "unregistered providers must fall back to the Agent even when lifecycle events claim action support");
   assert.match(companionTray.fontFamily, /BrainPet Pixel/);
   await evaluate(petTarget, `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
   const companionOutputPath = outputPath.replace(/(\.[^.]+)$/, "-companion$1");
@@ -92,6 +94,29 @@ try {
   await companionClient.reportAgentActivity({ agent: "codex", sessionId: "smoke-working", turnId: "turn-working", state: "idle", occurredAt: companionNow + 2, capabilities: ["observeLifecycle"] });
   await companionClient.reportAgentActivity({ agent: "claude", sessionId: "smoke-review", turnId: "turn-cleanup", state: "idle", occurredAt: companionNow + 3, capabilities: ["observeLifecycle"] });
   await waitForEvaluation(petTarget, `!document.querySelector('[data-companion-toggle]')`, 2_000);
+  await companionClient.say("PIXEL UI", { reaction: "working" });
+  await waitForEvaluation(petTarget, `Boolean(document.querySelector('.bubble'))`, 2_000);
+  await waitForEvaluation(petTarget, `document.fonts.status === 'loaded'`, 5_000);
+  const pixelUi = await evaluate(petTarget, `(() => {
+    const bubble = document.querySelector('.bubble');
+    if (!(bubble instanceof HTMLElement)) return { found: false };
+    const style = getComputedStyle(bubble);
+    return { found: true, theme: document.documentElement.dataset.petUiTheme, fontFamily: style.fontFamily, borderRadius: style.borderRadius, borderTopWidth: style.borderTopWidth, backgroundImage: style.backgroundImage, backdropFilter: style.backdropFilter, boxShadow: style.boxShadow };
+  })()`);
+  assert.equal(pixelUi.found, true, "host speech must render in the pet UI");
+  assert.equal(pixelUi.theme, "pixel");
+  assert.match(pixelUi.fontFamily, /BrainPet Pixel/);
+  assert.equal(pixelUi.borderRadius, "0px");
+  assert.equal(Number.parseFloat(pixelUi.borderTopWidth) >= 2.5 && Number.parseFloat(pixelUi.borderTopWidth) <= 3.1, true, `pixel border must survive display-scale rounding; received ${pixelUi.borderTopWidth}`);
+  assert.equal(pixelUi.backgroundImage, "none");
+  assert.equal(pixelUi.backdropFilter, "none");
+  assert.match(pixelUi.boxShadow, /4px 4px 0px/);
+  const pixelUiOutputPath = outputPath.replace(/(\.[^.]+)$/, "-pet-ui$1");
+  const pixelUiScreenshot = await sendCdp(petTarget.webSocketDebuggerUrl, "Page.captureScreenshot", { format: "png", fromSurface: true });
+  await mkdir(dirname(pixelUiOutputPath), { recursive: true });
+  await writeFile(pixelUiOutputPath, Buffer.from(pixelUiScreenshot.data, "base64"));
+  await evaluate(petTarget, `document.querySelector('.bubble')?.click()`);
+  await waitForEvaluation(petTarget, `!document.querySelector('.bubble')`, 2_000);
   const trigger = await evaluate(petTarget, `(() => {
     const button = document.querySelector('[data-brainpet-trigger]');
     if (!(button instanceof HTMLButtonElement)) return { found: false };
@@ -404,7 +429,7 @@ try {
   if (enforceResourceBudget && recoveredIdleProcessMetrics) assertProcessBudget("recovered idle", recoveredIdleProcessMetrics, { processCount: (idleProcessMetrics?.processCount ?? 4) + 1, workingSetBytes: 700 * 1024 * 1024, privateBytes: 500 * 1024 * 1024 });
   assert.doesNotMatch(logs.join(""), /invalid stage event rejected|stage event transition rejected/, "crash recovery must leave the Host lifecycle valid");
 
-  process.stdout.write(`${JSON.stringify({ ok: true, outputPath, introOutputPath, companionOutputPath, resultOutputPath, videoPath, petReadyMs, idleProcessMetrics, activeProcessMetrics, recoveredIdleProcessMetrics, companionVerified: true, trigger, stage: { width: welcome.width, height: welcome.height, desktopOverlay: true }, prompt: welcome.prompt, introBufferMs, openingMs, petIndependentMove, rigIndependentDrag, trialVisualHiddenDuringDrag, restartedTrialProgress, rigAutoResume, focusPause, nativeReactionClickVerified, petThrowVerified, petToggleCloseVerified, completionVerified: Boolean(completion), completionQuality: completion?.quality ?? null, foundationInputVerified, lifecycleCycles, soak, crashIsolated: true, crashRecovered: true })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, outputPath, introOutputPath, companionOutputPath, pixelUiOutputPath, resultOutputPath, videoPath, petReadyMs, idleProcessMetrics, activeProcessMetrics, recoveredIdleProcessMetrics, companionVerified: true, pixelUiVerified: true, trigger, stage: { width: welcome.width, height: welcome.height, desktopOverlay: true }, prompt: welcome.prompt, introBufferMs, openingMs, petIndependentMove, rigIndependentDrag, trialVisualHiddenDuringDrag, restartedTrialProgress, rigAutoResume, focusPause, nativeReactionClickVerified, petThrowVerified, petToggleCloseVerified, completionVerified: Boolean(completion), completionQuality: completion?.quality ?? null, foundationInputVerified, lifecycleCycles, soak, crashIsolated: true, crashRecovered: true })}\n`);
   }
 } catch (error) {
   process.stderr.write(`${logs.join("")}\n`);

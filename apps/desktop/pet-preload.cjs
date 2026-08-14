@@ -192,6 +192,19 @@ const installPetSenses = () => {
     if (event.button !== 0) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
+    const companionAction = target.closest("[data-companion-action]");
+    if (companionAction) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (companionAction.disabled) return;
+      const token = companionAction.dataset.promptToken;
+      const actionId = companionAction.dataset.actionId;
+      const prompt = companionAction.closest("[data-companion-prompt-token]");
+      const input = prompt ? prompt.querySelector(".primary-companion-action-input") : null;
+      const message = companionAction.hasAttribute("data-needs-message") && input instanceof HTMLInputElement ? input.value : undefined;
+      if (token && actionId) sendPetEvent("brainpet:companionActionRequested", { token, actionId, ...(message !== undefined ? { message } : {}) });
+      return;
+    }
     const dismiss = target.closest("[data-companion-dismiss]");
     if (dismiss) {
       event.preventDefault();
@@ -221,6 +234,14 @@ const installPetSenses = () => {
     if (!target.closest(".pet-hitbox, .pet-shell")) return;
     if (Date.now() < suppressClickUntil) return;
     sendPetEvent("pet:clicked", {});
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || !(event.target instanceof HTMLInputElement) || !event.target.matches(".primary-companion-action-input")) return;
+    const prompt = event.target.closest("[data-companion-prompt-token]");
+    const action = prompt ? prompt.querySelector("[data-companion-action][data-needs-message]") : null;
+    if (!(action instanceof HTMLButtonElement) || action.disabled) return;
+    event.preventDefault();
+    action.click();
   });
   document.addEventListener("dblclick", (event) => {
     const target = event.target;

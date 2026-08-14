@@ -70,7 +70,9 @@ cursor through the real shaped hotspot, sends the click through the native
 window, and verifies that the stage appears. Before opening the stage it also
 sends two real `agent.activity` IPC events, native-clicks the status badge,
 checks the bounded pixel activity tray, and proves an observe-only provider
-does not receive fake host-action controls. A DOM `button.click()` is not
+does not receive fake host-action controls. It then renders a real IPC speech
+bubble and checks the computed host pixel contract: embedded pixel font, square
+three-pixel border, flat fill, no backdrop blur, and a hard offset shadow. A DOM `button.click()` is not
 accepted as evidence for transparent-window hit testing. Teardown first asks
 Electron to close through CDP, then scopes any fallback process-tree cleanup to
 that unique directory and fails if the temporary profile cannot be removed.
@@ -87,6 +89,16 @@ copy them into the Codex plugin's `bin/<platform>/` folders, then run
 symlinked, implausibly sized, or non-executable helpers and hook definitions
 that directly depend on Node. A passing JavaScript fallback test is development
 evidence only and is not sufficient for a public bridge release.
+
+M4 host-action coverage lives in
+`agent-companion-action-broker.test.ts` and
+`agent-companion-request-protocol.test.ts`. It proves that unregistered
+provider claims degrade to “Return to Agent”, structured request options are
+bounded, descriptors expire, concurrent duplicate submissions execute once,
+failures retain a one-line error, and the broker contains no shell or private
+host IPC execution path. The Electron foundation smoke additionally injects a
+claimed-but-unregistered permission request and verifies that no action button
+is rendered.
 
 ## Package tests & contracts
 

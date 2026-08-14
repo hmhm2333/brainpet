@@ -58,15 +58,29 @@ In the BrainPet distribution, the default pet's context menu exposes persistent
 sprite, native Windows hit shape, and training hotspot; the game stage retains
 its separate compact-surface sizing contract.
 
+The visible UI attached to a pet is a host-owned pixel skin, not part of the
+pet package. Built-in and installed pets therefore share the embedded CJK/Latin
+pixel font, square high-contrast borders, hard offset shadows, flat fills, and
+stepped motion for speech, status, plugin actions and inputs, pinned HUDs, the
+training accessory, and the Primary Companion tray. A future pet package may
+change its spritesheet and animation metadata, but cannot silently replace this
+UI contract. Electron's operating-system context menu is the deliberate
+exception: it remains native for platform accessibility and convention.
+
 BrainPet also renders Agent lifecycle state inside this same pet window. A
 small pixel badge beside the pet shows the highest-priority state and combined
 activity count; clicking it opens a tightly attached, five-row activity tray.
 The tray contains only provider, state, relative age, and a local dismiss
-control—never prompts, paths, commands, tool payloads, or transcripts. Its hit
+control—never prompts, paths, commands, tool payloads, or transcripts. A compact
+pixel request pane can appear beneath the activity rows, but it renders only
+bounded structured options from a registered provider adapter. Unsupported or
+disconnected providers show a non-clickable “Return to Agent” fallback instead
+of fake native controls. Submitting disables the pane until completion; success
+consumes it and failure retains it with one short line. Its hit
 targets are isolated from both pet dragging and the body-mounted training gem.
 The BrainPet context menu adds start training, five scale choices, pause Agent
 follow, and hide-until-next-activity. Host-side task actions are not rendered
-unless a future provider adapter declares and implements the matching capability.
+unless a provider adapter declares and implements the matching capability.
 
 Experimental multi-pet LAN mode adds a third, isolated controller for visiting
 pets. Windows are keyed by LAN owner host rather than pet ID, so they do not
@@ -109,8 +123,8 @@ reaction into something visible:
    reaction; `i18n/reactions/` provides the localized pools so speech matches the
    active locale (see [Internationalization](/i18n)).
 3. `pet-window.ts` renders the chosen animation via CSS sprite animation, and
-   shows speech bubbles, alert indicators, pinned HUDs, and status badges as
-   requested.
+   shows speech bubbles, alert indicators, pinned HUDs, and status badges through
+   the shared host pixel skin.
 
 The waiting animation cycle is a global preference in Control Center → Settings
 → Reactions. **Normal** keeps the default `1010` ms cycle and **Relaxed** uses

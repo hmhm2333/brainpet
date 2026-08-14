@@ -85,10 +85,20 @@ Client method names (`hello()`, `status()`, `listPets()`, `installPet()`,
 `agent.activity` is local-only and accepts schema v1: a bounded agent id,
 session id, optional turn id, timestamp, one of
 `working/waiting/ready/blocked/idle`, a capability allowlist, and an optional
-category-only request summary while waiting. Legacy senders without
+category-only request summary while waiting. Request kinds are
+`permission/question/review/openLink/stop/continue`; a provider may attach up
+to six `{ id, label, intent }` display options, each with bounded identifiers,
+single-line labels, and a closed intent enum. These options are descriptive
+input to the host Action Broker, not executable commands. Legacy senders without
 `schemaVersion` or `capabilities` normalize to schema v1 with
 `observeLifecycle`. It has no prompt, output, path, command, arbitrary message,
-or media field. `installLocalPet()` requires an
+or media field. An event's capability declaration is never sufficient to make
+a side-effect button executable: the desktop also requires a matching,
+in-process registered provider adapter. The broker mints short-lived action
+descriptors and one-time nonces, blocks duplicate submissions, consumes a
+request only after success, and falls back to “Return to Agent” if the adapter
+is absent or disconnected. It has no arbitrary shell or private-host IPC path.
+`installLocalPet()` requires an
 absolute path and an explicit `zip`/`folder` kind. `react()`/`say()`/
 `showMedia()` accept an optional `leaseId` to target a specific pet.
 

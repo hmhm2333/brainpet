@@ -3,7 +3,7 @@ import net from "node:net";
 
 import { parseIpcEndpoint, validateDiscovery } from "../src/discovery.js";
 import { createOpenPetsClient, parsePetInstallResult, parsePetListResult } from "../src/index.js";
-import { OpenPetsClientError, parseIpcResponse, validateReaction } from "../src/protocol.js";
+import { OpenPetsClientError, parseIpcResponse, validateAgentCompanionRequestOptions, validateReaction } from "../src/protocol.js";
 import { maxRemoteMessageBytes, parseRemoteEndpoint, validateRemoteMessage, validateRemoteToken } from "../src/remote-protocol.js";
 
 const baseDiscovery = {
@@ -60,6 +60,10 @@ if (process.platform === "linux") {
 }
 assertRejects(() => validateReaction("bad"));
 assert.equal(validateReaction("waving"), "waving");
+assert.deepEqual(validateAgentCompanionRequestOptions([{ id: "once", label: "Allow once", intent: "runOnce" }]), [{ id: "once", label: "Allow once", intent: "runOnce" }]);
+assertRejects(() => validateAgentCompanionRequestOptions([{ id: "same", label: "A", intent: "answer" }, { id: "same", label: "B", intent: "answer" }]));
+assertRejects(() => validateAgentCompanionRequestOptions([{ id: "bad", label: "A\nB", intent: "answer" }]));
+assertRejects(() => validateAgentCompanionRequestOptions([{ id: "bad", label: "A", intent: "shell" }]));
 
 const ok = parseIpcResponse<{ value: number }>({ id: "1", ok: true, result: { value: 1 } });
 if (!ok.ok || ok.result.value !== 1) throw new Error("Failed to parse ok response.");

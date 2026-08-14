@@ -104,8 +104,9 @@ Codex plugin hooks → local IPC `agent.activity` → agent-lifecycle-controller
 ├── agent-companion-activity.ts maps concurrent lifecycle entries into the privacy-minimal main-pet activity model
 ├── primary-companion-ui.ts derives the bounded five-row badge/tray view model and compact provider/age labels
 ├── agent-companion-capabilities.ts gates host action prompts on provider-declared support
+├── agent-companion-action-broker.ts requires an in-process provider adapter, mints expiring one-time descriptors, and owns duplicate/failure state
 ├── default-pet-controller.ts owns follow/pause/wake plus activity-tray state
-├── pet-window.ts renders the pixel status badge/tray in the existing shaped pet window
+├── pet-window.ts renders the host-owned pixel UI skin, including speech, plugin controls, HUDs, training accessory, status tray, and provider-gated request pane, for built-in and installed pets
 └── plugin-events-source.ts publishes the existing `agent:activity` bus event
 ```
 

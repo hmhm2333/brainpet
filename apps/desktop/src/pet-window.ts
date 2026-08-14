@@ -23,6 +23,7 @@ import { createIdleSpriteKeyframes } from "./pet-animation-timing.js";
 import { isBrainPetFeatureEnabled, resolveDesktopDistributionSettings } from "./distribution-profile.js";
 import type { AgentCompanionActivitySummary } from "./agent-companion-activity.js";
 import { derivePrimaryCompanionView } from "./primary-companion-ui.js";
+import type { PrimaryCompanionActionControl, PrimaryCompanionActionPrompt } from "./agent-companion-action-broker.js";
 
 export interface PetWindowInteractionHooks {
   readonly onBubbleDismissed?: (dismissToken: string) => void;
@@ -31,6 +32,7 @@ export interface PetWindowInteractionHooks {
   readonly onPetEvent?: (name: string, payload: Record<string, unknown>) => void;
   readonly onCompanionTrayToggled?: (open: boolean) => void;
   readonly onCompanionActivityDismissed?: (provider: string, sessionId: string) => void;
+  readonly onCompanionActionRequested?: (token: string, actionId: string, values: { readonly message?: string }) => void;
 }
 
 export interface DefaultPetWindowOptions extends PetWindowInteractionHooks {
@@ -41,6 +43,7 @@ export interface DefaultPetWindowOptions extends PetWindowInteractionHooks {
   readonly pluginBubbles?: PetPluginBubbles | null;
   readonly companionActivity?: AgentCompanionActivitySummary | null;
   readonly companionTrayOpen?: boolean;
+  readonly companionActionPrompt?: PrimaryCompanionActionPrompt | null;
   readonly onPositionChanged: (position: Point) => void;
   readonly onHideRequested: () => void;
 }
@@ -191,7 +194,7 @@ export function createDefaultPetWindow(options: DefaultPetWindowOptions, dismiss
     options.onPositionChanged(readWindowPosition(window));
   });
 
-  void loadDefaultPetContent(window, options.paused, options.display, options.badge, dismissToken, options.pluginBubbles ?? null, options.companionActivity ?? null, options.companionTrayOpen === true);
+  void loadDefaultPetContent(window, options.paused, options.display, options.badge, dismissToken, options.pluginBubbles ?? null, options.companionActivity ?? null, options.companionTrayOpen === true, options.companionActionPrompt ?? null);
 
   return window;
 }
@@ -378,7 +381,7 @@ function buildPluginCommandFormUrl(title: string, form: PluginCommandForm, chann
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 
 function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowInteractionHooks = {}): void {
-  const { onBubbleDismissed, onBubbleAction, onBubbleSubmit, onPetEvent, onCompanionTrayToggled, onCompanionActivityDismissed } = hooks;
+  const { onBubbleDismissed, onBubbleAction, onBubbleSubmit, onPetEvent, onCompanionTrayToggled, onCompanionActivityDismissed, onCompanionActionRequested } = hooks;
   const windowId = window.id;
   const useWaylandNativeDrag = shouldUseWaylandNativePetDrag();
   if (useWaylandNativeDrag) {
@@ -615,7 +618,7 @@ function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowI
     onBubbleSubmit?.(dismissToken, out);
   };
 
-  const allowedPetEventNames = new Set(["pet:clicked", "pet:doubleClicked", "pet:hover", "pet:drop", "brainpet:trainingRequested", "brainpet:companionTrayToggled", "brainpet:companionActivityDismissed"]);
+  const allowedPetEventNames = new Set(["pet:clicked", "pet:doubleClicked", "pet:hover", "pet:drop", "brainpet:trainingRequested", "brainpet:companionTrayToggled", "brainpet:companionActivityDismissed", "brainpet:companionActionRequested"]);
   const handlePetEvent = (event: IpcMainEvent, name: unknown, payload: unknown): void => {
     if (!isFromWindow(event)) return;
     if (typeof name !== "string" || !allowedPetEventNames.has(name)) return;
@@ -629,6 +632,12 @@ function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowI
     if (name === "brainpet:companionActivityDismissed") {
       if (!isSafeCompanionIdentifier(data.provider) || !isSafeCompanionIdentifier(data.sessionId)) return;
       onCompanionActivityDismissed?.(data.provider, data.sessionId);
+    }
+    if (name === "brainpet:companionActionRequested") {
+      if (!isSafeCompanionIdentifier(data.token) || typeof data.actionId !== "string" || data.actionId.length < 1 || data.actionId.length > 80) return;
+      const message = typeof data.message === "string" && data.message.length <= 280 ? data.message : undefined;
+      onCompanionActionRequested?.(data.token, data.actionId, { ...(message !== undefined ? { message } : {}) });
+      return; // Broker tokens and user replies never enter the plugin event bus.
     }
     onPetEvent?.(name, data);
   };
@@ -827,11 +836,11 @@ function applyPetAlwaysOnTop(window: BrowserWindow): void {
   }
 }
 
-export async function loadDefaultPetContent(window: BrowserWindow, paused: boolean, display: PetTransientDisplay | null = null, badge: PetStatusBadgeReaction | null = null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false): Promise<void> {
+export async function loadDefaultPetContent(window: BrowserWindow, paused: boolean, display: PetTransientDisplay | null = null, badge: PetStatusBadgeReaction | null = null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false, companionActionPrompt: PrimaryCompanionActionPrompt | null = null): Promise<void> {
   const sequence = allocateWindowLoadSequence(window);
   debug("pet.window", "default content render begin", { windowId: window.id, sequence, paused, hasDisplay: Boolean(display), reaction: display?.reaction, hasMessage: Boolean(display?.message), badge, hasPluginBubble: Boolean(pluginBubbles?.transient), hasPinned: Boolean(pluginBubbles?.pinned), defaultPetId: getAppStateSnapshot().preferences.defaultPetId });
   applyPetWindowFocusPolicy(window, petPluginBubblesHaveInteractiveInput(pluginBubbles) || companionTrayOpen);
-  const render = await createDefaultPetRender(paused, display, badge, dismissToken, pluginBubbles, companionActivity, companionTrayOpen);
+  const render = await createDefaultPetRender(paused, display, badge, dismissToken, pluginBubbles, companionActivity, companionTrayOpen, companionActionPrompt);
   applyNativePetWindowShape(window, getAppStateSnapshot().preferences.petScale as PetScaleValue, Boolean(display?.message || display?.reactionMessage || display?.reaction || display?.mediaPath || badge && !companionActivity?.totalCount || paused || pluginBubbles?.transient || pluginBubbles?.pinned || companionTrayOpen));
   if (tryUpdateLoadedPetContent(window, render, "default", sequence)) return;
   await loadPetHtmlFile(window, render.html, "default", sequence).then(() => {
@@ -1029,20 +1038,20 @@ function applyNativePetWindowShape(window: BrowserWindow, scale: PetScaleValue, 
   }
 }
 
-async function createDefaultPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false): Promise<PetContentRender> {
-  const installedPetRender = await tryCreateInstalledPetRender(paused, display, badge, dismissToken, pluginBubbles, companionActivity, companionTrayOpen);
+async function createDefaultPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false, companionActionPrompt: PrimaryCompanionActionPrompt | null = null): Promise<PetContentRender> {
+  const installedPetRender = await tryCreateInstalledPetRender(paused, display, badge, dismissToken, pluginBubbles, companionActivity, companionTrayOpen, companionActionPrompt);
   if (installedPetRender) {
     return installedPetRender;
   }
 
   const scale = getAppStateSnapshot().preferences.petScale as PetScaleValue;
-  return createBuiltInPetRender(paused, display, badge, scale, "default:builtin", dismissToken, pluginBubbles, companionActivity, companionTrayOpen);
+  return createBuiltInPetRender(paused, display, badge, scale, "default:builtin", dismissToken, pluginBubbles, companionActivity, companionTrayOpen, companionActionPrompt);
 }
 
-function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, scale: PetScaleValue, cachePrefix: string, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false): PetContentRender {
+function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, scale: PetScaleValue, cachePrefix: string, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false, companionActionPrompt: PrimaryCompanionActionPrompt | null = null): PetContentRender {
   const spriteUrl = pathToFileURL(join(app.getAppPath(), "assets", defaultPetSprite.fileName)).toString();
   const hasPinned = Boolean(pluginBubbles?.pinned);
-  const companionMarkup = createPrimaryCompanionMarkup(companionActivity, companionTrayOpen);
+  const companionMarkup = createPrimaryCompanionMarkup(companionActivity, companionTrayOpen, companionActionPrompt);
   const bodyHtml = createPetBodyMarkup("OpenPets default pet", createBubbleMarkup(display, paused, companionActivity?.totalCount ? null : badge, dismissToken, pluginBubbles), `<div class="sprite" role="img" aria-label="Claude animated default pet"></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned, companionMarkup);
   const reactionState = getReactionSpriteState(display?.reaction ?? getPrimaryCompanionReaction(companionActivity) ?? badge ?? undefined);
   const waitingAnimationDurationMs = getAppStateSnapshot().preferences.waitingAnimationDurationMs;
@@ -1053,7 +1062,7 @@ function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | 
     bodyHtml,
     reactionState,
     html: `<!doctype html>
-    <html lang="${getActiveLocaleLang()}" data-reaction-state="${reactionState}" data-motion-state="idle" data-native-pet-drag="${shouldUseWaylandNativePetDrag() ? "wayland" : "manual"}">
+    <html lang="${getActiveLocaleLang()}" data-pet-ui-theme="pixel" data-reaction-state="${reactionState}" data-motion-state="idle" data-native-pet-drag="${shouldUseWaylandNativePetDrag() ? "wayland" : "manual"}">
       <head>
         <meta charset="utf-8" />
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file: data:; font-src file:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
@@ -1093,7 +1102,7 @@ function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | 
   };
 }
 
-async function tryCreateInstalledPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false): Promise<PetContentRender | null> {
+async function tryCreateInstalledPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false, companionActionPrompt: PrimaryCompanionActionPrompt | null = null): Promise<PetContentRender | null> {
   const state = getAppStateSnapshot();
   const selected = state.pets.installed.find((pet) => pet.id === state.preferences.defaultPetId);
 
@@ -1102,7 +1111,7 @@ async function tryCreateInstalledPetRender(paused: boolean, display: PetTransien
   }
 
   try {
-    return await createInstalledPetRender(selected.id, selected.displayName, paused, display, state.preferences.petScale as PetScaleValue, badge, `default:${selected.id}`, dismissToken, pluginBubbles, companionActivity, companionTrayOpen);
+    return await createInstalledPetRender(selected.id, selected.displayName, paused, display, state.preferences.petScale as PetScaleValue, badge, `default:${selected.id}`, dismissToken, pluginBubbles, companionActivity, companionTrayOpen, companionActionPrompt);
   } catch (error) {
     console.error(`Failed to render installed default pet ${selected.id}; falling back to built-in pet.`, error);
     try {
@@ -1114,7 +1123,7 @@ async function tryCreateInstalledPetRender(paused: boolean, display: PetTransien
   }
 }
 
-async function createInstalledPetRender(petId: string, displayName: string, paused: boolean, display: PetTransientDisplay | null, scale: PetScaleValue, badge: PetStatusBadgeReaction | null, cachePrefix: string, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false): Promise<PetContentRender> {
+async function createInstalledPetRender(petId: string, displayName: string, paused: boolean, display: PetTransientDisplay | null, scale: PetScaleValue, badge: PetStatusBadgeReaction | null, cachePrefix: string, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false, companionActionPrompt: PrimaryCompanionActionPrompt | null = null): Promise<PetContentRender> {
   const spritesheetPath = join(getInstalledPetDir(petId), "spritesheet.webp");
   const spritesheet = await stat(spritesheetPath);
   if (!spritesheet.isFile() || spritesheet.size <= 0 || spritesheet.size > 100 * 1024 * 1024) {
@@ -1123,7 +1132,7 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
 
   const imageUrl = pathToFileURL(spritesheetPath).toString();
   const hasPinned = Boolean(pluginBubbles?.pinned);
-  const companionMarkup = createPrimaryCompanionMarkup(companionActivity, companionTrayOpen);
+  const companionMarkup = createPrimaryCompanionMarkup(companionActivity, companionTrayOpen, companionActionPrompt);
   const bodyHtml = createPetBodyMarkup(escapeHtml(displayName), createBubbleMarkup(display, paused, companionActivity?.totalCount ? null : badge, dismissToken, pluginBubbles), `<div class="installed-card" role="img" aria-label="${escapeHtml(displayName)}"><div class="installed-sprite"></div></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned, companionMarkup);
   const reactionState = getReactionSpriteState(display?.reaction ?? getPrimaryCompanionReaction(companionActivity) ?? badge ?? undefined);
   const waitingAnimationDurationMs = getAppStateSnapshot().preferences.waitingAnimationDurationMs;
@@ -1134,7 +1143,7 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
     bodyHtml,
     reactionState,
     html: `<!doctype html>
-      <html lang="${getActiveLocaleLang()}" data-reaction-state="${reactionState}" data-motion-state="idle" data-native-pet-drag="${shouldUseWaylandNativePetDrag() ? "wayland" : "manual"}">
+      <html lang="${getActiveLocaleLang()}" data-pet-ui-theme="pixel" data-reaction-state="${reactionState}" data-motion-state="idle" data-native-pet-drag="${shouldUseWaylandNativePetDrag() ? "wayland" : "manual"}">
         <head>
           <meta charset="utf-8" />
           <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file: data:; font-src file:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
@@ -1178,7 +1187,7 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
   };
 }
 
-function createPrimaryCompanionMarkup(summary: AgentCompanionActivitySummary | null, trayOpen: boolean): string {
+function createPrimaryCompanionMarkup(summary: AgentCompanionActivitySummary | null, trayOpen: boolean, prompt: PrimaryCompanionActionPrompt | null = null): string {
   if (!summary || summary.totalCount === 0 || summary.status === "idle") return "";
   const view = derivePrimaryCompanionView(summary);
   const statusLabel = getPrimaryCompanionStatusLabel(view.status);
@@ -1191,10 +1200,57 @@ function createPrimaryCompanionMarkup(summary: AgentCompanionActivitySummary | n
     <span class="primary-companion-age">${escapeHtml(item.ageLabel === "now" ? t("companion.age.now") : item.ageLabel)}</span>
     <button class="primary-companion-dismiss" type="button" data-companion-dismiss data-provider="${escapeHtml(item.provider)}" data-session="${escapeHtml(item.sessionId)}" aria-label="${escapeHtml(t("companion.dismiss", { name: item.providerLabel }))}">×</button>
   </li>`).join("");
+  const actionMarkup = createPrimaryCompanionActionMarkup(prompt);
   return `${badge}<section class="primary-companion-tray" aria-label="${escapeHtml(t("companion.tray.label"))}">
     <header class="primary-companion-header"><span>${escapeHtml(statusLabel)}</span><span>${view.totalCount}</span></header>
     <ol class="primary-companion-list">${items}</ol>
+    ${actionMarkup}
   </section>`;
+}
+
+function createPrimaryCompanionActionMarkup(prompt: PrimaryCompanionActionPrompt | null): string {
+  if (!prompt) return "";
+  const requestLabel = prompt.requestKind ? getPrimaryCompanionRequestLabel(prompt.requestKind) : t("companion.action.available");
+  if (prompt.state === "fallback") {
+    return `<div class="primary-companion-request is-fallback" role="status"><span>${escapeHtml(requestLabel)}</span><strong>${escapeHtml(t("companion.action.returnToAgent"))}</strong></div>`;
+  }
+  const hasMessage = prompt.controls.some((control) => control.requiresMessage);
+  const controls = prompt.controls.filter((control) => !control.requiresMessage).map((control) => createPrimaryCompanionActionControlMarkup(prompt, control)).join("");
+  const messageControl = prompt.controls.find((control) => control.requiresMessage);
+  const messageMarkup = hasMessage && messageControl ? `<div class="primary-companion-message-row">
+    <input class="primary-companion-action-input" type="text" maxlength="280" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t("companion.action.messagePlaceholder"))}" ${prompt.state === "pending" ? "disabled" : ""} />
+    ${createPrimaryCompanionActionControlMarkup(prompt, messageControl)}
+  </div>` : "";
+  const errorMarkup = prompt.error ? `<div class="primary-companion-action-error" role="alert">${escapeHtml(prompt.error === "Provider action failed." ? t("companion.action.failed") : prompt.error)}</div>` : "";
+  return `<div class="primary-companion-request state-${prompt.state}" data-companion-prompt-token="${escapeHtml(prompt.token)}">
+    <div class="primary-companion-request-title">${escapeHtml(requestLabel)}</div>
+    <div class="primary-companion-actions">${controls}</div>
+    ${messageMarkup}
+    ${errorMarkup}
+  </div>`;
+}
+
+function createPrimaryCompanionActionControlMarkup(prompt: PrimaryCompanionActionPrompt, control: PrimaryCompanionActionControl): string {
+  const label = control.label ?? getPrimaryCompanionActionLabel(control.action);
+  const danger = control.intent === "deny" || control.intent === "stop" || control.action === "stopTask";
+  return `<button class="primary-companion-action${danger ? " is-danger" : ""}" type="button" data-companion-action data-prompt-token="${escapeHtml(prompt.token)}" data-action-id="${escapeHtml(control.id)}" ${control.requiresMessage ? "data-needs-message " : ""}${control.disabled ? "disabled" : ""}>${escapeHtml(label)}</button>`;
+}
+
+function getPrimaryCompanionActionLabel(action: PrimaryCompanionActionControl["action"]): string {
+  if (action === "openTask") return t("companion.action.openTask");
+  if (action === "stopTask") return t("companion.action.stopTask");
+  if (action === "sendMessage") return t("companion.action.send");
+  if (action === "voice") return t("companion.action.voice");
+  return t("companion.action.respond");
+}
+
+function getPrimaryCompanionRequestLabel(kind: NonNullable<PrimaryCompanionActionPrompt["requestKind"]>): string {
+  if (kind === "permission") return t("companion.request.permission");
+  if (kind === "question") return t("companion.request.question");
+  if (kind === "review") return t("companion.request.review");
+  if (kind === "openLink") return t("companion.request.openLink");
+  if (kind === "stop") return t("companion.request.stop");
+  return t("companion.request.continue");
 }
 
 function getPrimaryCompanionStatusLabel(status: AgentCompanionActivitySummary["status"]): string {
@@ -1240,14 +1296,12 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
   const emojiFontUrl = pathToFileURL(join(app.getAppPath(), "assets", "NotoColorEmoji.ttf")).toString();
   const pixelFontUrl = pathToFileURL(join(app.getAppPath(), "assets", "FusionPixel12ProportionalSC.woff2")).toString();
   const petShellFilter = process.platform === "win32" ? "none" : "drop-shadow(0 10px 12px rgba(15, 23, 42, 0.24)) drop-shadow(0 2px 3px rgba(15, 23, 42, 0.18))";
-  const bubbleBackdropFilter = process.platform === "win32" ? "none" : "blur(10px)";
   const petDragRegion = shouldUseWaylandNativePetDrag() ? "drag" : "no-drag";
   return `
     @font-face { font-family: "OpenPets Emoji"; src: url("${escapeCssUrl(emojiFontUrl)}") format("truetype"); font-display: block; }
     @font-face { font-family: "BrainPet Pixel"; src: url("${escapeCssUrl(pixelFontUrl)}") format("woff2"); font-display: block; }
-    :root { color-scheme: dark; --pet-opacity: ${opacity}; --play-state: ${playState}; }
-    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; user-select: none; -webkit-font-smoothing: antialiased; }
-    html { color: #172033; }
+    :root { color-scheme: dark; --pet-opacity: ${opacity}; --play-state: ${playState}; --pet-ui-font: "BrainPet Pixel", ui-monospace, monospace; --pet-ui-ink: #17243b; --pet-ui-paper: #fff3c7; --pet-ui-paper-alt: #f7e7ae; --pet-ui-muted: #61708a; --pet-ui-shadow: rgba(23, 36, 59, .38); }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; color: var(--pet-ui-ink); font-family: var(--pet-ui-font); font-synthesis: none; text-rendering: optimizeSpeed; user-select: none; }
     body { -webkit-app-region: no-drag; pointer-events: none; }
     .stage { width: 100%; height: 100%; position: relative; box-sizing: border-box; overflow: visible; }
     .pet-hitbox { position: absolute; left: 50%; bottom: ${Math.max(0, petBottom - hitPadding)}px; z-index: 1; width: ${scaledWidth + hitPadding * 2}px; height: ${scaledHeight + hitPadding * 2}px; display: grid; place-items: center; transform: translateX(-50%); pointer-events: auto; -webkit-app-region: ${petDragRegion}; cursor: grab; }
@@ -1257,7 +1311,7 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
     .brainpet-trigger:hover .brainpet-gem { background:#ffe57c; transform:translateY(-2px) rotate(45deg); }
     .brainpet-trigger:active .brainpet-gem { transform:translate(2px,2px) rotate(45deg); box-shadow:inset -2px -2px 0 #d9952f; }
     .brainpet-trigger:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
-    .primary-companion-badge { position:absolute; left:calc(50% - ${Math.max(0, Math.round(scaledWidth / 2) - 2)}px); bottom:${petBottom + Math.max(20, scaledHeight - 22)}px; z-index:7; display:grid; grid-template-columns:8px auto; align-items:center; gap:3px; min-width:28px; height:20px; padding:0 5px; border:2px solid #17243b; border-radius:0; background:#fff3c7; color:#17243b; box-shadow:3px 3px 0 rgba(23,36,59,.36); font:normal 10px/1 "BrainPet Pixel", monospace; pointer-events:auto; -webkit-app-region:no-drag; cursor:pointer; image-rendering:pixelated; }
+    .primary-companion-badge { position:absolute; left:calc(50% - ${Math.max(0, Math.round(scaledWidth / 2) - 2)}px); bottom:${petBottom + Math.max(20, scaledHeight - 22)}px; z-index:7; display:grid; grid-template-columns:8px auto; align-items:center; gap:3px; min-width:28px; height:20px; padding:0 5px; border:2px solid var(--pet-ui-ink); border-radius:0; background:var(--pet-ui-paper); color:var(--pet-ui-ink); box-shadow:3px 3px 0 var(--pet-ui-shadow); font:normal 10px/1 var(--pet-ui-font); pointer-events:auto; -webkit-app-region:no-drag; cursor:pointer; image-rendering:pixelated; }
     .primary-companion-badge:hover { transform:translateY(-1px); filter:brightness(1.05); }
     .primary-companion-badge:active { transform:translate(2px,2px); box-shadow:1px 1px 0 rgba(23,36,59,.36); }
     .primary-companion-badge:focus-visible, .primary-companion-dismiss:focus-visible { outline:3px solid #fff; outline-offset:2px; }
@@ -1266,15 +1320,30 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
     .status-review .primary-companion-status-mark, .status-review .primary-companion-item-mark { background:#61bd73; }
     .status-failed .primary-companion-status-mark, .status-failed .primary-companion-item-mark { background:#e55f55; }
     .primary-companion-count { min-width:9px; text-align:center; }
-    .primary-companion-tray { position:absolute; left:50%; bottom:${bubbleBottom + 2}px; z-index:8; box-sizing:border-box; width:224px; padding:6px; border:3px solid #17243b; border-radius:0; background:#fff3c7; color:#17243b; box-shadow:5px 5px 0 rgba(23,36,59,.38); font:normal 10px/12px "BrainPet Pixel", monospace; pointer-events:auto; -webkit-app-region:no-drag; transform:translateX(-50%); animation:companion-tray-in 120ms steps(3,end); image-rendering:pixelated; }
+    .primary-companion-tray { position:absolute; left:50%; bottom:${bubbleBottom + 2}px; z-index:8; box-sizing:border-box; width:224px; padding:6px; border:3px solid var(--pet-ui-ink); border-radius:0; background:var(--pet-ui-paper); color:var(--pet-ui-ink); box-shadow:5px 5px 0 var(--pet-ui-shadow); font:normal 10px/12px var(--pet-ui-font); pointer-events:auto; -webkit-app-region:no-drag; transform:translateX(-50%); animation:companion-tray-in 120ms steps(3,end); image-rendering:pixelated; }
     .primary-companion-tray::after { content:""; position:absolute; left:34%; bottom:-9px; width:12px; height:12px; border-right:3px solid #17243b; border-bottom:3px solid #17243b; background:#fff3c7; transform:rotate(45deg); }
     .primary-companion-header { display:flex; justify-content:space-between; align-items:center; min-height:14px; padding:0 2px 5px; border-bottom:2px solid #17243b; text-transform:uppercase; }
     .primary-companion-list { display:grid; gap:2px; margin:5px 0 0; padding:0; list-style:none; }
-    .primary-companion-item { display:grid; grid-template-columns:7px minmax(0,1fr) 28px 18px; align-items:center; gap:4px; min-height:20px; padding:0 2px; background:#f7e7ae; }
+    .primary-companion-item { display:grid; grid-template-columns:7px minmax(0,1fr) 28px 18px; align-items:center; gap:4px; min-height:20px; padding:0 2px; background:var(--pet-ui-paper-alt); }
     .primary-companion-provider { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-    .primary-companion-age { color:#61708a; text-align:right; }
-    .primary-companion-dismiss { width:18px; height:18px; padding:0; border:0; border-radius:0; background:transparent; color:#17243b; font:normal 14px/16px "BrainPet Pixel", monospace; cursor:pointer; pointer-events:auto; -webkit-app-region:no-drag; }
+    .primary-companion-age { color:var(--pet-ui-muted); text-align:right; }
+    .primary-companion-dismiss { width:18px; height:18px; padding:0; border:0; border-radius:0; background:transparent; color:var(--pet-ui-ink); font:normal 14px/16px var(--pet-ui-font); cursor:pointer; pointer-events:auto; -webkit-app-region:no-drag; }
     .primary-companion-dismiss:hover { background:#e55f55; color:#fff; }
+    .primary-companion-request { display:grid; gap:5px; margin-top:6px; padding-top:6px; border-top:2px solid var(--pet-ui-ink); }
+    .primary-companion-request-title { overflow:hidden; color:var(--pet-ui-muted); white-space:nowrap; text-overflow:ellipsis; text-transform:uppercase; }
+    .primary-companion-request.is-fallback { grid-template-columns:minmax(0,1fr) auto; align-items:center; padding-bottom:1px; }
+    .primary-companion-request.is-fallback span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    .primary-companion-request.is-fallback strong { color:var(--pet-ui-ink); font-weight:normal; }
+    .primary-companion-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px; }
+    .primary-companion-action { min-width:0; min-height:22px; padding:2px 4px; border:2px solid var(--pet-ui-ink); border-radius:0; background:#dcecff; color:var(--pet-ui-ink); box-shadow:2px 2px 0 var(--pet-ui-shadow); font:normal 9px/12px var(--pet-ui-font); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; cursor:pointer; pointer-events:auto; -webkit-app-region:no-drag; }
+    .primary-companion-action.is-danger { background:#ffd8cd; }
+    .primary-companion-action:hover:not(:disabled) { filter:brightness(1.08); transform:translateY(-1px); }
+    .primary-companion-action:active:not(:disabled) { transform:translate(2px,2px); box-shadow:none; }
+    .primary-companion-action:disabled { opacity:.55; cursor:wait; }
+    .primary-companion-action:focus-visible, .primary-companion-action-input:focus-visible { outline:3px solid #fff; outline-offset:1px; }
+    .primary-companion-message-row { display:grid; grid-template-columns:minmax(0,1fr) 50px; gap:4px; }
+    .primary-companion-action-input { box-sizing:border-box; min-width:0; height:22px; padding:2px 4px; border:2px solid var(--pet-ui-ink); border-radius:0; background:#fffdf1; color:var(--pet-ui-ink); font:normal 9px/12px var(--pet-ui-font); pointer-events:auto; -webkit-app-region:no-drag; }
+    .primary-companion-action-error { overflow:hidden; color:#b52d2d; white-space:nowrap; text-overflow:ellipsis; }
     [data-pet-dragging="true"] .primary-companion-tray { display:none; }
     @keyframes companion-tray-in { from { opacity:0; transform:translate(-50%,6px); } to { opacity:1; transform:translate(-50%,0); } }
     [data-brainpet-launching="true"] .pet-shell { animation: brainpet-ready 480ms steps(4,end); }
@@ -1292,57 +1361,59 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
     @keyframes brainpet-throw-right { 25%{transform:translate(-3px,1px) rotate(-4deg) scale(.98)} 58%{transform:translate(7px,-4px) rotate(7deg) scale(1.02)} 100%{transform:none} }
     @keyframes brainpet-throw-left { 25%{transform:translate(3px,1px) rotate(4deg) scale(.98)} 58%{transform:translate(-7px,-4px) rotate(-7deg) scale(1.02)} 100%{transform:none} }
     @keyframes brainpet-clear { 20%{transform:translateY(-9px) rotate(-8deg)} 45%{transform:translateY(1px) rotate(8deg)} 70%{transform:translateY(-5px) rotate(-4deg)} 100%{transform:none} }
-    .bubble { position: absolute; left: 50%; bottom: ${bubbleBottom}px; z-index: 4; box-sizing: border-box; display: inline-flex; flex-direction: column; width: fit-content; min-width: 92px; max-width: min(220px, calc(100vw - 18px)); max-height: 128px; padding: 10px 12px; background: linear-gradient(135deg, rgba(239, 246, 255, 0.97), rgba(237, 233, 254, 0.96)); color: #172033; font: 760 11px/14px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-align: left; border: 1px solid rgba(255, 255, 255, 0.78); border-radius: 14px; box-shadow: 0 12px 24px rgba(15, 23, 42, 0.16), 0 2px 5px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.82); white-space: normal; overflow-wrap: break-word; word-break: normal; overflow: visible; pointer-events: auto; -webkit-app-region: no-drag; opacity: 1; backdrop-filter: ${bubbleBackdropFilter}; transform: translateX(-50%); transform-origin: 64% 100%; animation: bubble-in 180ms cubic-bezier(0.2, 0, 0, 1); }
+    .bubble { position: absolute; left: 50%; bottom: ${bubbleBottom}px; z-index: 4; box-sizing: border-box; display: inline-flex; flex-direction: column; width: fit-content; min-width: 92px; max-width: min(220px, calc(100vw - 18px)); max-height: 128px; padding: 8px 10px; background: var(--pet-ui-paper); color: var(--pet-ui-ink); font: normal 10px/13px var(--pet-ui-font); text-align: left; border: 3px solid var(--pet-ui-ink); border-radius: 0; box-shadow: 4px 4px 0 var(--pet-ui-shadow); white-space: normal; overflow-wrap: break-word; word-break: normal; overflow: visible; pointer-events: auto; -webkit-app-region: no-drag; opacity: 1; transform: translateX(-50%); transform-origin: 64% 100%; animation: bubble-in 120ms steps(3, end); image-rendering: pixelated; }
     .bubble[data-dismiss-token] { cursor: pointer; }
-    .bubble::after { content: ""; position: absolute; left: 64%; bottom: -7px; width: 12px; height: 12px; background: inherit; border-right: 1px solid rgba(255, 255, 255, 0.56); border-bottom: 1px solid rgba(255, 255, 255, 0.56); border-bottom-right-radius: 3px; transform: translateX(-50%) rotate(45deg); box-shadow: 3px 3px 7px rgba(15, 23, 42, 0.08); }
-    .bubble-header { display: inline-flex; align-items: center; min-width: 0; gap: 7px; color: currentColor; font: 780 11px/14px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0.01em; }
-    .bubble-status-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 18px; width: 18px; min-width: 18px; height: 18px; border-radius: 999px; background: #3b82f6; color: #fff; font: 900 12px/18px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-align: center; box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.28), 0 2px 7px rgba(59, 130, 246, 0.3); }
+    .bubble::after { content: ""; position: absolute; left: 64%; bottom: -8px; box-sizing: border-box; width: 12px; height: 12px; background: inherit; border-right: 3px solid var(--pet-ui-ink); border-bottom: 3px solid var(--pet-ui-ink); border-bottom-right-radius: 0; transform: translateX(-50%) rotate(45deg); }
+    .bubble-header { display: inline-flex; align-items: center; min-width: 0; gap: 6px; color: currentColor; font: normal 10px/13px var(--pet-ui-font); letter-spacing: 0; }
+    .bubble-status-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 18px; width: 18px; min-width: 18px; height: 18px; border: 2px solid var(--pet-ui-ink); border-radius: 0; background: #4f9eea; color: #fff; font: normal 11px/14px var(--pet-ui-font); text-align: center; box-shadow: inset -2px -2px 0 rgba(23, 36, 59, .28); }
     .bubble-status-icon::before { content: attr(data-icon); display: block; width: 18px; height: 18px; line-height: 18px; text-align: center; transform: none; }
     .bubble-status-icon.has-svg::before { content: none; }
     .bubble-status-icon svg { display: block; width: 14px; height: 14px; color: currentColor; }
     .bubble-status-icon img { display: block; width: 14px; height: 14px; object-fit: contain; }
     .bubble-status-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .bubble-divider { height: 1px; width: 100%; margin: 8px 0; background: rgba(30, 58, 138, 0.12); }
-    .bubble-body { min-width: 0; width: 100%; color: #172033; font: 720 10.5px/13.5px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", "Malgun Gothic", "Apple SD Gothic Neo", "PingFang SC", "PingFang TC", "Microsoft YaHei", "Microsoft JhengHei", "Noto Sans CJK JP", "Noto Sans CJK KR", "Noto Sans CJK SC", "Noto Sans CJK TC", sans-serif; }
+    .bubble-divider { height: 2px; width: 100%; margin: 6px 0; background: var(--pet-ui-ink); opacity: .22; }
+    .bubble-body { min-width: 0; width: 100%; color: var(--pet-ui-ink); font: normal 10px/13px var(--pet-ui-font); }
     .bubble-text { display: -webkit-box; min-width: 0; overflow: hidden; -webkit-line-clamp: 4; -webkit-box-orient: vertical; text-wrap: normal; overflow-wrap: break-word; }
-    .bubble.is-status-only { max-width: min(156px, calc(100vw - 18px)); padding: 8px 11px; border-radius: 999px; }
+    .bubble.is-status-only { max-width: min(156px, calc(100vw - 18px)); padding: 6px 8px; border-radius: 0; }
     .bubble.is-status-only .bubble-header { display: grid; grid-template-columns: 18px minmax(0, auto); align-items: center; justify-content: center; }
-    .bubble.is-message-only { border-radius: 14px 14px 3px 14px; }
+    .bubble.is-message-only { border-radius: 0; }
     .bubble.has-actions { min-width: min(176px, calc(100vw - 18px)); }
     .bubble.is-long-message { max-width: min(220px, calc(100vw - 18px)); max-height: 138px; }
     .bubble.is-long-message .bubble-text { -webkit-line-clamp: 6; font-size: 10px; line-height: 13px; }
     .bubble.is-very-long-message { max-width: min(220px, calc(100vw - 18px)); max-height: 156px; }
     .bubble.is-very-long-message .bubble-text { -webkit-line-clamp: 8; font-size: 9.5px; line-height: 12.5px; }
-    .bubble.is-busy .bubble-status-icon { background: #3b82f6; box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.28), 0 2px 7px rgba(59, 130, 246, 0.34); }
-    .bubble.is-waiting .bubble-status-icon { background: #f59e0b; box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.28), 0 2px 7px rgba(245, 158, 11, 0.34); }
-    .bubble.is-success .bubble-status-icon { background: #10b981; box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.28), 0 2px 7px rgba(16, 185, 129, 0.34); }
-    .bubble.is-error .bubble-status-icon { background: #ef4444; box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.28), 0 2px 7px rgba(239, 68, 68, 0.34); }
-    .bubble.is-info .bubble-status-icon { background: #38bdf8; box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.28), 0 2px 7px rgba(56, 189, 248, 0.34); }
-    .bubble-status-icon.is-success { background: #10b981; box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.28), 0 2px 7px rgba(16, 185, 129, 0.34); }
-    .bubble-status-icon.is-error { background: #ef4444; box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.28), 0 2px 7px rgba(239, 68, 68, 0.34); }
-    .bubble-status-icon.is-warning { background: #f59e0b; box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.28), 0 2px 7px rgba(245, 158, 11, 0.34); }
-    .bubble-status-icon.is-info { background: #38bdf8; box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.28), 0 2px 7px rgba(56, 189, 248, 0.34); }
-    .bubble.is-busy .bubble-status-icon::before { content: ""; position: absolute; inset: 0; width: 18px; height: 18px; background: radial-gradient(circle at 50% 50%, #fff 0 4px, transparent 4.5px); animation: status-pulse 820ms ease-in-out infinite; }
-    .bubble.is-waiting .bubble-status-icon::before { content: ""; position: absolute; left: 3px; top: 3px; box-sizing: border-box; width: 12px; height: 12px; border: 2px solid rgba(255, 255, 255, 0.96); border-top-color: rgba(255, 255, 255, 0.28); border-radius: 999px; }
+    .bubble.is-busy .bubble-status-icon { background: #4f9eea; }
+    .bubble.is-waiting .bubble-status-icon { background: #f2bc36; }
+    .bubble.is-success .bubble-status-icon { background: #61bd73; }
+    .bubble.is-error .bubble-status-icon { background: #e55f55; }
+    .bubble.is-info .bubble-status-icon { background: #5ac5dd; }
+    .bubble-status-icon.is-success { background: #61bd73; }
+    .bubble-status-icon.is-error { background: #e55f55; }
+    .bubble-status-icon.is-warning { background: #f2bc36; }
+    .bubble-status-icon.is-info { background: #5ac5dd; }
+    .bubble.is-busy .bubble-status-icon::before { content: ""; position: absolute; left: 4px; top: 4px; width: 6px; height: 6px; background: #fff; box-shadow: 4px 4px 0 rgba(23, 36, 59, .25); animation: status-pulse 640ms steps(2, end) infinite; }
+    .bubble.is-waiting .bubble-status-icon::before { content: ""; position: absolute; left: 3px; top: 3px; box-sizing: border-box; width: 8px; height: 8px; border: 2px solid #fff; border-top-color: transparent; border-radius: 0; }
     .bubble.is-plugin { gap: 6px; }
     .bubble.is-plugin .bubble-markdown strong { font-weight: 860; }
     .bubble.is-plugin .bubble-markdown em { font-style: italic; }
-    .bubble.is-plugin .bubble-markdown code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9.5px; background: rgba(30, 58, 138, 0.08); border-radius: 4px; padding: 0 3px; }
+    .bubble.is-plugin .bubble-markdown code { font-family: var(--pet-ui-font); font-size: 9px; background: var(--pet-ui-paper-alt); border: 1px solid var(--pet-ui-ink); border-radius: 0; padding: 0 3px; }
     .bubble-media { display: block; max-width: 96px; max-height: 64px; margin: 0 auto 2px; pointer-events: none; }
     .bubble.has-media { max-width: min(232px, calc(100vw - 18px)); max-height: 224px; }
     .bubble.is-link { cursor: pointer; }
-    .bubble-media-preview { display: block; max-width: 100%; max-height: 150px; margin: 0 auto 2px; border-radius: 8px; pointer-events: none; object-fit: contain; }
+    .bubble-media-preview { display: block; max-width: 100%; max-height: 150px; margin: 0 auto 2px; border: 2px solid var(--pet-ui-ink); border-radius: 0; pointer-events: none; object-fit: contain; }
     .bubble-plugin-icon { display: inline-block; font-size: 13px; line-height: 14px; margin-bottom: 2px; }
     .bubble-hud-item-icon, .bubble-plugin-icon, .bubble-status-icon::before, .bubble-action [aria-hidden="true"] { font-family: "OpenPets Emoji", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", system-ui, sans-serif; }
     .bubble-actions { display: flex; flex-wrap: nowrap; gap: 5px; width: 100%; margin-top: 6px; min-width: 0; }
-    .bubble-action { flex: 1 1 0; min-width: 0; border: 0; border-radius: 8px; padding: 4px 7px; font: 760 10px/12px Inter, ui-sans-serif, system-ui, sans-serif; background: rgba(30, 58, 138, 0.10); color: #172033; cursor: pointer; pointer-events: auto; -webkit-app-region: no-drag; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .bubble-action:hover { background: rgba(30, 58, 138, 0.18); }
+    .bubble-action { flex: 1 1 0; min-width: 0; border: 2px solid var(--pet-ui-ink); border-radius: 0; padding: 3px 6px; font: normal 9px/12px var(--pet-ui-font); background: var(--pet-ui-paper-alt); color: var(--pet-ui-ink); box-shadow: 2px 2px 0 var(--pet-ui-shadow); cursor: pointer; pointer-events: auto; -webkit-app-region: no-drag; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bubble-action:hover { background: #fff7dc; }
+    .bubble-action:active { transform: translate(2px, 2px); box-shadow: none; }
+    .bubble-action:focus-visible, .bubble-input-control:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
     .bubble-action.is-primary { background: #2563eb; color: #fff; }
     .bubble-action.is-primary:hover { background: #1d4ed8; }
     .bubble-action.is-danger { background: #ef4444; color: #fff; }
     .bubble-action.is-danger:hover { background: #dc2626; }
     .bubble-input { display: flex; gap: 5px; margin-top: 6px; align-items: center; }
-    .bubble-input-control { box-sizing: border-box; flex: 1 1 auto; min-width: 0; border: 1px solid rgba(30, 58, 138, 0.25); border-radius: 8px; padding: 4px 7px; font: 700 10px/12px Inter, ui-sans-serif, system-ui, sans-serif; background: rgba(255, 255, 255, 0.9); color: #172033; pointer-events: auto; -webkit-app-region: no-drag; }
+    .bubble-input-control { box-sizing: border-box; flex: 1 1 auto; min-width: 0; border: 2px solid var(--pet-ui-ink); border-radius: 0; padding: 3px 6px; font: normal 9px/12px var(--pet-ui-font); background: #fffdf3; color: var(--pet-ui-ink); outline: none; pointer-events: auto; -webkit-app-region: no-drag; }
     .bubble.is-pinned {
       position: absolute;
       left: 50%;
@@ -1355,43 +1426,42 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
       flex-direction: column;
       align-items: center;
       padding: 6px 8px;
-      background: linear-gradient(135deg, rgba(241, 245, 249, 0.94), rgba(226, 232, 240, 0.92));
-      color: #334155;
-      border: 1px solid rgba(255, 255, 255, 0.7);
-      border-radius: 12px;
-      box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.5);
-      backdrop-filter: blur(8px);
+      background: var(--pet-ui-paper);
+      color: var(--pet-ui-ink);
+      border: 3px solid var(--pet-ui-ink);
+      border-radius: 0;
+      box-shadow: 4px 4px 0 var(--pet-ui-shadow);
       text-align: center;
       max-height: none;
       max-width: none;
-      animation: bubble-in 200ms cubic-bezier(0.2, 0, 0, 1);
+      animation: bubble-in 120ms steps(3, end);
     }
     .bubble.is-pinned::after { content: none !important; }
     .bubble.is-pinned .bubble-body { width: 100%; text-align: center; }
-    .bubble.is-pinned .bubble-text { display: inline-block; -webkit-line-clamp: unset; -webkit-box-orient: initial; white-space: pre; overflow-wrap: normal; word-break: keep-all; font: 800 10px/13px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; letter-spacing: -0.03em; color: #334155; text-align: left; }
+    .bubble.is-pinned .bubble-text { display: inline-block; -webkit-line-clamp: unset; -webkit-box-orient: initial; white-space: pre; overflow-wrap: normal; word-break: keep-all; font: normal 9px/12px var(--pet-ui-font); letter-spacing: 0; color: var(--pet-ui-ink); text-align: left; }
     .bubble.is-pinned .bubble-actions { display: flex; flex-direction: row; flex-wrap: nowrap; gap: 4px; width: 100%; margin-top: 5px; justify-content: center; }
-    .bubble.is-pinned .bubble-action { flex: 1 1 auto; min-width: 0; padding: 3px 6px; font-size: 9px; font-weight: 700; line-height: 11px; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; background: rgba(30, 58, 138, 0.08); color: #1e293b; transition: background 150ms ease; }
-    .bubble.is-pinned .bubble-action:hover { background: rgba(30, 58, 138, 0.14); }
+    .bubble.is-pinned .bubble-action { flex: 1 1 auto; min-width: 0; padding: 3px 6px; font-size: 9px; font-weight: normal; line-height: 11px; border-radius: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; background: var(--pet-ui-paper-alt); color: var(--pet-ui-ink); }
+    .bubble.is-pinned .bubble-action:hover { background: #fff7dc; }
     .bubble.is-pinned .bubble-action.is-primary { background: #2563eb; color: #ffffff; }
     .bubble.is-pinned .bubble-action.is-primary:hover { background: #1d4ed8; }
     .bubble.is-pinned .bubble-action.is-danger { background: #ef4444; color: #ffffff; }
     .bubble.is-pinned .bubble-action.is-danger:hover { background: #dc2626; }
-    .bubble.is-pinned.accent-blue { background: linear-gradient(135deg, rgba(219, 234, 254, 0.94), rgba(191, 219, 254, 0.92)); }
-    .bubble.is-pinned.accent-purple { background: linear-gradient(135deg, rgba(237, 233, 254, 0.94), rgba(221, 214, 254, 0.92)); }
-    .bubble.is-pinned.accent-green { background: linear-gradient(135deg, rgba(220, 252, 231, 0.94), rgba(187, 247, 208, 0.92)); }
-    .bubble.is-pinned.accent-amber { background: linear-gradient(135deg, rgba(254, 243, 199, 0.94), rgba(253, 230, 138, 0.92)); }
-    .bubble.is-pinned.accent-red { background: linear-gradient(135deg, rgba(254, 226, 226, 0.94), rgba(254, 202, 202, 0.92)); }
-    .bubble.is-pinned.accent-pink { background: linear-gradient(135deg, rgba(252, 231, 243, 0.94), rgba(251, 207, 232, 0.92)); }
-    .bubble.is-pinned.accent-slate { background: linear-gradient(135deg, rgba(241, 245, 249, 0.94), rgba(226, 232, 240, 0.92)); }
+    .bubble.is-pinned.accent-blue { background: #dbeafe; }
+    .bubble.is-pinned.accent-purple { background: #ede9fe; }
+    .bubble.is-pinned.accent-green { background: #dcfce7; }
+    .bubble.is-pinned.accent-amber { background: #fef3c7; }
+    .bubble.is-pinned.accent-red { background: #fee2e2; }
+    .bubble.is-pinned.accent-pink { background: #fce7f3; }
+    .bubble.is-pinned.accent-slate { background: #f1f5f9; }
     .stage.has-pinned .pet-hitbox { bottom: ${Math.max(0, petBottom - hitPadding) + 28}px; }
     .stage.has-pinned .bubble:not(.is-pinned) { bottom: ${bubbleBottom + 28}px; }
-    .bubble.is-plugin.accent-blue { background: linear-gradient(135deg, rgba(219, 234, 254, 0.97), rgba(191, 219, 254, 0.94)); }
-    .bubble.is-plugin.accent-purple { background: linear-gradient(135deg, rgba(237, 233, 254, 0.97), rgba(221, 214, 254, 0.94)); }
-    .bubble.is-plugin.accent-green { background: linear-gradient(135deg, rgba(220, 252, 231, 0.97), rgba(187, 247, 208, 0.94)); }
-    .bubble.is-plugin.accent-amber { background: linear-gradient(135deg, rgba(254, 243, 199, 0.97), rgba(253, 230, 138, 0.94)); }
-    .bubble.is-plugin.accent-red { background: linear-gradient(135deg, rgba(254, 226, 226, 0.97), rgba(254, 202, 202, 0.94)); }
-    .bubble.is-plugin.accent-pink { background: linear-gradient(135deg, rgba(252, 231, 243, 0.97), rgba(251, 207, 232, 0.94)); }
-    .bubble.is-plugin.accent-slate { background: linear-gradient(135deg, rgba(241, 245, 249, 0.97), rgba(226, 232, 240, 0.94)); }
+    .bubble.is-plugin.accent-blue { background: #dbeafe; }
+    .bubble.is-plugin.accent-purple { background: #ede9fe; }
+    .bubble.is-plugin.accent-green { background: #dcfce7; }
+    .bubble.is-plugin.accent-amber { background: #fef3c7; }
+    .bubble.is-plugin.accent-red { background: #fee2e2; }
+    .bubble.is-plugin.accent-pink { background: #fce7f3; }
+    .bubble.is-plugin.accent-slate { background: #f1f5f9; }
     .bubble-hud {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1443,9 +1513,9 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
       align-items: baseline;
       gap: 2px;
       font-size: 8px;
-      font-weight: 700;
+      font-weight: normal;
       line-height: 1;
-      color: #475569;
+      color: var(--pet-ui-muted);
     }
     .bubble-hud-item-label {
       overflow: hidden;
@@ -1453,18 +1523,20 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
       white-space: nowrap;
     }
     .bubble-hud-item-bar {
-      height: 4px;
-      background: rgba(71, 85, 105, 0.15);
-      border-radius: 99px;
+      box-sizing: border-box;
+      height: 6px;
+      background: #fffdf3;
+      border: 1px solid var(--pet-ui-ink);
+      border-radius: 0;
       overflow: hidden;
       position: relative;
       width: 100%;
     }
     .bubble-hud-item-fill {
       height: 100%;
-      border-radius: 99px;
+      border-radius: 0;
       width: 0%;
-      transition: width 200ms ease;
+      transition: width 180ms steps(6, end);
     }
     .bubble-hud-item-fill.tone-amber { background: #d97706; }
     .bubble-hud-item-fill.tone-blue { background: #2563eb; }

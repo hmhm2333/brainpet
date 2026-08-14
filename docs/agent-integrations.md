@@ -59,7 +59,14 @@ the task lifecycle into `agent.activity` over authenticated local IPC:
 transcripts, paths, and working directories are deliberately discarded.
 
 The schema-v1 payload declares provider capabilities and may include only a
-bounded request category such as `permission`; it still carries no task body.
+bounded request category plus short structured options; it still carries no
+task body. Capability claims from lifecycle events are display metadata, not
+authority. A side-effect control appears only when the desktop has also
+registered a same-provider adapter for that action. The host Action Broker owns
+expiry, one-time nonces, duplicate suppression, success consumption, and
+single-line failure fallback; disconnected or unsupported providers show only
+“Return to Agent”. Codex currently registers no action adapter because its
+bridge has no verified public stop/permission/reply contract.
 The desktop aggregates activity by provider/session so completion in one task
 cannot hide another task that is still working or waiting. A running runtime
 uses a 400ms local IPC timeout. A packaged but stopped BrainPet can be launched

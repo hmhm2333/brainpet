@@ -14,6 +14,7 @@ import { reclampAgentPetWindows } from "./agent-pet-controller.js";
 import { reclampPluginPetWindows } from "./plugin-pet-registry.js";
 import { reclampLanVisitingPetWindows } from "./lan-pet-controller.js";
 import type { AgentCompanionActivitySummary } from "./agent-companion-activity.js";
+import { primaryCompanionActionBroker, type PrimaryCompanionActionPrompt } from "./agent-companion-action-broker.js";
 
 let defaultPetWindow: BrowserWindow | null = null;
 let paused = false;
@@ -30,6 +31,8 @@ const maxPluginMoveDistance = 160;
 const minPluginMoveDurationMs = 250;
 const maxPluginMoveDurationMs = 1_500;
 let movementInProgress = false;
+
+primaryCompanionActionBroker.subscribe(() => refreshDefaultPetContent());
 
 export type PetMoveOptions = { readonly x: number; readonly y: number; readonly durationMs?: number };
 export type PetWanderOptions = { readonly distance?: number; readonly durationMs?: number };
@@ -120,7 +123,7 @@ export function setDefaultPetPaused(nextPaused: boolean): void {
     return;
   }
 
-  void loadDefaultPetContent(defaultPetWindow, paused, transientDisplay, statusBadge, getCurrentDismissToken(), getDefaultPetPluginBubbles(), primaryCompanionActivity, primaryCompanionTrayOpen);
+  void loadDefaultPetContent(defaultPetWindow, paused, transientDisplay, statusBadge, getCurrentDismissToken(), getDefaultPetPluginBubbles(), primaryCompanionActivity, primaryCompanionTrayOpen, getPrimaryCompanionActionPrompt());
 }
 
 export function getDefaultPetPaused(): boolean {
@@ -138,7 +141,7 @@ export function refreshDefaultPetContent(): void {
   }
 
   debug("pet.default", "refresh content", { windowId: defaultPetWindow.id, paused, hasDisplay: Boolean(transientDisplay), badge: statusBadge, petId: getAppStateSnapshot().preferences.defaultPetId });
-  void loadDefaultPetContent(defaultPetWindow, paused, transientDisplay, statusBadge, getCurrentDismissToken(), getDefaultPetPluginBubbles(), primaryCompanionActivity, primaryCompanionTrayOpen);
+  void loadDefaultPetContent(defaultPetWindow, paused, transientDisplay, statusBadge, getCurrentDismissToken(), getDefaultPetPluginBubbles(), primaryCompanionActivity, primaryCompanionTrayOpen, getPrimaryCompanionActionPrompt());
 }
 
 export function recoverDefaultPetMouseInterop(reason: string): void {
@@ -273,6 +276,16 @@ function dismissPrimaryCompanionActivity(provider: string, sessionId: string): v
     .catch((error) => debug("pet.default", "companion activity dismiss failed", { error: error instanceof Error ? error.message : String(error) }));
 }
 
+function getPrimaryCompanionActionPrompt(): PrimaryCompanionActionPrompt | null {
+  return primaryCompanionTrayOpen ? primaryCompanionActionBroker.derivePrompt(primaryCompanionActivity) : null;
+}
+
+function requestPrimaryCompanionAction(token: string, actionId: string, values: { readonly message?: string }): void {
+  void primaryCompanionActionBroker.execute(token, actionId, values).then((result) => {
+    if (!result.ok) debug("pet.default", "companion action not completed", { code: result.code });
+  });
+}
+
 export function applyExternalPetMoveBy(options: PetMoveOptions): Promise<{ readonly moved: boolean; readonly reason?: string }> {
   return moveDefaultPetBy(Number(options.x), Number(options.y), options.durationMs);
 }
@@ -365,7 +378,7 @@ function handleBubbleDismissed(dismissToken: string): void {
   }
   clearDefaultPetDisplayTimers();
   if (defaultPetWindow && !defaultPetWindow.isDestroyed()) {
-    void loadDefaultPetContent(defaultPetWindow, paused, null, null, undefined, getDefaultPetPluginBubbles(), primaryCompanionActivity, primaryCompanionTrayOpen);
+    void loadDefaultPetContent(defaultPetWindow, paused, null, null, undefined, getDefaultPetPluginBubbles(), primaryCompanionActivity, primaryCompanionTrayOpen, getPrimaryCompanionActionPrompt());
   }
 }
 
@@ -388,6 +401,7 @@ function getOrCreateDefaultPetWindow(): BrowserWindow {
     pluginBubbles: getDefaultPetPluginBubbles(),
     companionActivity: primaryCompanionActivity,
     companionTrayOpen: primaryCompanionTrayOpen,
+    companionActionPrompt: getPrimaryCompanionActionPrompt(),
     onPositionChanged: handlePositionChanged,
     onHideRequested: hideDefaultPet,
     onBubbleDismissed: handleBubbleDismissed,
@@ -395,6 +409,7 @@ function getOrCreateDefaultPetWindow(): BrowserWindow {
     onBubbleSubmit: (token, values) => defaultPetBubbleArbiter.handleSubmit(token, values),
     onCompanionTrayToggled: setPrimaryCompanionTrayOpen,
     onCompanionActivityDismissed: dismissPrimaryCompanionActivity,
+    onCompanionActionRequested: requestPrimaryCompanionAction,
     onPetEvent: (name, payload) => publishPluginPetEvent("default", name, payload),
   }, getCurrentDismissToken());
   const windowId = defaultPetWindow.id;

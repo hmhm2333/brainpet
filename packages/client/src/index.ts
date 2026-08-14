@@ -3,11 +3,11 @@ import { randomUUID } from "node:crypto";
 import { posix, win32 } from "node:path";
 
 import { parseIpcEndpoint, readDiscoveryFile, type OpenPetsDiscoveryFile } from "./discovery.js";
-import { agentActivitySchemaVersion, allowedAgentCompanionRequestKinds, connectTimeoutMs, maxIpcMessageBytes, openPetsIpcVersion, parseIpcResponse, responseTimeoutMs, validateAgentCompanionCapabilities, validateAgentLifecycleState, validateReaction, OpenPetsClientError, type AgentCompanionCapability, type AgentCompanionRequestKind, type AgentLifecycleState, type OpenPetsIpcMethod, type OpenPetsIpcRequest, type OpenPetsReaction } from "./protocol.js";
+import { agentActivitySchemaVersion, allowedAgentCompanionRequestKinds, connectTimeoutMs, maxIpcMessageBytes, openPetsIpcVersion, parseIpcResponse, responseTimeoutMs, validateAgentCompanionCapabilities, validateAgentCompanionRequestOptions, validateAgentLifecycleState, validateReaction, OpenPetsClientError, type AgentCompanionCapability, type AgentCompanionRequestKind, type AgentCompanionRequestOption, type AgentLifecycleState, type OpenPetsIpcMethod, type OpenPetsIpcRequest, type OpenPetsReaction } from "./protocol.js";
 import { maxRemoteMessageBytes, openPetsRemoteProtocol, openPetsRemoteVersion, parseRemoteEndpoint, parseRemoteResponse, remoteConnectTimeoutMs, remoteResponseTimeoutMs, validateRemoteClientId, validateRemoteMessage, validateRemoteReaction, validateRemoteToken, type OpenPetsRemoteEndpoint, type OpenPetsRemoteMethod, type OpenPetsRemoteRequest } from "./remote-protocol.js";
 
 export { getDiscoveryFilePath, parseIpcEndpoint, readDiscoveryFile, validateDiscovery, validateEndpoint, type OpenPetsDiscoveryFile, type ParsedIpcEndpoint } from "./discovery.js";
-export { agentActivitySchemaVersion, allowedAgentCompanionCapabilities, allowedAgentCompanionRequestKinds, allowedAgentLifecycleStates, allowedReactions, OpenPetsClientError, type AgentCompanionCapability, type AgentCompanionRequestKind, type AgentLifecycleState, type OpenPetsReaction } from "./protocol.js";
+export { agentActivitySchemaVersion, allowedAgentCompanionCapabilities, allowedAgentCompanionRequestKinds, allowedAgentCompanionRequestOptionIntents, allowedAgentLifecycleStates, allowedReactions, validateAgentCompanionRequestOptions, OpenPetsClientError, type AgentCompanionCapability, type AgentCompanionRequestKind, type AgentCompanionRequestOption, type AgentCompanionRequestOptionIntent, type AgentLifecycleState, type OpenPetsReaction } from "./protocol.js";
 export { maxRemoteMessageBytes, openPetsRemoteProtocol, openPetsRemoteVersion, parseRemoteEndpoint, validateRemoteClientId, validateRemoteMessage, validateRemoteReaction, validateRemoteToken, type OpenPetsRemoteEndpoint, type OpenPetsRemoteMethod, type OpenPetsRemoteRequest, type OpenPetsRemoteResponse } from "./remote-protocol.js";
 
 /**
@@ -82,7 +82,7 @@ export interface OpenPetsAgentLifecycleEvent {
   readonly state: AgentLifecycleState;
   readonly occurredAt: number;
   readonly capabilities?: readonly AgentCompanionCapability[];
-  readonly request?: { readonly kind: AgentCompanionRequestKind; readonly requestId?: string };
+  readonly request?: { readonly kind: AgentCompanionRequestKind; readonly requestId?: string; readonly options?: readonly AgentCompanionRequestOption[] };
 }
 
 export interface OpenPetsClient {
@@ -179,7 +179,8 @@ function validateAgentLifecycleEvent(event: OpenPetsAgentLifecycleEvent): OpenPe
 function validateAgentCompanionRequest(value: NonNullable<OpenPetsAgentLifecycleEvent["request"]>): NonNullable<OpenPetsAgentLifecycleEvent["request"]> {
   if (!allowedAgentCompanionRequestKinds.includes(value.kind)) throw new OpenPetsClientError("invalid_params", "Agent request summary is invalid.");
   if (value.requestId !== undefined && !isLifecycleIdentifier(value.requestId)) throw new OpenPetsClientError("invalid_params", "Agent request id is invalid.");
-  return { kind: value.kind, ...(value.requestId ? { requestId: value.requestId } : {}) };
+  const options = value.options === undefined ? undefined : validateAgentCompanionRequestOptions(value.options);
+  return { kind: value.kind, ...(value.requestId ? { requestId: value.requestId } : {}), ...(options ? { options } : {}) };
 }
 
 function isLifecycleIdentifier(value: unknown): value is string {

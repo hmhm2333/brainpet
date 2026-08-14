@@ -21,12 +21,15 @@ export const allowedReactions = [
 export const allowedAgentLifecycleStates = ["working", "waiting", "ready", "blocked", "idle"] as const;
 export const agentActivitySchemaVersion = 1;
 export const allowedAgentCompanionCapabilities = ["observeLifecycle", "listActivity", "openTask", "stopTask", "respondToRequest", "sendMessage", "voice", "detailActivity"] as const;
-export const allowedAgentCompanionRequestKinds = ["permission", "question", "review", "openLink", "continue"] as const;
+export const allowedAgentCompanionRequestKinds = ["permission", "question", "review", "openLink", "stop", "continue"] as const;
+export const allowedAgentCompanionRequestOptionIntents = ["allow", "deny", "runOnce", "apply", "answer", "review", "open", "stop", "continue"] as const;
 
 export type OpenPetsReaction = typeof allowedReactions[number];
 export type AgentLifecycleState = typeof allowedAgentLifecycleStates[number];
 export type AgentCompanionCapability = typeof allowedAgentCompanionCapabilities[number];
 export type AgentCompanionRequestKind = typeof allowedAgentCompanionRequestKinds[number];
+export type AgentCompanionRequestOptionIntent = typeof allowedAgentCompanionRequestOptionIntents[number];
+export interface AgentCompanionRequestOption { readonly id: string; readonly label: string; readonly intent: AgentCompanionRequestOptionIntent }
 export type OpenPetsIpcMethod = "hello" | "status" | "pets.list" | "pets.install" | "lease.acquire" | "lease.heartbeat" | "lease.release" | "agent.activity" | "pet.react" | "pet.say" | "pet.showMedia" | "pets.install-local";
 
 export interface OpenPetsIpcRequest {
@@ -96,6 +99,20 @@ export function validateAgentCompanionCapabilities(value: readonly string[] | un
   }
   if (!capabilities.includes("observeLifecycle")) throw new OpenPetsClientError("invalid_params", "Agent lifecycle provider must declare observeLifecycle.");
   return capabilities;
+}
+
+export function validateAgentCompanionRequestOptions(value: unknown): readonly AgentCompanionRequestOption[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 6) throw new OpenPetsClientError("invalid_params", "Agent request options are invalid.");
+  const options: AgentCompanionRequestOption[] = [];
+  const ids = new Set<string>();
+  for (const entry of value) {
+    if (!isRecord(entry) || typeof entry.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(entry.id) || ids.has(entry.id)) throw new OpenPetsClientError("invalid_params", "Agent request option id is invalid.");
+    if (typeof entry.label !== "string" || entry.label.length < 1 || entry.label.length > 40 || /[\r\n\u0000-\u001f\u007f]/.test(entry.label)) throw new OpenPetsClientError("invalid_params", "Agent request option label is invalid.");
+    if (typeof entry.intent !== "string" || !allowedAgentCompanionRequestOptionIntents.includes(entry.intent as AgentCompanionRequestOptionIntent)) throw new OpenPetsClientError("invalid_params", "Agent request option intent is invalid.");
+    ids.add(entry.id);
+    options.push({ id: entry.id, label: entry.label, intent: entry.intent as AgentCompanionRequestOptionIntent });
+  }
+  return options;
 }
 
 export class OpenPetsClientError extends Error {

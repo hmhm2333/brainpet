@@ -6,6 +6,7 @@ import test from "node:test";
 
 const desktopRoot = process.env.OPENPETS_DESKTOP_ROOT ?? fileURLToPath(new URL("../..", import.meta.url));
 const petWindow = readFileSync(resolve(desktopRoot, "src/pet-window.ts"), "utf8");
+const petWindowCss = petWindow.slice(petWindow.indexOf("function createPetWindowCss"), petWindow.indexOf("function createSpriteStateCss"));
 const primaryCompanionUi = readFileSync(resolve(desktopRoot, "src/primary-companion-ui.ts"), "utf8");
 const stageCss = readFileSync(resolve(desktopRoot, "src/renderer/src/brainpet/stage.css"), "utf8");
 const stageMain = readFileSync(resolve(desktopRoot, "src/renderer/src/brainpet/main.ts"), "utf8");
@@ -40,6 +41,21 @@ test("BrainPet embeds the licensed Simplified Chinese and Latin pixel font", () 
   assert.match(petWindow, /@font-face \{ font-family: "BrainPet Pixel";[^\n]*format\("woff2"\)/);
 });
 
+test("the host applies one pixel UI contract to built-in and installed pets", () => {
+  const bubbleRule = petWindowCss.match(/^\s*\.bubble \{.*$/m)?.[0] ?? "";
+  const actionRule = petWindowCss.match(/^\s*\.bubble-action \{.*$/m)?.[0] ?? "";
+  const inputRule = petWindowCss.match(/^\s*\.bubble-input-control \{.*$/m)?.[0] ?? "";
+  const pinnedRule = petWindowCss.slice(petWindowCss.indexOf(".bubble.is-pinned {"), petWindowCss.indexOf(".bubble.is-pinned::after"));
+  assert.equal((petWindow.match(/data-pet-ui-theme="pixel"/g) ?? []).length, 2, "both pet render paths must opt into the host pixel theme");
+  assert.match(petWindowCss, /--pet-ui-font: "BrainPet Pixel"/);
+  assert.match(petWindowCss, /font-synthesis: none/);
+  assert.match(bubbleRule, /font: normal 10px\/13px var\(--pet-ui-font\).*border: 3px solid var\(--pet-ui-ink\).*border-radius: 0.*box-shadow: 4px 4px 0/);
+  assert.match(actionRule, /border: 2px solid var\(--pet-ui-ink\).*border-radius: 0.*var\(--pet-ui-font\)/);
+  assert.match(inputRule, /border: 2px solid var\(--pet-ui-ink\).*border-radius: 0.*var\(--pet-ui-font\)/);
+  assert.match(pinnedRule, /background: var\(--pet-ui-paper\)[\s\S]*border-radius: 0[\s\S]*box-shadow: 4px 4px 0/);
+  assert.doesNotMatch(petWindowCss, /\bInter\b|ui-sans-serif|linear-gradient|backdrop-filter/);
+});
+
 test("primary companion controls stay compact, pixel-styled, and capability honest", () => {
   assert.match(petWindow, /class="primary-companion-badge status-/);
   assert.match(petWindow, /class="primary-companion-tray"/);
@@ -47,6 +63,10 @@ test("primary companion controls stay compact, pixel-styled, and capability hone
   assert.match(petWindow, /data-companion-dismiss/);
   assert.match(petPreload, /brainpet:companionTrayToggled/);
   assert.match(petPreload, /brainpet:companionActivityDismissed/);
+  assert.match(petPreload, /brainpet:companionActionRequested/);
+  assert.match(petWindow, /class="primary-companion-request/);
+  assert.match(petWindow, /--pet-ui-font/);
+  assert.match(petWindow, /Broker tokens and user replies never enter the plugin event bus/);
   assert.doesNotMatch(petWindow, /data-companion-(allow|deny|stop|reply)/);
 });
 

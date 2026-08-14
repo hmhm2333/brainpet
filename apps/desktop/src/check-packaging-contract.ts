@@ -185,7 +185,7 @@ assert.match(petWindowSource, /windowLoadChains\.set\(window, next\)/, "pet cont
 assert.match(petWindowSource, /next\.catch\(\(\) => \{\}\)\.finally/, "pet content reload chain cleanup must not create unhandled rejections.");
 assert.match(petWindowSource, /destroyed-after-write/, "pet content reloads must re-check destroyed windows after writing HTML.");
 assert.match(petWindowSource, /process\.platform === "win32" \? "none" : "drop-shadow/, "Windows pet windows must avoid CSS drop-shadow on transparent layered windows.");
-assert.match(petWindowSource, /process\.platform === "win32" \? "none" : "blur\(10px\)"/, "Windows pet windows must avoid backdrop-filter on transparent layered windows.");
+assert.doesNotMatch(petWindowSource, /backdrop-filter/, "Pet UI must avoid backdrop-filter on every platform so transparent windows stay crisp and inexpensive.");
 assert.match(petWindowSource, /const petDragRegion = shouldUseWaylandNativePetDrag\(\) \? "drag" : "no-drag";/, "pet dragging must default away from Electron draggable regions so right-click context menus work.");
 assert.match(petPreloadSource, /openpets:pet-hit-test/, "pet preload must report visible pet and bubble hit testing for passthrough.");
 assert.match(petPreloadSource, /openpets:pet-ready/, "pet preload must report readiness after installing mouse handlers.");

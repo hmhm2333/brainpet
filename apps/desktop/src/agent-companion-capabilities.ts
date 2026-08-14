@@ -17,12 +17,23 @@ export type AgentCompanionStatus = typeof agentCompanionStatuses[number];
 export const agentCompanionPromptActions = ["openTask", "stopTask", "respondToRequest", "sendMessage", "voice"] as const;
 export type AgentCompanionPromptAction = typeof agentCompanionPromptActions[number];
 
-export const agentCompanionRequestKinds = ["permission", "question", "review", "openLink", "continue"] as const;
+export const agentCompanionRequestKinds = ["permission", "question", "review", "openLink", "stop", "continue"] as const;
 export type AgentCompanionRequestKind = typeof agentCompanionRequestKinds[number];
+
+export const agentCompanionRequestOptionIntents = ["allow", "deny", "runOnce", "apply", "answer", "review", "open", "stop", "continue"] as const;
+export type AgentCompanionRequestOptionIntent = typeof agentCompanionRequestOptionIntents[number];
+
+export interface AgentCompanionRequestOption {
+  readonly id: string;
+  /** Display-only text supplied by the registered provider adapter. */
+  readonly label: string;
+  readonly intent: AgentCompanionRequestOptionIntent;
+}
 
 export interface AgentCompanionRequestSummary {
   readonly kind: AgentCompanionRequestKind;
   readonly requestId?: string;
+  readonly options?: readonly AgentCompanionRequestOption[];
 }
 
 export interface AgentCompanionActionDescriptor {
