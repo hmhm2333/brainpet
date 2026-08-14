@@ -1,0 +1,67 @@
+{
+  "description": "Mirror privacy-minimized Codex lifecycle state to the local BrainPet runtime.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$PLUGIN_ROOT/scripts/bridge.sh\"",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\bridge.cmd\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$PLUGIN_ROOT/scripts/bridge.sh\"",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\bridge.cmd\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$PLUGIN_ROOT/scripts/bridge.sh\"",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\bridge.cmd\"",
+            "timeout": 3,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$PLUGIN_ROOT/scripts/bridge.sh\"",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\bridge.cmd\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$PLUGIN_ROOT/scripts/bridge.sh\"",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\bridge.cmd\"",
+            "timeout": 1
+          }
+        ]
+      }
+    ]
+  }
+}

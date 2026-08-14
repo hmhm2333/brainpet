@@ -35,6 +35,7 @@
     "plugins:publish": "node web/scripts/sync-plugins.js",
     "plugins:deploy": "pnpm --dir web deploy",
     "plugins:release": "pnpm plugins:package && pnpm plugins:validate-release && pnpm plugins:publish && pnpm plugins:deploy && pnpm plugins:validate-live",
+    "brainpet:bridge:validate-release": "node integrations/codex/scripts/validate-bridge-release.mjs",
     "test": "pnpm build && pnpm -r --if-present test",
     "check": "pnpm -r check",
     "typecheck": "pnpm -r typecheck",

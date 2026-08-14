@@ -97,6 +97,16 @@ windows.ts (IPC handlers)
     └── Cursor global MCP config management (@open-pets/cursor)
 ```
 
+**External Agent Lifecycle Flow**:
+```
+Codex plugin hooks → local IPC `agent.activity` → agent-lifecycle-controller.ts
+├── agent-lifecycle.ts aggregates by agent/session and rejects stale turn events
+├── agent-companion-activity.ts maps concurrent lifecycle entries into the privacy-minimal main-pet activity model
+├── agent-companion-capabilities.ts gates host action prompts on provider-declared support
+├── default-pet-controller.ts applies sticky work/wait and transient completion
+└── plugin-events-source.ts publishes the existing `agent:activity` bus event
+```
+
 **Pet Installation Flow**:
 ```
 pet-installation.ts
@@ -198,7 +208,9 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `state.ts`: Simple shell pause state
 - `app-state.ts`: Persistent JSON state with V1 schema, atomic writes, reaction animation overrides, and the validated waiting animation duration preference
 - `app-state-core.ts`: Pet scale options, waiting-duration options/normalization, onboarding normalization
-- `logger.ts`: Structured logging with scopes (app, ipc, lease, pet.default, pet.agent, pet.window, state, tray, ui), log rotation, redaction
+- `logger.ts`: Structured logging with scopes (including agent.lifecycle and BrainPet scopes), log rotation, redaction
+- `agent-lifecycle.ts`: Pure multi-session lifecycle aggregation, priority, stale-event, and timeout policy
+- `agent-lifecycle-controller.ts`: Applies aggregated lifecycle presentation to the default pet and existing plugin activity bus
 
 **UI**:
 - `tray.ts`: Tray icon (nativeImage), context menu builder, update status integration, route-targeted Control Center entries, logs folder
@@ -223,7 +235,8 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 **IPC**:
 - `local-ipc.ts`: net.Server implementation, request routing, discovery file management, network security (loopback/private address filtering), logging
 - `local-ipc-protocol.ts`: Protocol constants, request/response types, validation functions
-- `local-ipc-paths.ts`: Platform-specific socket paths and discovery file locations
+- `local-ipc-paths.ts`: Platform-specific, distribution-isolated OpenPets/BrainPet socket paths and discovery locations
+- `brainpet-install-marker.ts`: Validated per-user packaged-runtime marker used by Agent bridges for bounded cold wake
 - `lease-manager.ts`: Lease lifecycle (acquire, heartbeat, release, cleanup), target resolution
 
 **Installation**:

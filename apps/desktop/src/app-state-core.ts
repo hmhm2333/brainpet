@@ -23,8 +23,16 @@ export const appearanceThemeOptions = ["system", "light", "dark"] as const;
 export type AppearanceTheme = typeof appearanceThemeOptions[number];
 export const defaultAppearanceTheme: AppearanceTheme = "system";
 
+export const primaryCompanionFollowModes = ["follow", "paused"] as const;
+export type PrimaryCompanionFollowMode = typeof primaryCompanionFollowModes[number];
+export const defaultPrimaryCompanionFollowMode: PrimaryCompanionFollowMode = "follow";
+
 export function normalizeAppearanceTheme(value: unknown): AppearanceTheme {
   return appearanceThemeOptions.find((option) => option === value) ?? defaultAppearanceTheme;
+}
+
+export function normalizePrimaryCompanionFollowMode(value: unknown): PrimaryCompanionFollowMode {
+  return primaryCompanionFollowModes.find((mode) => mode === value) ?? defaultPrimaryCompanionFollowMode;
 }
 
 export function normalizeWaitingAnimationDurationMs(value: unknown): WaitingAnimationDurationMs {
@@ -62,6 +70,10 @@ export function deriveDisplayKey(bounds: { readonly x: number; readonly y: numbe
 export function shouldShowDefaultPetForExternalEvent(_visible: boolean, _openOnLaunch: boolean, paused: boolean): boolean {
   // Agent activity is an explicit display trigger; open-on-launch only controls startup.
   return !paused;
+}
+
+export function shouldShowPrimaryCompanionForAgentEvent(paused: boolean, followMode: PrimaryCompanionFollowMode): boolean {
+  return !paused && followMode === "follow";
 }
 
 /**

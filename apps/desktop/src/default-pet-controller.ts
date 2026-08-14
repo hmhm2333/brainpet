@@ -1,7 +1,7 @@
 import { BrowserWindow, powerMonitor, screen, shell, type Display } from "electron";
 
-import { getAppStateSnapshot, getDefaultPetPosition, getPerMonitorPetPosition, resetDefaultPetPosition, setDefaultPetPosition, setPerMonitorPetPosition, updatePreferences } from "./app-state.js";
-import { shouldShowDefaultPetForExternalEvent } from "./app-state-core.js";
+import { getAppStateSnapshot, getDefaultPetPosition, getPerMonitorPetPosition, resetDefaultPetPosition, setDefaultPetPosition, setPerMonitorPetPosition, updatePreferences, type PrimaryCompanionFollowMode } from "./app-state.js";
+import { shouldShowDefaultPetForExternalEvent, shouldShowPrimaryCompanionForAgentEvent } from "./app-state-core.js";
 import { defaultPetWindowSize, getAllDisplayKeys, getDefaultPetInitialPosition, getDisplayKey, getDisplayKeyForPosition, invalidateDisplayCache, type Point } from "./display.js";
 import { motionMoveTo } from "./pet-motion-engine.js";
 import { registerRoamingPet } from "./pet-roaming-controller.js";
@@ -184,6 +184,42 @@ export function applyExternalPetStatusReaction(reaction: OpenPetsReaction | null
   if (reaction === null || reaction === "idle") clearStatusBadge();
   else setStatusBadge(reaction);
   refreshDefaultPetContent();
+}
+
+export function wakePrimaryCompanion(): void {
+  updatePreferences({ primaryCompanionFollowMode: "follow" });
+  showDefaultPetWindow("user");
+  void import("./agent-lifecycle-controller.js")
+    .then(({ replayAgentLifecyclePresentation }) => replayAgentLifecyclePresentation())
+    .catch((error) => debug("pet.default", "primary companion presentation replay failed", { error: error instanceof Error ? error.message : String(error) }));
+}
+
+export function hidePrimaryCompanionUntilActivity(): void {
+  hideDefaultPetWindow();
+}
+
+export function setPrimaryCompanionFollowMode(mode: PrimaryCompanionFollowMode): void {
+  updatePreferences({ primaryCompanionFollowMode: mode });
+  info("pet.default", "primary companion follow mode changed", { mode });
+  if (mode === "paused") hideDefaultPetWindow();
+}
+
+export function getPrimaryCompanionFollowMode(): PrimaryCompanionFollowMode {
+  return getAppStateSnapshot().preferences.primaryCompanionFollowMode;
+}
+
+export function applyExternalPetLifecycleReaction(reaction: OpenPetsReaction | null, options: { readonly sticky?: boolean } = {}): { readonly shown: boolean; readonly reason?: string } {
+  if (paused) return { shown: false, reason: "paused" };
+  if (!shouldShowPrimaryCompanionForAgentEvent(paused, getPrimaryCompanionFollowMode())) return { shown: false, reason: "primary-companion-paused" };
+  if (reaction === null || reaction === "idle") {
+    clearStatusBadge();
+    refreshDefaultPetContent();
+    return { shown: isDefaultPetVisible() };
+  }
+  setStatusBadge(reaction, options.sticky === true ? null : undefined);
+  showDefaultPetForExternalEvent();
+  refreshDefaultPetContent();
+  return { shown: isDefaultPetVisible() };
 }
 
 export function applyExternalPetMoveBy(options: PetMoveOptions): Promise<{ readonly moved: boolean; readonly reason?: string }> {
@@ -421,19 +457,23 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function setStatusBadge(reaction: OpenPetsReaction): void {
+function setStatusBadge(reaction: OpenPetsReaction, durationOverrideMs?: number | null): void {
   if (reaction === "idle") {
     clearStatusBadge();
     return;
   }
 
+  const durationMs = durationOverrideMs === undefined ? (isBusyStatusBadgeReaction(reaction) ? busyStatusBadgeMs : transientDisplayMs) : durationOverrideMs;
   statusBadge = reaction;
-  debug("pet.default", "status badge set", { reaction, durationMs: isBusyStatusBadgeReaction(reaction) ? busyStatusBadgeMs : transientDisplayMs });
+  debug("pet.default", "status badge set", { reaction, durationMs });
   if (statusBadgeTimeout) clearTimeout(statusBadgeTimeout);
-  statusBadgeTimeout = setTimeout(() => {
-    clearStatusBadge();
-    refreshDefaultPetContent();
-  }, isBusyStatusBadgeReaction(reaction) ? busyStatusBadgeMs : transientDisplayMs);
+  statusBadgeTimeout = null;
+  if (durationMs !== null) {
+    statusBadgeTimeout = setTimeout(() => {
+      clearStatusBadge();
+      refreshDefaultPetContent();
+    }, durationMs);
+  }
 }
 
 function clearStatusBadge(): void {

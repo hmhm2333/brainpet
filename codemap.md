@@ -3,6 +3,7 @@
 ## Project Responsibility
 
 OpenPets is a pnpm/TypeScript monorepo for an Electron desktop companion app plus npm packages that let coding agents control animated desktop pets. The workspace provides a local IPC protocol, MCP server, CLI tooling, and editor-specific integrations for Claude Code, OpenCode, Cursor, and Pi.
+BrainPet additionally carries a privacy-minimized Codex desktop lifecycle plugin under `integrations/codex/`.
 
 ## System Entry Points
 
@@ -31,6 +32,8 @@ OpenPets is a pnpm/TypeScript monorepo for an Electron desktop companion app plu
 | `apps/desktop/src/renderer/` | Vite renderer workspace for the sandboxed React/Tailwind Control Center bundle. | [View Map](apps/desktop/src/renderer/codemap.md) |
 | `apps/desktop/src/renderer/src/` | React/Tailwind Control Center UI for Dashboard, Pets, Integrations, Plugins, and Settings via narrow preload APIs. | [View Map](apps/desktop/src/renderer/src/codemap.md) |
 | `apps/desktop/scripts/` | Desktop package cleanup and local release automation scripts. | [View Map](apps/desktop/scripts/codemap.md) |
+| `integrations/codex/` | BrainPet's local Codex lifecycle bridge plugin and installation notes. | `integrations/codex/README.md` |
+| `native/brainpet-hook/` | Cross-platform, privacy-minimized native hook helper source shared by Codex, Claude Code, and compatible Claude-derived hosts. | `native/brainpet-hook/README.md` |
 | `packages/` | Publishable npm package workspace for shared protocol, CLI, MCP, and coding-agent integrations. | [View Map](packages/codemap.md) |
 | `packages/agent-events/` | Shared agent speech/event message pools and validation utilities. | [View Map](packages/agent-events/codemap.md) |
 | `packages/agent-events/src/` | Source implementation for agent event messages. | [View Map](packages/agent-events/src/codemap.md) |

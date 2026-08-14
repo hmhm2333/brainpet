@@ -11,7 +11,7 @@ import { createStaleLeaseStatus, LeaseManager } from "./lease-manager.js";
 import { debug, error as logError, info } from "./logger.js";
 import { cleanupUnixSocket, getDiscoveryFilePath, getIpcEndpointConfig, parseIpcEndpoint, protectUnixSocket, removeDiscoveryFile, writeDiscoveryFile, type IpcEndpoint, type IpcEndpointConfig, type OpenPetsDiscoveryFile } from "./local-ipc-paths.js";
 import { stat } from "node:fs/promises";
-import { errorResponse, IpcProtocolError, isRecord, maxIpcMessageBytes, maxMediaFileBytes, okResponse, parseIpcRequest, validateInstallLocalKind, validateInstallLocalPath, validateInstallPetId, validateMediaClickUrl, validateMediaDurationMs, validateMediaPath, validateOptionalLeaseId, validateReaction, validateRequestedPetId, validateSayMessage, validateSessionNonce, type OpenPetsIpcRequest } from "./local-ipc-protocol.js";
+import { errorResponse, IpcProtocolError, isRecord, maxIpcMessageBytes, maxMediaFileBytes, okResponse, parseIpcRequest, validateAgentLifecycleParams, validateInstallLocalKind, validateInstallLocalPath, validateInstallPetId, validateMediaClickUrl, validateMediaDurationMs, validateMediaPath, validateOptionalLeaseId, validateReaction, validateRequestedPetId, validateSayMessage, validateSessionNonce, type OpenPetsIpcRequest } from "./local-ipc-protocol.js";
 import { installPet, installPetFromFolderWithResult, installPetFromZipFileWithResult } from "./pet-installation.js";
 import { clearConfinementState, setConfinementState } from "./confinement-manager.js";
 import { isConfinementSupported } from "./capabilities.js";
@@ -21,6 +21,7 @@ import { warnPetFallback } from "./pet-fallback-notify.js";
 import { getEligiblePoolPetIds, resolvePoolAssignment } from "./pet-pool.js";
 import { t } from "./i18n/index.js";
 import { broadcastLanPetActivity } from "./lan-controller.js";
+import { getAgentCompanionActivitySummary, ingestAgentLifecycleEvent } from "./agent-lifecycle-controller.js";
 
 let ipcServer: net.Server | null = null;
 let ipcDiscovery: OpenPetsDiscoveryFile | null = null;
@@ -392,6 +393,14 @@ async function handleRequest(request: OpenPetsIpcRequest): Promise<unknown> {
       return releaseExplicitLease(leaseId);
     }
     return leaseManager.release(leaseId);
+  }
+
+  if (request.method === "agent.activity") {
+    const event = validateAgentLifecycleParams(request.params);
+    const presentation = ingestAgentLifecycleEvent(event);
+    const activity = getAgentCompanionActivitySummary();
+    debug("ipc", "agent lifecycle requested", { requestId: request.id, schemaVersion: event.schemaVersion, agent: event.agent, state: event.state, presentation: presentation.state, activeCount: activity.activeCount, unreadCount: activity.unreadCount, capabilities: event.capabilities });
+    return { ok: true, accepted: true, schemaVersion: event.schemaVersion, state: activity.status, activeCount: activity.activeCount, unreadCount: activity.unreadCount, totalCount: activity.totalCount };
   }
 
   if (request.method === "pet.react") {

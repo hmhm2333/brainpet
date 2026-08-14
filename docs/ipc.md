@@ -76,11 +76,19 @@ shapes before returning.
 | `pet.react` | Set a pet reaction (animation state) |
 | `pet.say` | Show a speech bubble on a pet |
 | `pet.showMedia` | Show a local image inside a pet's speech bubble |
+| `agent.activity` | Report a privacy-minimized local agent lifecycle state |
 | `lease.acquire` / `lease.heartbeat` / `lease.release` | Manage a pet lease |
 
 Client method names (`hello()`, `status()`, `listPets()`, `installPet()`,
 `installLocalPet()`, `acquireLease()`, `heartbeatLease()`, `releaseLease()`,
-`react()`, `say()`, `showMedia()`) wrap these. `installLocalPet()` requires an
+`reportAgentActivity()`, `react()`, `say()`, `showMedia()`) wrap these.
+`agent.activity` is local-only and accepts schema v1: a bounded agent id,
+session id, optional turn id, timestamp, one of
+`working/waiting/ready/blocked/idle`, a capability allowlist, and an optional
+category-only request summary while waiting. Legacy senders without
+`schemaVersion` or `capabilities` normalize to schema v1 with
+`observeLifecycle`. It has no prompt, output, path, command, arbitrary message,
+or media field. `installLocalPet()` requires an
 absolute path and an explicit `zip`/`folder` kind. `react()`/`say()`/
 `showMedia()` accept an optional `leaseId` to target a specific pet.
 

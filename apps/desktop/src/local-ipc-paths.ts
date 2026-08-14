@@ -1,11 +1,12 @@
 import { lstatSync, mkdirSync, writeFileSync, renameSync, rmSync, chmodSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { homedir, userInfo } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { app } from "electron";
 
 import { openPetsIpcProtocol, openPetsIpcVersion } from "./local-ipc-protocol.js";
+import { resolveDesktopDistributionSettings, type DesktopDistributionProfile } from "./distribution-profile.js";
 
 export interface OpenPetsDiscoveryFile {
   readonly protocolVersion: 1;
@@ -26,20 +27,32 @@ export function getDiscoveryFilePath(): string {
     return process.env.OPENPETS_DISCOVERY_FILE;
   }
 
+  const profile = resolveLocalIpcDistributionProfile();
+  const productDirectory = profile === "brainpet" ? "BrainPet" : "OpenPets";
+  const runtimeDirectory = profile === "brainpet" ? "brainpet" : "openpets";
+
   if (process.platform === "darwin") {
-    return join(homedir(), "Library", "Application Support", "OpenPets", "runtime", "ipc.json");
+    return join(homedir(), "Library", "Application Support", productDirectory, "runtime", "ipc.json");
   }
 
   if (process.platform === "win32") {
-    return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "OpenPets", "runtime", "ipc.json");
+    return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), productDirectory, "runtime", "ipc.json");
   }
 
   const xdg = getSecureXdgRuntimeDir();
   if (xdg) {
-    return join(xdg, "openpets", "ipc.json");
+    return join(xdg, runtimeDirectory, "ipc.json");
   }
 
-  return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "OpenPets", "runtime", "ipc.json");
+  return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), productDirectory, "runtime", "ipc.json");
+}
+
+export function resolveLocalIpcDistributionProfile(
+  appName = app.getName(),
+  executableName = basename(process.execPath),
+  override = process.env.OPENPETS_DISTRIBUTION_PROFILE,
+): DesktopDistributionProfile {
+  return resolveDesktopDistributionSettings(appName, override, executableName).profile;
 }
 
 export interface IpcEndpointConfig {
@@ -53,6 +66,7 @@ export function createIpcEndpoint(): string {
 }
 
 export function getIpcEndpointConfig(): IpcEndpointConfig {
+  const endpointPrefix = resolveLocalIpcDistributionProfile() === "brainpet" ? "brainpet" : "openpets";
   const bindEnv = process.env.OPENPETS_IPC_BIND;
   const endpointEnv = process.env.OPENPETS_IPC_ENDPOINT;
 
@@ -100,14 +114,14 @@ export function getIpcEndpointConfig(): IpcEndpointConfig {
 
   // Case 4: No env vars - use platform default
   if (process.platform === "win32") {
-    const pipePath = `\\\\.\\pipe\\openpets-${randomEndpointPart()}-${process.pid}`;
+    const pipePath = `\\\\.\\pipe\\${endpointPrefix}-${randomEndpointPart()}-${process.pid}`;
     return { bindEndpoint: { kind: "path", path: pipePath }, advertisedEndpoint: pipePath };
   }
 
-  const runtimeDir = getSocketRuntimeDir();
+  const runtimeDir = getSocketRuntimeDir(endpointPrefix);
   mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
   ensurePrivateRuntimeDir(runtimeDir);
-  const socketPath = join(runtimeDir, `openpets-${process.pid}.sock`);
+  const socketPath = join(runtimeDir, `${endpointPrefix}-${process.pid}.sock`);
   return { bindEndpoint: { kind: "path", path: socketPath }, advertisedEndpoint: socketPath };
 }
 
@@ -255,13 +269,13 @@ export function protectUnixSocket(endpoint: string): void {
   try { chmodSync(endpoint, 0o600); } catch { /* best effort */ }
 }
 
-function getSocketRuntimeDir(): string {
+function getSocketRuntimeDir(namespace: "openpets" | "brainpet"): string {
   const xdg = process.platform === "linux" ? getSecureXdgRuntimeDir() : null;
   if (xdg) {
-    return join(xdg, "openpets");
+    return join(xdg, namespace);
   }
 
-  return join("/tmp", `openpets-${getUserIdForPath()}`);
+  return join("/tmp", `${namespace}-${getUserIdForPath()}`);
 }
 
 function getSecureXdgRuntimeDir(): string | null {

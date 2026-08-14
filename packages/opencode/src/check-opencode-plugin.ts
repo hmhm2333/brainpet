@@ -49,6 +49,7 @@ try {
     },
     heartbeatLease: async () => ({ leaseId: "lease-fixer", expiresAt: Date.now() + 15_000 }),
     releaseLease: async () => ({ released: true }),
+    reportAgentActivity: async () => ({ ok: true }),
     react: async (reaction: OpenPetsReaction, options?: { readonly leaseId?: string }) => {
       calls.push({ kind: "react", value: reaction, leaseId: options?.leaseId });
       await blocked;
@@ -142,6 +143,7 @@ assert.equal(isReactionExcluded("success", new Set()), false);
       acquireLease: async () => ({ leaseId: "lease-ex", targetKind: "explicit", actualTargetPetId: "fixer", actualTargetPetName: "Fixer", usingDefaultPet: false, expiresAt: Date.now() + 15_000, leaseActive: true }),
       heartbeatLease: async () => ({ leaseId: "lease-ex", expiresAt: Date.now() + 15_000 }),
       releaseLease: async () => ({ released: true }),
+      reportAgentActivity: async () => ({ ok: true }),
       react: async (reaction: OpenPetsReaction) => { excludeCalls.push(reaction); },
       say: async (message: string) => { excludeCalls.push(`say:${message}`); },
       showMedia: async () => ({ ok: true, shown: true }),
@@ -197,6 +199,7 @@ assert.equal(isReactionExcluded("success", new Set()), false);
       acquireLease: async () => ({ leaseId: "lease-empty", targetKind: "explicit", actualTargetPetId: "fixer", actualTargetPetName: "Fixer", usingDefaultPet: false, expiresAt: Date.now() + 15_000, leaseActive: true }),
       heartbeatLease: async () => ({ leaseId: "lease-empty", expiresAt: Date.now() + 15_000 }),
       releaseLease: async () => ({ released: true }),
+      reportAgentActivity: async () => ({ ok: true }),
       react: async (reaction: OpenPetsReaction) => { emptyExcludeCalls.push(reaction); },
       say: async () => {},
       showMedia: async () => ({ ok: true, shown: true }),

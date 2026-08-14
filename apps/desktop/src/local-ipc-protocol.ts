@@ -25,8 +25,28 @@ export const allowedReactions = [
   "celebrating",
 ] as const;
 
+export const allowedAgentLifecycleStates = ["working", "waiting", "ready", "blocked", "idle"] as const;
+export const agentActivitySchemaVersion = 1;
+export const allowedAgentCompanionCapabilities = ["observeLifecycle", "listActivity", "openTask", "stopTask", "respondToRequest", "sendMessage", "voice", "detailActivity"] as const;
+export const allowedAgentCompanionRequestKinds = ["permission", "question", "review", "openLink", "continue"] as const;
+
 export type OpenPetsReaction = typeof allowedReactions[number];
-export type OpenPetsIpcMethod = "hello" | "status" | "pets.list" | "pets.install" | "lease.acquire" | "lease.heartbeat" | "lease.release" | "pet.react" | "pet.say" | "pet.showMedia" | "pets.install-local";
+export type AgentLifecycleState = typeof allowedAgentLifecycleStates[number];
+export type AgentCompanionCapability = typeof allowedAgentCompanionCapabilities[number];
+export type AgentCompanionRequestKind = typeof allowedAgentCompanionRequestKinds[number];
+export interface AgentCompanionRequestSummary { readonly kind: AgentCompanionRequestKind; readonly requestId?: string }
+export type OpenPetsIpcMethod = "hello" | "status" | "pets.list" | "pets.install" | "lease.acquire" | "lease.heartbeat" | "lease.release" | "agent.activity" | "pet.react" | "pet.say" | "pet.showMedia" | "pets.install-local";
+
+export interface AgentLifecycleParams {
+  readonly schemaVersion: 1;
+  readonly agent: string;
+  readonly sessionId: string;
+  readonly turnId?: string;
+  readonly state: AgentLifecycleState;
+  readonly occurredAt: number;
+  readonly capabilities: readonly AgentCompanionCapability[];
+  readonly request?: AgentCompanionRequestSummary;
+}
 
 export interface OpenPetsIpcRequest {
   readonly id: string;
@@ -61,7 +81,7 @@ export function parseIpcRequest(raw: string, expectedToken: string): OpenPetsIpc
   if (typeof parsed.id !== "string" || parsed.id.length < 1 || parsed.id.length > 120) throw new IpcProtocolError("invalid_request", "IPC request id is invalid.");
   if (parsed.version !== openPetsIpcVersion) throw new IpcProtocolError("invalid_version", "Unsupported IPC protocol version.");
   if (parsed.token !== expectedToken) throw new IpcProtocolError("invalid_token", "Invalid IPC token.");
-  if (parsed.method !== "hello" && parsed.method !== "status" && parsed.method !== "pets.list" && parsed.method !== "pets.install" && parsed.method !== "lease.acquire" && parsed.method !== "lease.heartbeat" && parsed.method !== "lease.release" && parsed.method !== "pet.react" && parsed.method !== "pet.say" && parsed.method !== "pet.showMedia" && parsed.method !== "pets.install-local") {
+  if (parsed.method !== "hello" && parsed.method !== "status" && parsed.method !== "pets.list" && parsed.method !== "pets.install" && parsed.method !== "lease.acquire" && parsed.method !== "lease.heartbeat" && parsed.method !== "lease.release" && parsed.method !== "agent.activity" && parsed.method !== "pet.react" && parsed.method !== "pet.say" && parsed.method !== "pet.showMedia" && parsed.method !== "pets.install-local") {
     throw new IpcProtocolError("unknown_method", "Unknown IPC method.");
   }
 
@@ -72,6 +92,59 @@ export function parseIpcRequest(raw: string, expectedToken: string): OpenPetsIpc
     method: parsed.method,
     params: parsed.params,
   };
+}
+
+export function validateAgentLifecycleParams(value: unknown): AgentLifecycleParams {
+  if (!isRecord(value)) throw new IpcProtocolError("invalid_params", "Agent lifecycle payload must be an object.");
+  if (value.schemaVersion !== undefined && value.schemaVersion !== agentActivitySchemaVersion) {
+    throw new IpcProtocolError("invalid_params", "Agent activity schema version is invalid.");
+  }
+  const agent = validateLifecycleIdentifier(value.agent, "Agent", 32, /^[a-z0-9][a-z0-9-]*$/);
+  const sessionId = validateLifecycleIdentifier(value.sessionId, "Session id", 160);
+  const turnId = value.turnId === undefined ? undefined : validateLifecycleIdentifier(value.turnId, "Turn id", 160);
+  if (typeof value.state !== "string" || !allowedAgentLifecycleStates.includes(value.state as AgentLifecycleState)) {
+    throw new IpcProtocolError("invalid_params", "Agent lifecycle state is invalid.");
+  }
+  if (typeof value.occurredAt !== "number" || !Number.isSafeInteger(value.occurredAt) || value.occurredAt <= 0) {
+    throw new IpcProtocolError("invalid_params", "Agent lifecycle timestamp is invalid.");
+  }
+  const capabilities = value.capabilities === undefined
+    ? ["observeLifecycle"] as const
+    : validateAgentCompanionCapabilities(value.capabilities);
+  if (!capabilities.includes("observeLifecycle")) {
+    throw new IpcProtocolError("invalid_params", "Agent lifecycle provider must declare observeLifecycle.");
+  }
+  const request = value.request === undefined ? undefined : validateAgentCompanionRequestSummary(value.request);
+  if (request && value.state !== "waiting") throw new IpcProtocolError("invalid_params", "Agent request summaries require the waiting state.");
+  return { schemaVersion: agentActivitySchemaVersion, agent, sessionId, ...(turnId ? { turnId } : {}), state: value.state as AgentLifecycleState, occurredAt: value.occurredAt, capabilities, ...(request ? { request } : {}) };
+}
+
+function validateAgentCompanionRequestSummary(value: unknown): AgentCompanionRequestSummary {
+  if (!isRecord(value) || typeof value.kind !== "string" || !allowedAgentCompanionRequestKinds.includes(value.kind as AgentCompanionRequestKind)) throw new IpcProtocolError("invalid_params", "Agent request summary is invalid.");
+  const requestId = value.requestId === undefined ? undefined : validateLifecycleIdentifier(value.requestId, "Request id", 160);
+  return { kind: value.kind as AgentCompanionRequestKind, ...(requestId ? { requestId } : {}) };
+}
+
+function validateAgentCompanionCapabilities(value: unknown): readonly AgentCompanionCapability[] {
+  if (!Array.isArray(value) || value.length > allowedAgentCompanionCapabilities.length) {
+    throw new IpcProtocolError("invalid_params", "Agent companion capabilities are invalid.");
+  }
+  const capabilities: AgentCompanionCapability[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string" || !allowedAgentCompanionCapabilities.includes(entry as AgentCompanionCapability)) {
+      throw new IpcProtocolError("invalid_params", "Agent companion capability is invalid.");
+    }
+    const capability = entry as AgentCompanionCapability;
+    if (!capabilities.includes(capability)) capabilities.push(capability);
+  }
+  return capabilities;
+}
+
+function validateLifecycleIdentifier(value: unknown, label: string, maxLength: number, pattern?: RegExp): string {
+  if (typeof value !== "string" || value.length < 1 || value.length > maxLength || /[\x00-\x1F\x7F]/.test(value) || pattern && !pattern.test(value)) {
+    throw new IpcProtocolError("invalid_params", `${label} is invalid.`);
+  }
+  return value;
 }
 
 export function validateInstallPetId(value: unknown): string {

@@ -16,6 +16,7 @@ Main client implementation (193 lines). `createOpenPetsClient()` factory, all cl
 - `acquireLease(options?)` - Get lease for targeted pet operations
 - `heartbeatLease(leaseId)` - Keep lease alive
 - `releaseLease(leaseId)` - Release acquired lease
+- `reportAgentActivity(event)` - Send schema-v1 lifecycle, capability, and category-only request data without prompt/output content
 - `react(reaction, options?)` - Send reaction (lease-aware)
 - `say(message, options?)` - Display message (lease-aware, optional reaction)
 
@@ -49,6 +50,8 @@ IPC protocol constants, request/response types, `parseIpcResponse()`, `validateR
 
 **Validation:**
 - `validateReaction()` - Ensures reaction is in allowed enum
+- `validateAgentLifecycleState()` - Ensures lifecycle state is one of working/waiting/ready/blocked/idle
+- `validateAgentCompanionCapabilities()` - Rejects unknown provider capabilities and requires lifecycle observation
 - `parseIpcResponse()` - Discriminated union parsing (ok: true/false)
 
 ### discovery.ts

@@ -36,8 +36,8 @@ Docs here are the *narrative* layer on top of those maps.
 ## Agent integrations
 
 - **[agent-integrations.md](agent-integrations.md)** - how Claude Code, MCP,
-  OpenCode, Cursor, and Pi are configured and how each turns agent activity into
-  pet reactions, plus the CLI that ties them together.
+  OpenCode, Cursor, Pi, and the BrainPet Codex bridge turn agent activity into
+  pet reactions, plus the CLI that ties the published integrations together.
 
 ## BrainPet
 
@@ -45,6 +45,12 @@ Docs here are the *narrative* layer on top of those maps.
   V1 product scope, runtime-first delivery order, and acceptance boundaries.
 - **[brainpet-runtime.md](brainpet-runtime.md)** - the currently implemented
   transparent stage, session ownership, task loading, and host boundaries.
+- **[brainpet-distribution.md](brainpet-distribution.md)** - the two-component
+  runtime/bridge release architecture, end-user install flow, public plugin
+  path, compatibility, and rollback gates.
+- **[brainpet-primary-companion-plan.md](brainpet-primary-companion-plan.md)** -
+  the current Primary Companion iteration: native-pet parity tiers, provider
+  capabilities, auto-wake, action safety, cross-platform gates, and rollback.
 - **[brainpet-gonogo-game-spec.md](brainpet-gonogo-game-spec.md)** - the target
   Go/No-Go game, pet-to-reaction-zone interaction rig, independent placement,
   scoring V2, telemetry, and implementation acceptance criteria.

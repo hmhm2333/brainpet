@@ -32,6 +32,7 @@ const runtime = createOpenPetsPiExtension(api, {
     acquireLease: async () => { throw new Error("leases disabled"); },
     heartbeatLease: async () => ({ leaseId: "x", expiresAt: 0 }),
     releaseLease: async () => ({ released: true }),
+    reportAgentActivity: async () => ({}),
     react: async (reaction) => { calls.push(`react:${reaction}`); },
     say: async (message, options) => { calls.push(`say:${message}:${options?.reaction ?? "none"}`); },
     showMedia: async () => ({ ok: true, shown: true }),

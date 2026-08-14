@@ -53,6 +53,10 @@ Two distinct window roles, two controllers:
 
 Both are created by `pet-window.ts` as transparent, frameless, always-on-top
 windows, driven through `pet-preload.cjs` for drag and click-through behavior.
+In the BrainPet distribution, the default pet's context menu exposes persistent
+50%, 75%, 100%, 125%, and 150% scale choices. The same preference drives the
+sprite, native Windows hit shape, and training hotspot; the game stage retains
+its separate compact-surface sizing contract.
 
 Experimental multi-pet LAN mode adds a third, isolated controller for visiting
 pets. Windows are keyed by LAN owner host rather than pet ID, so they do not

@@ -3,7 +3,7 @@ import { dirname, isAbsolute, join } from "node:path";
 
 import { app } from "electron";
 
-import { defaultAppearanceTheme, defaultPetScale, defaultWaitingAnimationDurationMs, markOnboardingCompleted, normalizeAppearanceTheme, normalizeOnboardingCompleted, normalizePetConfinementEnabled, normalizePetCrossDisplayEnabled, normalizePetGravityEnabled, normalizePetScale, normalizeWaitingAnimationDurationMs, petScaleOptions, waitingAnimationDurationOptions, type AppearanceTheme, type PetScaleValue, type WaitingAnimationDurationMs } from "./app-state-core.js";
+import { defaultAppearanceTheme, defaultPetScale, defaultPrimaryCompanionFollowMode, defaultWaitingAnimationDurationMs, markOnboardingCompleted, normalizeAppearanceTheme, normalizeOnboardingCompleted, normalizePetConfinementEnabled, normalizePetCrossDisplayEnabled, normalizePetGravityEnabled, normalizePetScale, normalizePrimaryCompanionFollowMode, normalizeWaitingAnimationDurationMs, petScaleOptions, waitingAnimationDurationOptions, type AppearanceTheme, type PetScaleValue, type PrimaryCompanionFollowMode, type WaitingAnimationDurationMs } from "./app-state-core.js";
 import { builtInPet } from "./built-in-pet.js";
 import type { Point } from "./display.js";
 import { isSupportedLocale, type LocalePreference } from "./i18n/catalog.js";
@@ -72,6 +72,8 @@ export interface OpenPetsStateV1 {
      * pet (default + agent). When false (default), no gravity is applied — the
      * Walkabout plugin's per-session physics path governs gravity instead. */
     readonly petGravityEnabled: boolean;
+    /** Whether Agent lifecycle events may automatically wake the primary companion. */
+    readonly primaryCompanionFollowMode: PrimaryCompanionFollowMode;
   };
   readonly pets: {
     readonly installed: readonly InstalledPetState[];
@@ -101,7 +103,7 @@ export type OpenPetsActivityRecord =
   | { readonly kind: "say"; readonly reaction?: OpenPetsReaction; readonly petId?: string; readonly surface?: "default" | "agent" }
   | { readonly kind: "react"; readonly reaction: OpenPetsReaction; readonly petId?: string; readonly surface?: "default" | "agent" };
 
-export { defaultAppearanceTheme, defaultPetScale, defaultWaitingAnimationDurationMs, normalizeAppearanceTheme, normalizePetScale, normalizeWaitingAnimationDurationMs, petScaleOptions, waitingAnimationDurationOptions, type AppearanceTheme, type PetScaleValue, type WaitingAnimationDurationMs };
+export { defaultAppearanceTheme, defaultPetScale, defaultPrimaryCompanionFollowMode, defaultWaitingAnimationDurationMs, normalizeAppearanceTheme, normalizePetScale, normalizePrimaryCompanionFollowMode, normalizeWaitingAnimationDurationMs, petScaleOptions, waitingAnimationDurationOptions, type AppearanceTheme, type PetScaleValue, type PrimaryCompanionFollowMode, type WaitingAnimationDurationMs };
 
 const stateFileName = "openpets-state.json";
 const directInstallLockName = ".install-pet.lock";
@@ -535,6 +537,7 @@ function normalizePreferences(value: Partial<OpenPetsStateV1["preferences"]>): O
     petConfinementEnabled: normalizePetConfinementEnabled(value.petConfinementEnabled, defaultState.preferences.petConfinementEnabled),
     petCrossDisplayEnabled: normalizePetCrossDisplayEnabled(value.petCrossDisplayEnabled, defaultState.preferences.petCrossDisplayEnabled),
     petGravityEnabled: normalizePetGravityEnabled(value.petGravityEnabled, defaultState.preferences.petGravityEnabled),
+    primaryCompanionFollowMode: normalizePrimaryCompanionFollowMode(value.primaryCompanionFollowMode),
   };
 }
 
@@ -615,6 +618,7 @@ function createDefaultState(): OpenPetsStateV1 {
       petConfinementEnabled: true,
       petCrossDisplayEnabled: false,
       petGravityEnabled: false,
+      primaryCompanionFollowMode: defaultPrimaryCompanionFollowMode,
     },
     pets: {
       installed: [builtInPet],

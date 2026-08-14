@@ -17,6 +17,10 @@ const baseDiscovery = {
 };
 
 validateDiscovery(baseDiscovery);
+validateDiscovery({
+  ...baseDiscovery,
+  endpoint: process.platform === "win32" ? "\\\\.\\pipe\\brainpet-abc-123" : "/tmp/brainpet-501/brainpet-123.sock",
+});
 validateDiscovery({ ...baseDiscovery, endpoint: "tcp://127.0.0.1:37645" });
 assert.deepEqual(parseIpcEndpoint("tcp://127.0.0.1:37645"), { kind: "tcp", host: "127.0.0.1", port: 37645 });
 

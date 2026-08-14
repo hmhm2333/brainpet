@@ -54,6 +54,7 @@ async function checkMcpServerContract(): Promise<void> {
     listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
     installPet: async () => { throw new Error("unused"); },
     installLocalPet: async () => { throw new Error("unused"); },
+    reportAgentActivity: async () => ({ ok: true }),
     acquireLease: async () => ({ leaseId: "lease-1", requestedPetId: "snoopy", targetKind: "explicit" as const, actualTargetPetId: "snoopy", actualTargetPetName: "Snoopy", usingDefaultPet: false, expiresAt: Date.now() + 15_000, leaseActive: true }),
     heartbeatLease: async (leaseId: string) => ({ leaseId, expiresAt: Date.now() + 15_000 }),
     releaseLease: async () => ({ released: true }),
@@ -108,6 +109,7 @@ async function checkRemoteModeLeaseFree(): Promise<void> {
     listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
     installPet: async () => { throw new Error("unused"); },
     installLocalPet: async () => { throw new Error("unused"); },
+    reportAgentActivity: async () => ({ ok: true }),
     acquireLease: async () => { calls.push("acquire"); throw new Error("remote lease must not be requested"); },
     heartbeatLease: async () => { calls.push("heartbeat"); throw new Error("remote lease must not be requested"); },
     releaseLease: async () => { calls.push("release"); return { released: true }; },
@@ -198,6 +200,7 @@ async function checkT6TransportOnclose(): Promise<void> {
     listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
     installPet: async () => { throw new Error("unused"); },
     installLocalPet: async () => { throw new Error("unused"); },
+    reportAgentActivity: async () => ({ ok: true }),
     acquireLease: async () => {
       calls.push("acquireLease");
       return { leaseId: "new-lease", requestedPetId: undefined, targetKind: "default" as const, actualTargetPetId: "default", actualTargetPetName: "Default", usingDefaultPet: true, expiresAt: Date.now() + 15_000, leaseActive: true };
@@ -277,6 +280,7 @@ async function checkT7EnsureLeaseHeartbeatFirst(): Promise<void> {
       listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
       installPet: async () => { throw new Error("unused"); },
       installLocalPet: async () => { throw new Error("unused"); },
+      reportAgentActivity: async () => ({ ok: true }),
       acquireLease: async () => { calls.push("acquireLease"); return { leaseId: "new-lease", requestedPetId: "snoopy", targetKind: "explicit" as const, actualTargetPetId: "snoopy", actualTargetPetName: "Snoopy", usingDefaultPet: false, expiresAt: Date.now() + 15_000, leaseActive: true }; },
       heartbeatLease: async (leaseId: string) => { calls.push(`heartbeat:${leaseId}`); return { leaseId, expiresAt: Date.now() + 15_000 }; },
       releaseLease: async () => { calls.push("releaseLease"); return { released: true }; },
@@ -322,6 +326,7 @@ async function checkT7EnsureLeaseHeartbeatFirst(): Promise<void> {
       listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
       installPet: async () => { throw new Error("unused"); },
       installLocalPet: async () => { throw new Error("unused"); },
+      reportAgentActivity: async () => ({ ok: true }),
       acquireLease: async () => { calls.push("acquireLease"); return { leaseId: "new-lease-2", requestedPetId: "snoopy", targetKind: "explicit" as const, actualTargetPetId: "snoopy", actualTargetPetName: "Snoopy", usingDefaultPet: false, expiresAt: Date.now() + 15_000, leaseActive: true }; },
       heartbeatLease: async (leaseId: string) => { calls.push(`heartbeat:${leaseId}`); throw new Error("lease not found"); },
       releaseLease: async () => { calls.push("releaseLease"); return { released: true }; },
@@ -376,6 +381,7 @@ async function checkT8ExitOnce(): Promise<void> {
     listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
     installPet: async () => { throw new Error("unused"); },
     installLocalPet: async () => { throw new Error("unused"); },
+    reportAgentActivity: async () => ({ ok: true }),
     acquireLease: async () => ({ leaseId: "new", requestedPetId: undefined, targetKind: "default" as const, actualTargetPetId: "default", actualTargetPetName: "Default", usingDefaultPet: true, expiresAt: Date.now() + 15_000, leaseActive: true }),
     heartbeatLease: async (leaseId: string) => ({ leaseId, expiresAt: Date.now() + 15_000 }),
     releaseLease: async (leaseId: string) => { releaseOrder.push("release:" + leaseId); return { released: true }; },
@@ -450,6 +456,7 @@ async function checkT9CloseDuringStartupAcquire(): Promise<void> {
     listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
     installPet: async () => { throw new Error("unused"); },
     installLocalPet: async () => { throw new Error("unused"); },
+    reportAgentActivity: async () => ({ ok: true }),
     acquireLease: async () => { throw new Error("unused"); },
     heartbeatLease: async (leaseId: string) => ({ leaseId, expiresAt: Date.now() + 15_000 }),
     releaseLease: async (leaseId: string) => { order.push(`release:${leaseId}`); return { released: true }; },
@@ -528,6 +535,7 @@ async function checkT10CloseDuringRecoveryAcquire(): Promise<void> {
     listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
     installPet: async () => { throw new Error("unused"); },
     installLocalPet: async () => { throw new Error("unused"); },
+    reportAgentActivity: async () => ({ ok: true }),
     acquireLease: async () => { order.push("acquire:start"); return acquireResult; },
     heartbeatLease: async () => { throw new Error("simulated heartbeat failure"); },
     releaseLease: async (leaseId: string) => { order.push(`release:${leaseId}`); return { released: true }; },
@@ -616,6 +624,7 @@ async function checkT11CloseDuringToolRecovery(): Promise<void> {
     listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
     installPet: async () => { throw new Error("unused"); },
     installLocalPet: async () => { throw new Error("unused"); },
+    reportAgentActivity: async () => ({ ok: true }),
     acquireLease: async () => {
       order.push("acquire:start");
       markAcquireStarted?.();
@@ -721,6 +730,7 @@ async function checkT12CloseDuringHeartbeatFailure(): Promise<void> {
       listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
       installPet: async () => { throw new Error("unused"); },
       installLocalPet: async () => { throw new Error("unused"); },
+      reportAgentActivity: async () => ({ ok: true }),
       acquireLease: async () => { throw new Error("unused"); },
       heartbeatLease: async (_leaseId: string) => {
         markHeartbeatStarted();
@@ -807,6 +817,7 @@ async function checkT12CloseDuringHeartbeatFailure(): Promise<void> {
       listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
       installPet: async () => { throw new Error("unused"); },
       installLocalPet: async () => { throw new Error("unused"); },
+      reportAgentActivity: async () => ({ ok: true }),
       acquireLease: async () => {
         markAcquireStarted();
         return acquireResult;

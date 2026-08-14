@@ -22,7 +22,9 @@ import { createAppTray, refreshTrayMenu } from "./tray.js";
 import { checkForGitHubReleaseUpdate } from "./update-checker.js";
 import { installInternalUiHandlers, installInternalUiProtocol } from "./windows.js";
 import { initializeBrainPetHost } from "./brainpet/host.js";
+import { initializeAgentLifecycleController } from "./agent-lifecycle-controller.js";
 import { isBrainPetFeatureEnabled, resolveDesktopDistributionSettings, shouldUseIsolatedBrainPetUserData } from "./distribution-profile.js";
+import { createBrainPetInstallMarker, writeBrainPetInstallMarker } from "./brainpet-install-marker.js";
 
 const distribution = resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath));
 if (shouldUseIsolatedBrainPetUserData(distribution.profile, process.argv)) {
@@ -105,6 +107,10 @@ if (!gotSingleInstanceLock) {
     }
 
     initializeAppState();
+    if (distribution.profile === "brainpet" && app.isPackaged) {
+      const markerPath = writeBrainPetInstallMarker(createBrainPetInstallMarker({ executablePath: process.execPath, appVersion: app.getVersion(), channel: process.env.BRAINPET_RELEASE_CHANNEL }));
+      info("app", "BrainPet install marker refreshed", { markerPath, channel: process.env.BRAINPET_RELEASE_CHANNEL ?? "stable" });
+    }
     // Resolve the UI language before any window or the tray is built.
     setLocaleFromPreference(getAppStateSnapshot().preferences.locale);
     initializeLanController();
@@ -120,6 +126,7 @@ if (!gotSingleInstanceLock) {
     installInternalUiHandlers();
     createAppTray();
     installDefaultPetDisplayHandlers();
+    initializeAgentLifecycleController();
     if (isBrainPetFeatureEnabled(distribution, process.env.OPENPETS_BRAINPET_ENABLED)) initializeBrainPetHost();
     await startLocalIpcServer();
     releaseStartupInstallLock();

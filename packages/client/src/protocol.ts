@@ -18,8 +18,16 @@ export const allowedReactions = [
   "celebrating",
 ] as const;
 
+export const allowedAgentLifecycleStates = ["working", "waiting", "ready", "blocked", "idle"] as const;
+export const agentActivitySchemaVersion = 1;
+export const allowedAgentCompanionCapabilities = ["observeLifecycle", "listActivity", "openTask", "stopTask", "respondToRequest", "sendMessage", "voice", "detailActivity"] as const;
+export const allowedAgentCompanionRequestKinds = ["permission", "question", "review", "openLink", "continue"] as const;
+
 export type OpenPetsReaction = typeof allowedReactions[number];
-export type OpenPetsIpcMethod = "hello" | "status" | "pets.list" | "pets.install" | "lease.acquire" | "lease.heartbeat" | "lease.release" | "pet.react" | "pet.say" | "pet.showMedia" | "pets.install-local";
+export type AgentLifecycleState = typeof allowedAgentLifecycleStates[number];
+export type AgentCompanionCapability = typeof allowedAgentCompanionCapabilities[number];
+export type AgentCompanionRequestKind = typeof allowedAgentCompanionRequestKinds[number];
+export type OpenPetsIpcMethod = "hello" | "status" | "pets.list" | "pets.install" | "lease.acquire" | "lease.heartbeat" | "lease.release" | "agent.activity" | "pet.react" | "pet.say" | "pet.showMedia" | "pets.install-local";
 
 export interface OpenPetsIpcRequest {
   readonly id: string;
@@ -66,6 +74,28 @@ export function validateReaction(value: string): OpenPetsReaction {
     throw new OpenPetsClientError("invalid_reaction", "Invalid OpenPets reaction.");
   }
   return value as OpenPetsReaction;
+}
+
+export function validateAgentLifecycleState(value: string): AgentLifecycleState {
+  if (!allowedAgentLifecycleStates.includes(value as AgentLifecycleState)) {
+    throw new OpenPetsClientError("invalid_agent_lifecycle_state", "Invalid agent lifecycle state.");
+  }
+  return value as AgentLifecycleState;
+}
+
+export function validateAgentCompanionCapabilities(value: readonly string[] | undefined): readonly AgentCompanionCapability[] {
+  if (value === undefined) return ["observeLifecycle"];
+  if (value.length > allowedAgentCompanionCapabilities.length) throw new OpenPetsClientError("invalid_params", "Too many Agent companion capabilities.");
+  const capabilities: AgentCompanionCapability[] = [];
+  for (const entry of value) {
+    if (!allowedAgentCompanionCapabilities.includes(entry as AgentCompanionCapability)) {
+      throw new OpenPetsClientError("invalid_params", "Invalid Agent companion capability.");
+    }
+    const capability = entry as AgentCompanionCapability;
+    if (!capabilities.includes(capability)) capabilities.push(capability);
+  }
+  if (!capabilities.includes("observeLifecycle")) throw new OpenPetsClientError("invalid_params", "Agent lifecycle provider must declare observeLifecycle.");
+  return capabilities;
 }
 
 export class OpenPetsClientError extends Error {

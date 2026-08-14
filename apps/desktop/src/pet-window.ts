@@ -4,7 +4,7 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { getAppStateSnapshot, markPetBroken, type PetScaleValue } from "./app-state.js";
+import { getAppStateSnapshot, markPetBroken, petScaleOptions, updatePreferences, type PetScaleValue } from "./app-state.js";
 import { clampToNearestDisplayIfOffscreen, clampToVisibleWorkArea, defaultPetWindowSize, getDefaultPetInitialPosition, isCrossDisplayRoamingEnabled, type Point } from "./display.js";
 import { builtInPet } from "./built-in-pet.js";
 import { getInstalledPetDir } from "./pet-paths.js";
@@ -256,6 +256,21 @@ async function buildPetContextMenuTemplate(action: { readonly label: string; rea
     plugins.set(item.pluginId, group);
   }
   const template: Electron.MenuItemConstructorOptions[] = [];
+  if (isBrainPetFeatureEnabled(resolveCurrentDistribution(), process.env.OPENPETS_BRAINPET_ENABLED)) {
+    const selectedScale = getAppStateSnapshot().preferences.petScale;
+    template.push({
+      label: t("settings.general.petScale.title"),
+      submenu: petScaleOptions.map((option) => ({
+        label: `${Math.round(option.value * 100)}%`,
+        type: "radio" as const,
+        checked: option.value === selectedScale,
+        click: () => {
+          updatePreferences({ petScale: option.value });
+          import("./default-pet-controller.js").then(({ refreshDefaultPetContent }) => refreshDefaultPetContent()).catch((error) => logError("pet.window", "BrainPet scale refresh failed", error));
+        },
+      })),
+    }, { type: "separator" });
+  }
   const openControlCenter = (route: "dashboard" | "plugins"): void => {
     import("./windows.js").then(({ openControlCenterWindow }) => openControlCenterWindow(route)).catch((error) => logError("pet.window", "open control center failed", error));
   };

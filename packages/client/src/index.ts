@@ -3,11 +3,11 @@ import { randomUUID } from "node:crypto";
 import { posix, win32 } from "node:path";
 
 import { parseIpcEndpoint, readDiscoveryFile, type OpenPetsDiscoveryFile } from "./discovery.js";
-import { connectTimeoutMs, maxIpcMessageBytes, openPetsIpcVersion, parseIpcResponse, responseTimeoutMs, validateReaction, OpenPetsClientError, type OpenPetsIpcMethod, type OpenPetsIpcRequest, type OpenPetsReaction } from "./protocol.js";
+import { agentActivitySchemaVersion, allowedAgentCompanionRequestKinds, connectTimeoutMs, maxIpcMessageBytes, openPetsIpcVersion, parseIpcResponse, responseTimeoutMs, validateAgentCompanionCapabilities, validateAgentLifecycleState, validateReaction, OpenPetsClientError, type AgentCompanionCapability, type AgentCompanionRequestKind, type AgentLifecycleState, type OpenPetsIpcMethod, type OpenPetsIpcRequest, type OpenPetsReaction } from "./protocol.js";
 import { maxRemoteMessageBytes, openPetsRemoteProtocol, openPetsRemoteVersion, parseRemoteEndpoint, parseRemoteResponse, remoteConnectTimeoutMs, remoteResponseTimeoutMs, validateRemoteClientId, validateRemoteMessage, validateRemoteReaction, validateRemoteToken, type OpenPetsRemoteEndpoint, type OpenPetsRemoteMethod, type OpenPetsRemoteRequest } from "./remote-protocol.js";
 
 export { getDiscoveryFilePath, parseIpcEndpoint, readDiscoveryFile, validateDiscovery, validateEndpoint, type OpenPetsDiscoveryFile, type ParsedIpcEndpoint } from "./discovery.js";
-export { allowedReactions, OpenPetsClientError, type OpenPetsReaction } from "./protocol.js";
+export { agentActivitySchemaVersion, allowedAgentCompanionCapabilities, allowedAgentCompanionRequestKinds, allowedAgentLifecycleStates, allowedReactions, OpenPetsClientError, type AgentCompanionCapability, type AgentCompanionRequestKind, type AgentLifecycleState, type OpenPetsReaction } from "./protocol.js";
 export { maxRemoteMessageBytes, openPetsRemoteProtocol, openPetsRemoteVersion, parseRemoteEndpoint, validateRemoteClientId, validateRemoteMessage, validateRemoteReaction, validateRemoteToken, type OpenPetsRemoteEndpoint, type OpenPetsRemoteMethod, type OpenPetsRemoteRequest, type OpenPetsRemoteResponse } from "./remote-protocol.js";
 
 /**
@@ -74,6 +74,17 @@ export interface OpenPetsPetListItem {
   readonly broken: boolean;
 }
 
+export interface OpenPetsAgentLifecycleEvent {
+  readonly schemaVersion?: 1;
+  readonly agent: string;
+  readonly sessionId: string;
+  readonly turnId?: string;
+  readonly state: AgentLifecycleState;
+  readonly occurredAt: number;
+  readonly capabilities?: readonly AgentCompanionCapability[];
+  readonly request?: { readonly kind: AgentCompanionRequestKind; readonly requestId?: string };
+}
+
 export interface OpenPetsClient {
   readonly transport?: "local" | "remote";
   hello(): Promise<unknown>;
@@ -84,6 +95,7 @@ export interface OpenPetsClient {
   acquireLease(options?: { readonly requestedPetId?: string }): Promise<OpenPetsLeaseResult>;
   heartbeatLease(leaseId: string): Promise<{ readonly leaseId: string; readonly expiresAt: number }>;
   releaseLease(leaseId: string): Promise<{ readonly released: boolean }>;
+  reportAgentActivity(event: OpenPetsAgentLifecycleEvent): Promise<unknown>;
   react(reaction: OpenPetsReaction, options?: { readonly leaseId?: string }): Promise<unknown>;
   say(message: string, options?: { readonly reaction?: OpenPetsReaction; readonly leaseId?: string }): Promise<unknown>;
   showMedia(path: string, options?: { readonly message?: string; readonly reaction?: OpenPetsReaction; readonly durationMs?: number; readonly clickUrl?: string; readonly leaseId?: string }): Promise<unknown>;
@@ -127,6 +139,10 @@ export function createOpenPetsClient(options: OpenPetsClientOptions = {}): OpenP
     acquireLease: (leaseOptions) => remote ? unsupportedRemote() : sendDiscoveredRequest("lease.acquire", { requestedPetId: leaseOptions?.requestedPetId, clientPid: process.pid, sessionNonce: SESSION_NONCE }, options),
     heartbeatLease: (leaseId) => remote ? unsupportedRemote() : sendDiscoveredRequest("lease.heartbeat", { leaseId }, options),
     releaseLease: (leaseId) => remote ? unsupportedRemote() : sendDiscoveredRequest("lease.release", { leaseId }, options),
+    reportAgentActivity: (event) => {
+      if (remote) return unsupportedRemote();
+      return sendDiscoveredRequest("agent.activity", validateAgentLifecycleEvent(event), options);
+    },
     react: (reaction, reactOptions) => remote
       ? sendRemoteRequest(remote.endpoint, remote.token, remote.clientId, "pet.react", { reaction: validateRemoteReaction(reaction) }, options)
       : sendDiscoveredRequest("pet.react", { reaction: validateReaction(reaction), leaseId: reactOptions?.leaseId }, options),
@@ -145,6 +161,29 @@ export function createOpenPetsClient(options: OpenPetsClientOptions = {}): OpenP
       return sendDiscoveredRequest("pet.showMedia", { path: trimmedPath, message: mediaOptions?.message, reaction: mediaOptions?.reaction === undefined ? undefined : validateReaction(mediaOptions.reaction), durationMs: mediaOptions?.durationMs, clickUrl: mediaOptions?.clickUrl, leaseId: mediaOptions?.leaseId }, options);
     },
   };
+}
+
+function validateAgentLifecycleEvent(event: OpenPetsAgentLifecycleEvent): OpenPetsAgentLifecycleEvent {
+  if (!event || typeof event !== "object") throw new OpenPetsClientError("invalid_params", "Agent lifecycle event is required.");
+  if (typeof event.agent !== "string" || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(event.agent)) throw new OpenPetsClientError("invalid_params", "Agent is invalid.");
+  if (!isLifecycleIdentifier(event.sessionId)) throw new OpenPetsClientError("invalid_params", "Session id is invalid.");
+  if (event.turnId !== undefined && !isLifecycleIdentifier(event.turnId)) throw new OpenPetsClientError("invalid_params", "Turn id is invalid.");
+  if (!Number.isSafeInteger(event.occurredAt) || event.occurredAt <= 0) throw new OpenPetsClientError("invalid_params", "Lifecycle timestamp is invalid.");
+  if (event.schemaVersion !== undefined && event.schemaVersion !== agentActivitySchemaVersion) throw new OpenPetsClientError("invalid_params", "Agent activity schema version is invalid.");
+  const state = validateAgentLifecycleState(event.state);
+  const request = event.request === undefined ? undefined : validateAgentCompanionRequest(event.request);
+  if (request && state !== "waiting") throw new OpenPetsClientError("invalid_params", "Agent request summaries require the waiting state.");
+  return { ...event, schemaVersion: agentActivitySchemaVersion, state, capabilities: validateAgentCompanionCapabilities(event.capabilities), ...(request ? { request } : {}) };
+}
+
+function validateAgentCompanionRequest(value: NonNullable<OpenPetsAgentLifecycleEvent["request"]>): NonNullable<OpenPetsAgentLifecycleEvent["request"]> {
+  if (!allowedAgentCompanionRequestKinds.includes(value.kind)) throw new OpenPetsClientError("invalid_params", "Agent request summary is invalid.");
+  if (value.requestId !== undefined && !isLifecycleIdentifier(value.requestId)) throw new OpenPetsClientError("invalid_params", "Agent request id is invalid.");
+  return { kind: value.kind, ...(value.requestId ? { requestId: value.requestId } : {}) };
+}
+
+function isLifecycleIdentifier(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 160 && !/[\x00-\x1F\x7F]/.test(value);
 }
 
 export function parsePetInstallResult(value: unknown): OpenPetsPetInstallResult {

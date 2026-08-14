@@ -18,6 +18,7 @@ opencode.json
 third-parties/
 .playwright-cli/
 output/
+native/**/target/
 
 # BEGIN oh-my-opencode-slim clonedeps
 .slim/clonedeps/repos/

@@ -45,6 +45,7 @@ const client = {
   },
   heartbeatLease: async () => { throw new Error("unused"); },
   releaseLease: async () => { throw new Error("unused"); },
+  reportAgentActivity: async () => ({ ok: true }),
   react: async (reaction: string, options?: { readonly leaseId?: string }) => { calls.push({ kind: "react", value: reaction, leaseId: options?.leaseId }); },
   say: async (message: string, options?: { readonly leaseId?: string }) => { calls.push({ kind: "say", value: message, leaseId: options?.leaseId }); },
   showMedia: async () => ({ ok: true, shown: true }),

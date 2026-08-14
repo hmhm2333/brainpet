@@ -5,7 +5,7 @@ import { appendFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
-export type LogScope = "app" | "ipc" | "lease" | "pet.default" | "pet.agent" | "pet.window" | "plugin" | "state" | "tray" | "ui" | "remote" | "terminal-focus" | "window-tracker" | "capabilities" | "brainpet.host" | "brainpet.runtime" | "brainpet.stage";
+export type LogScope = "app" | "ipc" | "lease" | "agent.lifecycle" | "pet.default" | "pet.agent" | "pet.window" | "plugin" | "state" | "tray" | "ui" | "remote" | "terminal-focus" | "window-tracker" | "capabilities" | "brainpet.host" | "brainpet.runtime" | "brainpet.stage";
 
 type LogFields = Record<string, unknown>;
 

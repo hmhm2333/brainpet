@@ -7,8 +7,9 @@ description: Connect Claude Code, OpenCode, Cursor, Pi, and MCP-capable assistan
 OpenPets reacts to coding agents. Each supported agent has an integration
 package that does two jobs: **configure** the agent to talk to OpenPets, and at
 runtime **translate** the agent's activity into safe pet reactions sent over
-local IPC or an explicitly configured remote client. This doc covers all five
-integrations (Claude Code, MCP, OpenCode, Cursor, Pi), the shared speech-safety
+local IPC or an explicitly configured remote client. This doc covers the
+published integrations (Claude Code, MCP, OpenCode, Cursor, Pi), the BrainPet
+Codex bridge, the shared speech-safety
 layer, and the CLI commands that orchestrate them.
 
 For the local and remote wire protocols, see [IPC and remote control](/ipc). Source maps live
@@ -47,6 +48,34 @@ overlay with its own ACLs. A CGNAT-range endpoint is only an allowed private
 address classification, not an encryption boundary. Remote control configuration,
 client pairing, token rotation, and credential revocation can be managed directly
 in Control Center under Settings → Remote.
+
+## Codex desktop - BrainPet lifecycle bridge
+
+BrainPet carries a local Codex plugin at
+`integrations/codex/plugins/brainpet-codex-bridge`. Codex hooks translate only
+the task lifecycle into `agent.activity` over authenticated local IPC:
+`UserPromptSubmit` and `PostToolUse` → working, `PermissionRequest` → waiting,
+`Stop` → ready, and `SessionEnd` → idle. Prompt text, tool input/output,
+transcripts, paths, and working directories are deliberately discarded.
+
+The schema-v1 payload declares provider capabilities and may include only a
+bounded request category such as `permission`; it still carries no task body.
+The desktop aggregates activity by provider/session so completion in one task
+cannot hide another task that is still working or waiting. A running runtime
+uses a 400ms local IPC timeout. A packaged but stopped BrainPet can be launched
+from its validated per-user install marker, with a 2.5s total cold-wake bound;
+missing or invalid installations fail open. Codex must load the plugin in a new
+task after installation, and the user must approve its hook commands in Codex's
+trust review.
+
+The production bridge uses the shared `native/brainpet-hook` helper contract.
+The Codex plugin launchers select Windows x64/arm64 or macOS Intel/Apple Silicon
+from the plugin bundle and the helper writes the same authenticated
+`agent.activity` request on every platform. Source checkouts retain a Node
+fallback for development only; published plugin packages must contain the
+matching native binary and never make a hook-time network download.
+BrainPet and OpenPets use separate discovery directories; the development
+fallback consults OpenPets only when no BrainPet install marker exists.
 
 ## Pet pool: multiple agents, multiple pets
 
@@ -231,3 +260,4 @@ discovery-based behavior unchanged.
 | OpenCode | `.opencode/` or `~/.config/opencode/` | plugin event hooks |
 | Cursor | `.cursor/mcp.json` + rules | MCP tools |
 | Pi | `pi.extensions` | extension events + `/openpets` |
+| Codex desktop (BrainPet) | Codex plugin marketplace | lifecycle hooks → local `agent.activity` |

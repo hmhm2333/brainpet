@@ -39,7 +39,9 @@ so adding a test makes it part of the default gate automatically. Three buckets:
 
 - **Behavior** (`apps/desktop/tests/*.test.ts`): lease manager, app state,
   version checking, ZIP safety, Codex pets, Claude memory, reaction-animation
-  mapping, plugin bridge/gateway guards, and `voice-lifecycle.test.ts` for the
+  mapping, plugin bridge/gateway guards, BrainPet's session-aware agent
+  lifecycle aggregation, the privacy-minimized Codex bridge manifest/mapping,
+  and `voice-lifecycle.test.ts` for the
   privacy indicator, capture cancellation/cleanup races, separate timeouts,
   empty transcripts, and shutdown behavior. `remote-control.test.ts` covers
   secure opt-in configuration, verifier-only persistence, authentication,
@@ -73,6 +75,14 @@ working-set/private-memory snapshots and enforces budgets by default. The
 `foundation-probe` variant also loads a versioned fallback asset, renders the
 generic scene contract, clicks both generic input targets, crashes the renderer,
 then proves a fresh stage can open and close without an invalid Host transition.
+
+BrainPet's Agent bridge has a separate native release gate. Run the Rust unit
+tests from `native/brainpet-hook/`, build all four Windows/macOS target binaries,
+copy them into the Codex plugin's `bin/<platform>/` folders, then run
+`pnpm brainpet:bridge:validate-release`. The validator rejects missing,
+symlinked, implausibly sized, or non-executable helpers and hook definitions
+that directly depend on Node. A passing JavaScript fallback test is development
+evidence only and is not sufficient for a public bridge release.
 
 ## Package tests & contracts
 

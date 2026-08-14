@@ -18,6 +18,7 @@ Task Module（Go/No-Go、持续更新、后续任务）
 ```
 
 - 宠物层不知道游戏规则，只发送一次训练请求。
+- Codex Bridge 只把任务生命周期映射为本地 `agent.activity`，不读取或转发提示词、工具输入输出、transcript 与工作目录；Host 按 Agent/session 聚合状态，使一个任务结束不会覆盖另一个仍在运行或等待授权的任务。
 - Host Adapter 独占 session 签发和结果裁决，并管理舞台窗口、互动组合几何、显示器锚定、生命周期、崩溃隔离和本地持久化；Renderer 自报的正确性、汇总分和 `new-best` 不被信任。
 - Runtime Core 不依赖 Electron 和 DOM，可通过 Node 单元测试验证全部状态转换。
 - Stage 只实现通用反馈、计时、暂停、结算和输入路由。
@@ -42,6 +43,7 @@ idle → opening → ready → running ⇄ paused → settling → ready
 - 超过 `6px` 才判定为拖动，以下仍按点击处理。拖动期间逻辑任务时钟暂停且当前飞行物立即隐藏；松手稳定 `150ms` 后，未完成的当前 trial 从新投掷点无计分地重新呈现，Host 将焦点交还舞台并自动恢复。
 - 联合透明层覆盖宠物投掷点至游戏区所需区域；游戏区仍保持 640×360，透明扩展部分不计入可见占地。
 - 透明、无边框、不进入任务栏、不可全屏；关闭舞台不关闭宠物和 Agent。
+- BrainPet 默认宠物支持右键选择 `50% / 75% / 100% / 125% / 150%`，缩放沿用持久化 `petScale`、原生命中形状和同一训练热点；只缩放宠物，不改变 640×360 游戏区合同。
 - Renderer 采用 sandbox、context isolation、无 Node和独立 `persist:brainpet-stage` partition；permission request 与下载一律拒绝，preload 只暴露白名单消息。
 - CSP 禁止远程脚本、连接、frame 与 form；图片只允许应用自身和两种内部宠物协议。通用 scene 的坐标渲染允许内联样式，但不允许内联脚本。
 - 舞台崩溃由 Host Adapter 记录并关闭该舞台，不影响宠物宿主；真实 Electron smoke 还必须验证崩溃后可重新打开、进入任务并正常关闭。

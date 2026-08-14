@@ -26,7 +26,7 @@
 - session 存储拆分 task/asset/difficulty/score 版本、原始试次、质量标记与宠物事件；最近结果有界且原子写盘。
 - 失焦、隐藏、锁屏和 suspend 均暂停；暂停时长不进入任务逻辑时间。unlock/resume 恢复并重新锚定。
 - Host 订阅既有 `agent:activity` 总线；只有 `success/celebrating` 被视为 Agent 完成。运行中的当前局不被关闭、暂停或重置，完成提示延迟到本局结算页，避免抢占任务输入。
-- 该总线能力只覆盖已经接入 OpenPets IPC/hook/MCP 的 Agent。当前没有验证 Codex 桌面任务生命周期会自动发布这些事件；`~/.codex/pets` 只证明宠物资源兼容，不证明 Codex 状态绑定。
+- 新增 BrainPet Codex 插件桥：Codex lifecycle hooks 通过本机认证 IPC 发布 `working/waiting/ready/idle`；按 session 聚合，且不传 prompt、tool input/output、transcript 或 cwd。插件安装后须在新 Codex 任务中加载并完成人工 hook trust，才算真实绑定完成。
 - Stage 提供版本化资源缓存/缺失回退，以及 scene/layer/sprite/particle/camera 最小合同。
 - 通用设置包含音效、降低动画和高辨识模式；均由 Stage 自己持久化，不扩张 Host IPC。
 - 开发模式提供 Stage Exerciser、固定 seed 重放、事件日志导出、输入回显和帧/暂停状态。
@@ -58,7 +58,7 @@
 - 验收机只有一个物理显示器，无法诚实声称完成双显示器物理复核；已覆盖副屏负坐标和四边几何，并保留外部双屏私测项。
 - 最新只读盘点回执由 `test:brainpet-physical-inventory` 生成；Windows 11 build 26200、DISPLAY1 2560×1600、150% DPI、物理显示器数 1。回执位于本地 `output/physical-acceptance`（不进入 Git）。
 - 当前私测包未做商业代码签名，Windows 会显示未知发布者；本地 Electron dist 可同时构建 unsigned `win-unpacked` 回退目录。
-- 当前 Codex 直接活动绑定仍是缺口；只能验证 OpenPets Agent 总线隔离策略，不能写“已绑定 Codex”。
+- Codex 桥接代码、协议合同和并发状态测试已通过；真实 Codex 绑定仍以“个人插件已安装 + 新任务加载 + hook trust + 宠物状态实机变化”为最终验收，不用代码存在代替实机回执。
 - OpenPets 上游部分测试依赖 Windows symlink 权限或已有断言，BrainPet 专项测试、构建、打包合同与 Electron 实机测试单独列证据，不把上游环境失败算成 BrainPet 通过。
 
 ## 外部物理复核步骤（V1 最终放行前）

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { errorResponse, maxIpcMessageBytes, parseIpcRequest, validateReaction, validateSayMessage, validateInstallLocalKind, validateInstallLocalPath, validateMediaClickUrl, validateMediaDurationMs, validateMediaPath } from "../src/local-ipc-protocol.js";
+import { errorResponse, maxIpcMessageBytes, parseIpcRequest, validateAgentLifecycleParams, validateReaction, validateSayMessage, validateInstallLocalKind, validateInstallLocalPath, validateMediaClickUrl, validateMediaDurationMs, validateMediaPath } from "../src/local-ipc-protocol.js";
 
 const token = "test-token";
 const valid = {
@@ -14,10 +14,34 @@ const valid = {
 parseIpcRequest(JSON.stringify(valid), token);
 parseIpcRequest(JSON.stringify({ ...valid, method: "pets.list" }), token);
 parseIpcRequest(JSON.stringify({ ...valid, method: "pets.install-local" }), token);
+parseIpcRequest(JSON.stringify({ ...valid, method: "agent.activity" }), token);
 assert.throws(() => parseIpcRequest(JSON.stringify({ ...valid, token: "bad" }), token));
 assert.throws(() => parseIpcRequest(JSON.stringify({ ...valid, version: 2 }), token));
 assert.throws(() => parseIpcRequest(JSON.stringify({ ...valid, method: "pet.install" }), token));
 assert.throws(() => parseIpcRequest("not json", token));
+
+assert.deepEqual(validateAgentLifecycleParams({ agent: "codex", sessionId: "session-1", turnId: "turn-1", state: "working", occurredAt: 123 }), {
+  schemaVersion: 1,
+  agent: "codex",
+  sessionId: "session-1",
+  turnId: "turn-1",
+  state: "working",
+  occurredAt: 123,
+  capabilities: ["observeLifecycle"],
+});
+assert.deepEqual(validateAgentLifecycleParams({ schemaVersion: 1, agent: "codex", sessionId: "session-1", state: "waiting", occurredAt: 123, capabilities: ["observeLifecycle", "openTask", "openTask"] }).capabilities, ["observeLifecycle", "openTask"]);
+assert.deepEqual(validateAgentLifecycleParams({ schemaVersion: 1, agent: "codex", sessionId: "session-1", state: "waiting", occurredAt: 123, capabilities: ["observeLifecycle"], request: { kind: "permission" } }).request, { kind: "permission" });
+for (const invalidLifecycle of [
+  { schemaVersion: 2, agent: "codex", sessionId: "session-1", state: "working", occurredAt: 123 },
+  { agent: "Codex", sessionId: "session-1", state: "working", occurredAt: 123 },
+  { agent: "codex", sessionId: "", state: "working", occurredAt: 123 },
+  { agent: "codex", sessionId: "session-1", state: "unknown", occurredAt: 123 },
+  { agent: "codex", sessionId: "session-1", state: "working", occurredAt: Number.NaN },
+  { agent: "codex", sessionId: "session-1", state: "working", occurredAt: 123, capabilities: ["privateCodexIpc"] },
+  { agent: "codex", sessionId: "session-1", state: "working", occurredAt: 123, capabilities: ["openTask"] },
+  { agent: "codex", sessionId: "session-1", state: "working", occurredAt: 123, request: { kind: "permission" } },
+  { agent: "codex", sessionId: "session-1", state: "waiting", occurredAt: 123, request: { kind: "private" } },
+]) assert.throws(() => validateAgentLifecycleParams(invalidLifecycle));
 
 validateReaction("testing");
 validateReaction("waving");

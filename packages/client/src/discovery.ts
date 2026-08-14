@@ -18,6 +18,8 @@ export type ParsedIpcEndpoint =
   | { readonly kind: "tcp"; readonly host: string; readonly port: number }
   | { readonly kind: "path"; readonly path: string };
 
+const supportedLocalIpcNamespaces = ["openpets", "brainpet"] as const;
+
 export function getDiscoveryFilePath(): string {
   if (process.env.OPENPETS_DISCOVERY_FILE) {
     return process.env.OPENPETS_DISCOVERY_FILE;
@@ -102,8 +104,9 @@ export function parseIpcEndpoint(endpoint: string): ParsedIpcEndpoint {
   }
 
   if (process.platform === "win32") {
-    if (!endpoint.startsWith("\\\\.\\pipe\\openpets-") || endpoint.includes("/")) {
-      throw new OpenPetsClientError("invalid_discovery", "Discovery endpoint is not an OpenPets named pipe.");
+    const isSupportedPipe = supportedLocalIpcNamespaces.some((namespace) => endpoint.startsWith(`\\\\.\\pipe\\${namespace}-`));
+    if (!isSupportedPipe || endpoint.includes("/")) {
+      throw new OpenPetsClientError("invalid_discovery", "Discovery endpoint is not a supported companion named pipe.");
     }
     return { kind: "path", path: endpoint };
   }
@@ -112,16 +115,18 @@ export function parseIpcEndpoint(endpoint: string): ParsedIpcEndpoint {
     throw new OpenPetsClientError("invalid_discovery", "Discovery endpoint is not an absolute Unix socket path.");
   }
 
-  if (!basename(endpoint).startsWith("openpets-") || !basename(endpoint).endsWith(".sock")) {
-    throw new OpenPetsClientError("invalid_discovery", "Discovery endpoint filename is not an OpenPets socket.");
+  const endpointName = basename(endpoint);
+  const namespace = supportedLocalIpcNamespaces.find((candidate) => endpointName.startsWith(`${candidate}-`));
+  if (!namespace || !endpointName.endsWith(".sock")) {
+    throw new OpenPetsClientError("invalid_discovery", "Discovery endpoint filename is not a supported companion socket.");
   }
 
   const parent = dirname(endpoint);
   const parentName = basename(parent);
-  const isTmpRuntime = parent.startsWith("/tmp/") && parentName.startsWith("openpets-");
-  const isXdgRuntime = parentName === "openpets";
+  const isTmpRuntime = parent.startsWith("/tmp/") && parentName.startsWith(`${namespace}-`);
+  const isXdgRuntime = parentName === namespace;
   if (!isTmpRuntime && !isXdgRuntime) {
-    throw new OpenPetsClientError("invalid_discovery", "Discovery endpoint is outside an expected OpenPets runtime directory.");
+    throw new OpenPetsClientError("invalid_discovery", "Discovery endpoint is outside an expected companion runtime directory.");
   }
 
   return { kind: "path", path: endpoint };
