@@ -61,6 +61,12 @@ Those defaults are defined in `apps/desktop/src/plugin-service.ts`.
 Everything else is installable from the catalog, not preloaded into a fresh app
 install.
 
+The BrainPet distribution is intentionally lean: it packages the same reviewed
+plugin sources and keeps the catalog/plugin platform available, but does not
+seed or enable bundled defaults on a fresh BrainPet profile. This avoids three
+hidden JavaScript plugin renderer hosts in the training-pet baseline. The normal
+OpenPets distribution defaults above are unchanged.
+
 The same file also defines `staleBundledPluginIds`, a cleanup list for old
 bundled plugins that should be removed during upgrade. Keep that list when old
 plugin ids need a clean migration, but do not optimize new runtime behavior for

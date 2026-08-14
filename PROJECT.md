@@ -21,7 +21,9 @@ current vertical slice proves this loop with two replaceable game modules:
 
 ## Foundation scope
 
-- Preserve existing OpenPets pet, agent integration, and plugin behavior.
+- Preserve existing OpenPets pet and Agent integration behavior. The normal
+  OpenPets distribution keeps its plugin defaults; the BrainPet distribution
+  keeps the plugin platform available but starts from a lean fresh profile.
 - Add a host-owned pet hotspot primitive.
 - Add a host-owned transparent anchored overlay primitive for sandboxed plugins.
 - Build a task-neutral runtime for lifecycle, timing, input, sessions, storage,
@@ -74,6 +76,10 @@ normalization, plugin isolation, task result validation, and abnormal cleanup.
 
 BrainPet-specific verification commands and the Electron crash-isolation smoke
 test are documented in `docs/brainpet-runtime.md`.
+
+For Windows interaction testing, prefer the already-unpacked build at
+`apps/desktop/dist-electron/win-unpacked/brainpet.exe`. The self-extracting
+portable executable is not a product startup benchmark.
 
 ## Lifecycle
 

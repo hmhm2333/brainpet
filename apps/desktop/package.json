@@ -21,6 +21,7 @@
     "package": "pnpm package:preflight && pnpm build && node scripts/clean-package-output.cjs && electron-builder",
     "package:dir": "pnpm package:preflight && pnpm build && node scripts/clean-package-output.cjs && electron-builder --dir && node dist/check-packaging-contract.js --output",
     "package:brainpet:portable": "pnpm build && node scripts/brainpet-package-portable.mjs",
+    "package:brainpet:unpacked": "pnpm build && node scripts/brainpet-package-unpacked.mjs",
     "test": "node scripts/run-tests.mjs",
     "test:brainpet-electron": "pnpm build && node scripts/brainpet-electron-smoke.mjs",
     "test:brainpet-stress": "pnpm build && cross-env BRAINPET_LIFECYCLE_CYCLES=100 node scripts/brainpet-electron-smoke.mjs",

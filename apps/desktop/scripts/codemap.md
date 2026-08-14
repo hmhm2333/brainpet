@@ -40,6 +40,12 @@ Load/validate checkpoint in .release-state/v<version>.json (discarded when HEAD 
 Check preload syntax → Compile tests to .test-dist → Run behavior tests → Run contract tests → Run remaining dist checks
 ```
 
+**BrainPet Windows validation**:
+```
+brainpet-electron-smoke.mjs → isolated profile → native hotspot click → stage/lifecycle assertions → scoped process-tree cleanup
+brainpet-package-unpacked.mjs → branded BrainPet win-unpacked directory without portable self-extraction
+```
+
 ## Integration Points
 
 - **File System**: `apps/desktop/dist-electron/` (build output), `apps/desktop/.release-state/` (gitignored release checkpoints), `apps/desktop/dist/` (compiled JS), optional external Linux package staging directory
@@ -53,6 +59,8 @@ Check preload syntax → Compile tests to .test-dist → Run behavior tests → 
 - `clean-package-output.cjs`: Removes `dist-electron` directory with path safety checks
 - `release-local.mjs`: Full release orchestration with preflight validation, multi-platform builds, and GitHub draft creation
 - `run-tests.mjs`: Desktop test runner for preload syntax checks, `.test-dist` behavior/contract tests, and remaining runtime checks
+- `brainpet-electron-smoke.mjs`: BrainPet native-entry, stage, performance, crash-isolation, and cleanup smoke
+- `brainpet-package-unpacked.mjs`: Fast-starting branded Windows test directory builder
 
 ## Build Plan (release-local.mjs)
 

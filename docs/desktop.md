@@ -321,6 +321,17 @@ with ASAR. Bundled mode unpacks the integration binaries from ASAR so hooks/MCP
 can spawn them. `scripts/release-local.mjs` automates a macOS-local release with
 a GitHub draft. See [Development](/development) for the release flow.
 
+The BrainPet fork also has a bounded distribution profile. A build whose launch
+name is `BrainPet` (or a source smoke run with
+`OPENPETS_DISTRIBUTION_PROFILE=brainpet`) keeps the BrainPet application identity
+and does not seed the optional bundled plugin defaults. Core pet rendering, tray,
+local Agent IPC, integrations, catalog access, and the training host remain. The
+ordinary OpenPets profile continues to seed the documented official plugins.
+For local Windows product testing, `package:brainpet:unpacked` produces
+`dist-electron/win-unpacked/brainpet.exe`; this avoids the per-launch extraction
+cost of the portable artifact. The portable executable is a transfer/diagnostic
+artifact, not the normal startup path.
+
 ## Where to look first
 
 | If you're touching… | Start in |

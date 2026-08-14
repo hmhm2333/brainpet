@@ -73,6 +73,13 @@ re-arms forwarding from the main process (`screen.getCursorScreenPoint()`), whic
 keeps working even when forwarding is dead. The platform predicates live in
 `mouse-forwarding.ts`.
 
+The BrainPet Windows distribution uses a native shaped pet window instead of
+the forwarding toggle for its visible pet region. The sprite, hit padding, and
+host-rendered training accessory are inside the interactive shape; transparent
+pixels outside it remain click-through. This removes the first-click race that
+otherwise occurs when the renderer reports a hotspot immediately before the
+native mouse-down.
+
 ## Reactions → animations → speech
 
 A **reaction** is a categorical pet state (thinking, editing, testing, waiting
@@ -101,6 +108,11 @@ their own FPS and loop settings. Changing the preference refreshes open default
 and agent pet windows, and the duration is part of their render identity so
 already-open windows reload their CSS immediately. The Settings preview uses the
 same configured duration.
+
+Idle animation keeps the original 5.5-second cycle but no longer distributes six
+sprite frames evenly across it. The resting frame is held for 78% of the cycle,
+then the blink/wink frames play as one short burst. This preserves a calm pixel
+pet without making each intermediate eyelid frame look like a one-second stall.
 
 This separation - mapping vs message vs render - is deliberate: agents and
 plugins speak in *reactions*, and the host owns *how* those look and sound.

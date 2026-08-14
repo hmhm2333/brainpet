@@ -2,7 +2,7 @@
 
 Implementation status (2026-08-14): the Host Adapter, Runtime Core, task
 contract, Stage Exerciser, local result store, pixel stage, two first-party
-task modules, shared visual system, local sound feedback, portable package and
+task modules, shared visual system, local sound feedback, unpacked test build and
 rollback path are implemented on `codex/foundation`. The 100-cycle real
 Electron lifecycle test, 30-minute soak, deterministic task tests, complete
 round, renderer crash isolation, static visual review and package smoke pass.
@@ -28,6 +28,9 @@ approval, first-time comprehension and independent dynamic visual review.
 - The stable runtime and stage are the first product deliverable. Formal game
   development starts only after the infrastructure completion gate passes.
 - Scores should produce pet feedback, but the first version remains local.
+- A Codex-authored pet asset is not the same thing as Codex activity binding.
+  Current completion feedback consumes OpenPets' `agent:activity` bus; direct
+  Codex desktop task-state integration remains unverified and is not a V1 claim.
 
 ## Architecture boundary
 

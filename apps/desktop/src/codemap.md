@@ -19,6 +19,8 @@ BrainPet adds an infrastructure-first training path under `brainpet/`: pure stag
 - **Plugin Runtimes**: Plugins use validated manifests, approved permissions, persisted config, safe path checks, declarative timer-triggered actions, or sandboxed JavaScript entry modules through the SDK bridge.
 - **Capability-Oriented SDK Surface**: The plugin bridge is split into focused SDK modules for audio, bus, config, events, quotas, routes, state, storage, types, and UI so permission checks and host effects stay localized.
 - **Host-Rendered Plugin UI**: Plugins describe bubbles, alerts, commands, panels, assets, and pet behavior; the host validates descriptors and renders them through pet windows, Control Center IPC, or sandboxed panel windows.
+- **Distribution Profiles**: `distribution-profile.ts` keeps normal OpenPets bundled-plugin defaults while giving BrainPet builds a separate identity and lean fresh-start policy.
+- **Sprite Timing**: `pet-animation-timing.ts` defines the testable held-idle/short-blink timeline used by pet renderers.
 - **Localized Runtime Content**: `i18n/` and plugin locale catalogs resolve host UI text, pet reaction messages, and plugin `$t:` strings through fallback-aware message catalogs.
 - **Motion Engine Abstraction**: Advanced pet movement uses a small physics/interpolation engine rather than embedding movement math in window or SDK routing code.
 
@@ -191,6 +193,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 
 **Core**:
 - `main.ts`: Entry, single-instance lock, bootstrap sequence, JavaScript plugin host construction
+- `distribution-profile.ts`: Pure OpenPets/BrainPet identity and bundled-plugin seeding policy
 - `lifecycle.ts`: App event handlers (quit, window-all-closed, second-instance) with logging; stops plugin service, IPC, and pet windows on quit
 - `state.ts`: Simple shell pause state
 - `app-state.ts`: Persistent JSON state with V1 schema, atomic writes, reaction animation overrides, and the validated waiting animation duration preference
@@ -211,6 +214,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `default-pet-controller.ts`: Default pet visibility, position persistence, transient reactions, status badges, logging
 - `agent-pet-controller.ts`: Lease-triggered pet windows, dismissal tracking, transient displays, status badges, logging
 - `pet-motion-engine.ts`: Interpolated movement vector/tick engine for plugin-driven pet motion and target-following behavior
+- `pet-animation-timing.ts`: Validated idle sprite timeline and CSS keyframe generation
 - `built-in-pet.ts`: Built-in pet constant
 - `reaction-messages.ts`: Message pools for each reaction type
 - `reaction-animation-mapping.ts`: Reaction-to-animation state mapping, user-configurable overrides, canonical sprite state definitions, and derived waiting-duration state tables

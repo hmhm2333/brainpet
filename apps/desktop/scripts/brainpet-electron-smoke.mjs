@@ -16,20 +16,22 @@ const outputPath = resolve(process.argv[2] ?? join(repoRoot, "output", "playwrig
 const require = createRequire(import.meta.url);
 const electronPath = process.env.BRAINPET_ELECTRON_EXECUTABLE || require("electron");
 const userDataDir = await mkdtemp(join(tmpdir(), "brainpet-electron-smoke-"));
-  const port = await reservePort();
+const port = await reservePort();
 const logs = [];
+const spawnedAt = Date.now();
 const lifecycleCycles = parsePositiveInteger(process.env.BRAINPET_LIFECYCLE_CYCLES, 1);
 const soakMs = parseNonNegativeInteger(process.env.BRAINPET_SOAK_MS, 0);
 const startupTimeoutMs = parsePositiveInteger(process.env.BRAINPET_START_TIMEOUT_MS, 20_000);
 const expectDisabled = process.env.BRAINPET_EXPECT_DISABLED === "1";
 const verifyCompletion = process.env.BRAINPET_VERIFY_COMPLETION === "1";
+const skipFocusPause = process.env.BRAINPET_SKIP_FOCUS_PAUSE === "1";
 const forcedTask = process.env.BRAINPET_SMOKE_TASK;
 const videoPath = process.env.BRAINPET_VIDEO_PATH ? resolve(process.env.BRAINPET_VIDEO_PATH) : null;
 if (forcedTask && forcedTask !== "cargo-signal" && forcedTask !== "pack-refresh") throw new Error("BRAINPET_SMOKE_TASK must be cargo-signal or pack-refresh.");
 
 const child = spawn(electronPath, [".", `--user-data-dir=${userDataDir}`, `--remote-debugging-port=${port}`], {
   cwd: appDir,
-  env: { ...process.env, ...(!forcedTask ? { OPENPETS_BRAINPET_EXERCISER: "1" } : { OPENPETS_BRAINPET_FORCE_TASK: forcedTask }), OPENPETS_DISABLE_PLUGIN_CATALOG: "1", OPENPETS_LOG_CONSOLE: "1", ...(expectDisabled ? { OPENPETS_BRAINPET_ENABLED: "0" } : {}) },
+  env: { ...process.env, ...(!forcedTask ? { OPENPETS_BRAINPET_EXERCISER: "1" } : { OPENPETS_BRAINPET_FORCE_TASK: forcedTask }), OPENPETS_DISTRIBUTION_PROFILE: process.env.OPENPETS_DISTRIBUTION_PROFILE ?? "brainpet", OPENPETS_DISABLE_PLUGIN_CATALOG: "1", OPENPETS_LOG_CONSOLE: "1", ...(expectDisabled ? { OPENPETS_BRAINPET_ENABLED: "0" } : {}) },
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true,
 });
@@ -38,6 +40,9 @@ child.stderr?.on("data", (chunk) => logs.push(String(chunk)));
 
 try {
   const petTarget = await waitForTarget(port, (target) => target.title === "OpenPets Default Pet", startupTimeoutMs);
+  const petReadyMs = Date.now() - spawnedAt;
+  await delay(500);
+  const idleProcessMetrics = process.platform === "win32" ? await measureProcessesForUserDataDir(userDataDir) : null;
   if (expectDisabled) {
     const disabledState = await evaluate(petTarget, `({ triggerFound: Boolean(document.querySelector('[data-brainpet-trigger]')) })`);
     assert.equal(disabledState.triggerFound, false, "feature flag must remove the BrainPet trigger");
@@ -45,23 +50,23 @@ try {
     process.stdout.write(`${JSON.stringify({ ok: true, featureFlagRollback: true })}\n`);
     process.exitCode = 0;
   } else {
-  const openingStartedAt = Date.now();
   const trigger = await evaluate(petTarget, `(() => {
     const button = document.querySelector('[data-brainpet-trigger]');
     if (!(button instanceof HTMLButtonElement)) return { found: false };
     const rect = button.getBoundingClientRect();
-    button.click();
-    return { found: true, label: button.getAttribute('aria-label'), width: rect.width, height: rect.height, launching: document.documentElement.dataset.brainpetLaunching === 'true' };
+    return { found: true, label: button.getAttribute('aria-label'), width: rect.width, height: rect.height, viewportWidth: innerWidth, viewportHeight: innerHeight, screenX, screenY, xRatio: (rect.left + rect.width / 2) / innerWidth, yRatio: (rect.top + rect.height / 2) / innerHeight };
   })()`);
+  logs.push(`BrainPet trigger geometry ${JSON.stringify(trigger)}\n`);
   assert.equal(trigger.found, true, "pet training trigger must exist");
   assert.equal(trigger.label, "打开 BrainPet 训练");
   assert.equal(trigger.width >= 28 && trigger.height >= 28, true, "pet training trigger must remain easy to click");
-  assert.equal(trigger.launching, true, "pet and training accessory must enter the launch animation before the stage opens");
+  const clickedAtMs = await clickPetTrigger(petTarget, trigger);
+  await waitForEvaluation(petTarget, `document.documentElement.dataset.brainpetLaunching === 'true'`, 500);
 
   let stageTarget = await waitForTarget(port, (target) => target.title === "BrainPet", 10_000);
   const expectedTaskText = forcedTask === "cargo-signal" ? "装箱，还是放过" : forcedTask === "pack-refresh" ? "行囊不重样" : "舞台校验器";
   await waitForEvaluation(stageTarget, `document.readyState === 'complete' && document.body.innerText.includes(${JSON.stringify(expectedTaskText)})`, 5_000);
-  const openingMs = Date.now() - openingStartedAt;
+  const openingMs = Date.now() - clickedAtMs;
   assert.equal(openingMs <= 500, true, `warm stage opening must stay under 500ms; received ${openingMs}ms`);
   const welcome = await evaluate(stageTarget, `({ width: innerWidth, height: innerHeight, text: document.body.innerText, hasSelectionButton: Boolean(document.querySelector('[data-action="start"]')) })`);
   assert.equal(welcome.width >= 640 && welcome.width <= 642, true, `stage width must stay within DPI rounding tolerance; received ${welcome.width}`);
@@ -93,7 +98,7 @@ try {
   assert.equal(anchorFollow, true, "stage must follow the pet window after it moves");
 
   let focusPause = false;
-  if (!verifyCompletion) {
+  if (!verifyCompletion && !skipFocusPause) {
     await sendCdp(petTarget.webSocketDebuggerUrl, "Page.bringToFront", {});
     await waitForEvaluation(stageTarget, `document.body.innerText.includes('PAUSED')`, 5_000);
     await delay(250);
@@ -192,15 +197,17 @@ try {
   const remainingTargets = await listTargets(port);
   assert.equal(remainingTargets.some((target) => target.title === "OpenPets Default Pet"), true, "stage crash must not close the pet host");
 
-  process.stdout.write(`${JSON.stringify({ ok: true, outputPath, introOutputPath, resultOutputPath, videoPath, trigger, stage: { width: welcome.width, height: welcome.height }, openingMs, anchorFollow, focusPause, completionVerified: Boolean(completion), completionQuality: completion?.quality ?? null, lifecycleCycles, soak, crashIsolated: true })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, outputPath, introOutputPath, resultOutputPath, videoPath, petReadyMs, idleProcessMetrics, trigger, stage: { width: welcome.width, height: welcome.height }, openingMs, anchorFollow, focusPause, completionVerified: Boolean(completion), completionQuality: completion?.quality ?? null, lifecycleCycles, soak, crashIsolated: true })}\n`);
   }
 } catch (error) {
   process.stderr.write(`${logs.join("")}\n`);
   throw error;
 } finally {
+  await closeElectronApp(port);
   child.kill();
   await waitForExit(child, 5_000);
-  await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined);
+  if (process.platform === "win32") await stopProcessesForUserDataDir(userDataDir);
+  await rm(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
 
 async function reservePort() {
@@ -220,6 +227,186 @@ async function listTargets(debugPort) {
   const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`);
   if (!response.ok) throw new Error(`Electron DevTools endpoint returned ${response.status}.`);
   return response.json();
+}
+
+async function clickPetTrigger(petTarget, trigger) {
+  if (process.platform !== "win32") {
+    const x = trigger.xRatio * trigger.viewportWidth;
+    const y = trigger.yRatio * trigger.viewportHeight;
+    await sendCdp(petTarget.webSocketDebuggerUrl, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+    await sendCdp(petTarget.webSocketDebuggerUrl, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+    await sendCdp(petTarget.webSocketDebuggerUrl, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+    return Date.now();
+  }
+
+  const script = String.raw`
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class BrainPetNativePointer {
+  public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+  [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left; public int Top; public int Right; public int Bottom; }
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string className, string windowName);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  public static IntPtr FindBestWindow(int[] processIds, int expectedLeft, int expectedTop, int expectedWidth, int expectedHeight) {
+    var ids = new System.Collections.Generic.HashSet<int>(processIds);
+    IntPtr best = IntPtr.Zero;
+    long bestScore = long.MaxValue;
+    EnumWindows((hwnd, _) => {
+      uint processId;
+      GetWindowThreadProcessId(hwnd, out processId);
+      Rect rect;
+      if (!ids.Contains((int)processId) || !IsWindowVisible(hwnd) || !GetWindowRect(hwnd, out rect)) return true;
+      var width = rect.Right - rect.Left;
+      var height = rect.Bottom - rect.Top;
+      var score = Math.Abs(rect.Left - expectedLeft) + Math.Abs(rect.Top - expectedTop) + Math.Abs(width - expectedWidth) + Math.Abs(height - expectedHeight);
+      if (score < bestScore) { best = hwnd; bestScore = score; }
+      return true;
+    }, IntPtr.Zero);
+    return best;
+  }
+  public static bool PostLeftClick(IntPtr hwnd, int clientX, int clientY) {
+    var point = new IntPtr((clientY << 16) | (clientX & 0xffff));
+    return PostMessage(hwnd, 0x0201, new IntPtr(1), point) && PostMessage(hwnd, 0x0202, IntPtr.Zero, point);
+  }
+}
+'@
+[BrainPetNativePointer]::SetProcessDPIAware() | Out-Null
+$handle = [BrainPetNativePointer]::FindWindow($null, $env:BRAINPET_NATIVE_WINDOW_TITLE)
+if ($handle -eq [IntPtr]::Zero) {
+  $needle = '--user-data-dir=' + $env:BRAINPET_NATIVE_USER_DATA
+  $all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CommandLine)
+  $roots = @($all | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+  $ids = [System.Collections.Generic.HashSet[uint32]]::new()
+  foreach ($root in $roots) { [void]$ids.Add([uint32]$root.ProcessId) }
+  do {
+    $changed = $false
+    foreach ($process in $all) {
+      if ($ids.Contains([uint32]$process.ParentProcessId) -and $ids.Add([uint32]$process.ProcessId)) { $changed = $true }
+    }
+  } while ($changed)
+  [int[]]$processIds = @($ids | ForEach-Object { [int]$_ })
+  $handle = [BrainPetNativePointer]::FindBestWindow($processIds, [int]$env:BRAINPET_NATIVE_SCREEN_X, [int]$env:BRAINPET_NATIVE_SCREEN_Y, [int]$env:BRAINPET_NATIVE_VIEWPORT_WIDTH, [int]$env:BRAINPET_NATIVE_VIEWPORT_HEIGHT)
+}
+if ($handle -eq [IntPtr]::Zero) { throw 'BrainPet pet window was not found in its isolated Electron process tree.' }
+$rect = New-Object BrainPetNativePointer+Rect
+if (-not [BrainPetNativePointer]::GetWindowRect($handle, [ref]$rect)) { throw 'BrainPet pet window bounds were unavailable.' }
+$x = [Math]::Round($rect.Left + ($rect.Right - $rect.Left) * [double]$env:BRAINPET_NATIVE_X_RATIO)
+$y = [Math]::Round($rect.Top + ($rect.Bottom - $rect.Top) * [double]$env:BRAINPET_NATIVE_Y_RATIO)
+if (-not [BrainPetNativePointer]::SetCursorPos($x, $y)) { throw 'BrainPet could not move the native cursor to its trigger.' }
+[BrainPetNativePointer]::SetForegroundWindow($handle) | Out-Null
+Start-Sleep -Milliseconds 350
+[BrainPetNativePointer]::SetCursorPos($x + 1, $y) | Out-Null
+Start-Sleep -Milliseconds 80
+[BrainPetNativePointer]::SetCursorPos($x, $y) | Out-Null
+Start-Sleep -Milliseconds 80
+$clientX = [Math]::Round(($rect.Right - $rect.Left) * [double]$env:BRAINPET_NATIVE_X_RATIO)
+$clientY = [Math]::Round(($rect.Bottom - $rect.Top) * [double]$env:BRAINPET_NATIVE_Y_RATIO)
+if (-not [BrainPetNativePointer]::PostLeftClick($handle, $clientX, $clientY)) { throw 'BrainPet native window click message failed.' }
+Write-Output ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+`;
+  const output = await runPowerShell(script, {
+    BRAINPET_NATIVE_WINDOW_TITLE: "OpenPets Default Pet",
+    BRAINPET_NATIVE_USER_DATA: userDataDir,
+    BRAINPET_NATIVE_SCREEN_X: String(trigger.screenX),
+    BRAINPET_NATIVE_SCREEN_Y: String(trigger.screenY),
+    BRAINPET_NATIVE_VIEWPORT_WIDTH: String(trigger.viewportWidth),
+    BRAINPET_NATIVE_VIEWPORT_HEIGHT: String(trigger.viewportHeight),
+    BRAINPET_NATIVE_X_RATIO: String(trigger.xRatio),
+    BRAINPET_NATIVE_Y_RATIO: String(trigger.yRatio),
+  });
+  const clickedAtMs = Number.parseInt(output.trim().split(/\r?\n/).at(-1) ?? "", 10);
+  if (!Number.isFinite(clickedAtMs)) throw new Error(`BrainPet native pointer did not report a click timestamp.\n${output}`);
+  return clickedAtMs;
+}
+
+async function closeElectronApp(debugPort) {
+  try {
+    const target = (await listTargets(debugPort))[0];
+    if (target?.webSocketDebuggerUrl) await sendCdp(target.webSocketDebuggerUrl, "Browser.close", {});
+  } catch {
+    // The app may already have exited after a failed startup.
+  }
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5_000) {
+    try {
+      await listTargets(debugPort);
+    } catch {
+      return;
+    }
+    await delay(100);
+  }
+}
+
+async function stopProcessesForUserDataDir(directory) {
+  const script = String.raw`
+$needle = '--user-data-dir=' + $env:BRAINPET_CLEANUP_USER_DATA
+$all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CommandLine)
+$roots = @($all | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+if ($roots.Count -eq 0) { exit 0 }
+$ids = [System.Collections.Generic.HashSet[uint32]]::new()
+foreach ($root in $roots) { [void]$ids.Add([uint32]$root.ProcessId) }
+do {
+  $changed = $false
+  foreach ($process in $all) {
+    if ($ids.Contains([uint32]$process.ParentProcessId) -and $ids.Add([uint32]$process.ProcessId)) { $changed = $true }
+  }
+} while ($changed)
+foreach ($id in @($ids) | Sort-Object -Descending) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Milliseconds 300
+$remaining = @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+if ($remaining.Count -gt 0) { throw "BrainPet smoke cleanup left $($remaining.Count) process roots running." }
+`;
+  await runPowerShell(script, { BRAINPET_CLEANUP_USER_DATA: directory });
+}
+
+async function measureProcessesForUserDataDir(directory) {
+  const script = String.raw`
+$needle = '--user-data-dir=' + $env:BRAINPET_METRICS_USER_DATA
+$all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine, WorkingSetSize, PrivatePageCount)
+$roots = @($all | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+$ids = [System.Collections.Generic.HashSet[uint32]]::new()
+foreach ($root in $roots) { [void]$ids.Add([uint32]$root.ProcessId) }
+do {
+  $changed = $false
+  foreach ($process in $all) {
+    if ($ids.Contains([uint32]$process.ParentProcessId) -and $ids.Add([uint32]$process.ProcessId)) { $changed = $true }
+  }
+} while ($changed)
+$selected = @($all | Where-Object { $ids.Contains([uint32]$_.ProcessId) })
+$workingSet = ($selected | Measure-Object WorkingSetSize -Sum).Sum
+$privateBytes = ($selected | Measure-Object PrivatePageCount -Sum).Sum
+[pscustomobject]@{
+  processCount = $selected.Count
+  workingSetBytes = [int64]$workingSet
+  privateBytes = [int64]$privateBytes
+  names = @($selected | Group-Object Name | ForEach-Object { $_.Name + ':' + $_.Count })
+} | ConvertTo-Json -Compress
+`;
+  const output = await runPowerShell(script, { BRAINPET_METRICS_USER_DATA: directory });
+  return JSON.parse(output.trim());
+}
+
+function runPowerShell(script, extraEnv) {
+  return new Promise((resolvePromise, reject) => {
+    const powershell = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], {
+      env: { ...process.env, ...extraEnv },
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const output = [];
+    powershell.stdout?.on("data", (chunk) => output.push(String(chunk)));
+    powershell.stderr?.on("data", (chunk) => output.push(String(chunk)));
+    powershell.once("error", reject);
+    powershell.once("exit", (code) => code === 0 ? resolvePromise(output.join("")) : reject(new Error(`PowerShell helper failed (${code}).\n${output.join("")}`)));
+  });
 }
 
 

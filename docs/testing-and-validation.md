@@ -60,6 +60,16 @@ dist checks. Three buckets:
   - `check-opencode-desktop-setup.ts` - verifies the bundled OpenCode setup
     preview matches expectations.
 
+BrainPet's Electron smoke uses a unique `user-data-dir`, moves the Windows
+cursor through the real shaped hotspot, sends the click through the native
+window, and verifies that the stage appears. A DOM `button.click()` is not
+accepted as evidence for transparent-window hit testing. Teardown first asks
+Electron to close through CDP, then scopes any fallback process-tree cleanup to
+that unique directory and fails if the temporary profile cannot be removed.
+The smoke reports pet-ready time plus idle process working-set/private-memory
+snapshots so the lean BrainPet profile can be compared with the full OpenPets
+plugin baseline.
+
 ## Package tests & contracts
 
 Each package runs its own `check`/`test`. Notable contract/boundary coverage:

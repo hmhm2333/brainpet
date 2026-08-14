@@ -19,6 +19,8 @@ import { defaultPetSprite, getConfiguredSpriteCacheKey, getConfiguredSpriteState
 import { isFocusActionAvailable } from "./capabilities.js";
 import { canForwardMouseEvents as platformCanForwardMouseEvents, shouldWatchForwardedMouseEvents } from "./mouse-forwarding.js";
 import { computeEffectiveWaylandBackend, shouldPetWindowBeFocusable } from "./wayland-backend.js";
+import { createIdleSpriteKeyframes } from "./pet-animation-timing.js";
+import { resolveDesktopDistributionSettings } from "./distribution-profile.js";
 
 export interface PetWindowInteractionHooks {
   readonly onBubbleDismissed?: (dismissToken: string) => void;
@@ -339,6 +341,7 @@ function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowI
   const rearmTimers = new Set<NodeJS.Timeout>();
   const webContents = window.webContents;
   const canForwardMouseEvents = platformCanForwardMouseEvents(process.platform);
+  const nativeShapeOwnsHitTest = usesNativePetWindowShape();
 
   const scheduleMouseInteropRecovery = (reason: string): void => {
     if (window.isDestroyed()) return;
@@ -363,6 +366,10 @@ function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowI
   const isFromWindow = (event: IpcMainEvent): boolean => event.sender === webContents;
   const setPassthrough = (passthrough: boolean): void => {
     if (window.isDestroyed()) return;
+    if (nativeShapeOwnsHitTest) {
+      window.setIgnoreMouseEvents(false);
+      return;
+    }
     if (process.platform === "linux") {
       // Electron does not support forwarded mouse events on Linux, so ignored
       // windows cannot receive the renderer events required to start dragging.
@@ -751,7 +758,7 @@ export async function loadDefaultPetContent(window: BrowserWindow, paused: boole
   debug("pet.window", "default content render begin", { windowId: window.id, sequence, paused, hasDisplay: Boolean(display), reaction: display?.reaction, hasMessage: Boolean(display?.message), badge, hasPluginBubble: Boolean(pluginBubbles?.transient), hasPinned: Boolean(pluginBubbles?.pinned), defaultPetId: getAppStateSnapshot().preferences.defaultPetId });
   applyPetWindowFocusPolicy(window, petPluginBubblesHaveInteractiveInput(pluginBubbles));
   const render = await createDefaultPetRender(paused, display, badge, dismissToken, pluginBubbles);
-  applyLinuxPetWindowShape(window, getAppStateSnapshot().preferences.petScale as PetScaleValue, Boolean(display?.message || display?.reactionMessage || display?.reaction || display?.mediaPath || badge || paused || pluginBubbles?.transient || pluginBubbles?.pinned));
+  applyNativePetWindowShape(window, getAppStateSnapshot().preferences.petScale as PetScaleValue, Boolean(display?.message || display?.reactionMessage || display?.reaction || display?.mediaPath || badge || paused || pluginBubbles?.transient || pluginBubbles?.pinned));
   if (tryUpdateLoadedPetContent(window, render, "default", sequence)) return;
   await loadPetHtmlFile(window, render.html, "default", sequence).then(() => {
     petWindowRenderCache.set(window, render.cacheKey);
@@ -775,7 +782,7 @@ export async function loadExplicitPetContent(window: BrowserWindow, petId: strin
     const render = pet.id === builtInPet.id
       ? createBuiltInPetRender(false, display, badge, scale, `explicit:${pet.id}`, dismissToken, pluginBubbles)
       : await createInstalledPetRender(pet.id, pet.displayName, false, display, scale, badge, `explicit:${pet.id}`, dismissToken, pluginBubbles);
-    applyLinuxPetWindowShape(window, scale, Boolean(display?.message || display?.reactionMessage || display?.reaction || display?.mediaPath || badge || pluginBubbles?.transient || pluginBubbles?.pinned));
+    applyNativePetWindowShape(window, scale, Boolean(display?.message || display?.reactionMessage || display?.reaction || display?.mediaPath || badge || pluginBubbles?.transient || pluginBubbles?.pinned));
     if (tryUpdateLoadedPetContent(window, render, `explicit-${pet.id}`, sequence)) return;
     await loadPetHtmlFile(window, render.html, `explicit-${pet.id}`, sequence);
     petWindowRenderCache.set(window, render.cacheKey);
@@ -899,8 +906,13 @@ export function readWindowPosition(window: BrowserWindow): Point {
   return clampToVisibleWorkArea({ x, y }, defaultPetWindowSize);
 }
 
-function applyLinuxPetWindowShape(window: BrowserWindow, scale: PetScaleValue, hasBubble: boolean): void {
-  if (process.platform !== "linux" || window.isDestroyed()) return;
+function usesNativePetWindowShape(): boolean {
+  return process.platform === "linux"
+    || process.platform === "win32" && resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE).profile === "brainpet";
+}
+
+function applyNativePetWindowShape(window: BrowserWindow, scale: PetScaleValue, hasBubble: boolean): void {
+  if (!usesNativePetWindowShape() || window.isDestroyed()) return;
 
   const scaledWidth = Math.ceil(defaultPetSprite.frameWidth * scale);
   const scaledHeight = Math.ceil(defaultPetSprite.frameHeight * scale);
@@ -929,9 +941,9 @@ function applyLinuxPetWindowShape(window: BrowserWindow, scale: PetScaleValue, h
 
   try {
     window.setShape(shape);
-    debug("pet.window", "linux window shape applied", { windowId: window.id, scale, hasBubble, shape });
+    debug("pet.window", "native window shape applied", { windowId: window.id, scale, hasBubble, shape, platform: process.platform });
   } catch (error) {
-    logError("pet.window", "linux window shape failed", error instanceof Error ? error : { error });
+    logError("pet.window", "native window shape failed", error instanceof Error ? error : { error, platform: process.platform });
   }
 }
 
@@ -983,6 +995,8 @@ function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | 
             transform-origin: top left;
           }
           ${createSpriteStateCss(".sprite", stateRows)}
+          html[data-reaction-state="idle"][data-motion-state="idle"] .sprite { animation-name: pet-idle; animation-timing-function: step-end; }
+          ${createIdleSpriteKeyframes("pet-idle", defaultPetSprite.frameWidth)}
           @keyframes pet-frames {
             from { background-position: 0 var(--sprite-row-y); }
             to { background-position: calc(-${defaultPetSprite.frameWidth}px * var(--sprite-frames)) var(--sprite-row-y); }
@@ -1065,6 +1079,8 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
               transform-origin: top left;
             }
             ${createSpriteStateCss(".installed-sprite", stateRows)}
+            html[data-reaction-state="idle"][data-motion-state="idle"] .installed-sprite { animation-name: pet-idle; animation-timing-function: step-end; }
+            ${createIdleSpriteKeyframes("pet-idle", defaultPetSprite.frameWidth)}
             @keyframes pet-frames {
               from { background-position: 0 var(--sprite-row-y); }
               to { background-position: calc(-${defaultPetSprite.frameWidth}px * var(--sprite-frames)) var(--sprite-row-y); }
