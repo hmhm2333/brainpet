@@ -52,6 +52,15 @@ test("sustained cadence below the 30 fps floor invalidates quality", () => {
   assert.equal(result.flags.includes("excessive-frame-loss"), true);
 });
 
+test("a stable 20 fps cadence cannot pass the declared 30 fps floor", () => {
+  const monitor = new StageQualityMonitor();
+  for (let now = 0; now <= 6_000; now += 50) monitor.frame(now);
+  const snapshot = monitor.snapshot(0);
+  assert.equal(snapshot.valid, false);
+  assert.ok(snapshot.droppedFrameCount > 0);
+  assert.ok(snapshot.flags.includes("excessive-frame-loss"));
+});
+
 test("stage accessibility settings round-trip without expanding host IPC", () => {
   const values = new Map<string, string>();
   const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value) };

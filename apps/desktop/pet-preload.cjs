@@ -74,6 +74,31 @@ ipcRenderer.on("openpets:brainpet-accessory-feedback", (_event, value) => {
   else apply();
 });
 
+ipcRenderer.on("openpets:brainpet-stage-state", (_event, value) => {
+  if (!value || typeof value.open !== "boolean") return;
+  const apply = () => {
+    if (value.open) document.documentElement.dataset.brainpetStageOpen = "true";
+    else delete document.documentElement.dataset.brainpetStageOpen;
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", apply, { once: true });
+  else apply();
+});
+
+ipcRenderer.on("openpets:brainpet-throw", (_event, value) => {
+  if (!value || typeof value.stimulusId !== "string" || value.stimulusId.length === 0 || value.stimulusId.length > 128 || (value.direction !== "left" && value.direction !== "right")) return;
+  const apply = () => {
+    const root = document.documentElement;
+    delete root.dataset.brainpetThrow;
+    void root.offsetWidth;
+    root.dataset.brainpetThrow = value.direction;
+    window.setTimeout(() => {
+      if (root.dataset.brainpetThrow === value.direction) delete root.dataset.brainpetThrow;
+    }, 300);
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", apply, { once: true });
+  else apply();
+});
+
 ipcRenderer.on("openpets:pet-content-state", (_event, state) => {
   if (!state || typeof state.bodyHtml !== "string" || state.bodyHtml.length > 64 * 1024 || !allowedReactionStates.has(state.reactionState)) {
     return;
@@ -171,9 +196,10 @@ const installPetSenses = () => {
       event.preventDefault();
       event.stopPropagation();
       if (document.documentElement.dataset.brainpetLaunching === "true") return;
-      document.documentElement.dataset.brainpetLaunching = "true";
+      const closingStage = document.documentElement.dataset.brainpetStageOpen === "true";
+      if (!closingStage) document.documentElement.dataset.brainpetLaunching = "true";
       sendPetEvent("brainpet:trainingRequested", {});
-      window.setTimeout(() => { delete document.documentElement.dataset.brainpetLaunching; }, 520);
+      if (!closingStage) window.setTimeout(() => { delete document.documentElement.dataset.brainpetLaunching; }, 520);
       return;
     }
     if (!target.closest(".pet-hitbox, .pet-shell")) return;

@@ -1,35 +1,57 @@
-import { app, BrowserWindow, ipcMain, powerMonitor, screen, type IpcMainEvent } from "electron";
-import { join } from "node:path";
+import { app, BrowserWindow, ipcMain, powerMonitor, screen, type IpcMainEvent, type Session } from "electron";
+import { basename, join } from "node:path";
 
 import { applyExternalPetReaction, getDefaultPetWindowForPlugins } from "../default-pet-controller.js";
 import { getAppStateSnapshot } from "../app-state.js";
 import { debug, error as logError, info, warn } from "../logger.js";
-import { setBrainPetTrainingRequestHandler } from "../pet-window.js";
+import { setBrainPetDragLifecycleHandler, setBrainPetTrainingRequestHandler, setPetWindowPositionLocked } from "../pet-window.js";
+import { isBrainPetFeatureEnabled, resolveDesktopDistributionSettings } from "../distribution-profile.js";
 import { subscribePluginEvent } from "../plugin-events-source.js";
 import { isBrainPetAgentCompletion, parseBrainPetAgentActivity } from "./agent-activity-policy.js";
-import { computeBrainPetStageBounds } from "./geometry.js";
+import { createBrainPetInteractionRig, isBrainPetPointInsideRectangle, reanchorBrainPetInteractionRig, reflowBrainPetInteractionRig, setBrainPetInteractionRigDragging, translateBrainPetStageInRig, type BrainPetInteractionRigSnapshot, type BrainPetRigEnvironment } from "./interaction-rig.js";
 import { chooseBrainPetTask, localDateKey } from "./progression.js";
+import { isBrainPetRigPointer, type BrainPetRigPointer } from "./rig-drag-gesture.js";
 import { createBrainPetRuntimeSnapshot, createSeed, reduceBrainPetRuntime, type BrainPetRuntimeEvent, type BrainPetRuntimeSnapshot } from "./runtime-core.js";
-import { computeDeclaredScore, isTaskId, type BrainPetTaskResult, type BrainPetTaskSessionConfig } from "./task-contract.js";
-import { getBrainPetDifficultyParameters, getBrainPetTaskManifest, isPlayableBrainPetTaskId, listPlayableBrainPetTaskIds } from "./task-registry.js";
+import { canonicalizeBrainPetTaskResult, type BrainPetTaskResult, type BrainPetTaskSessionConfig } from "./task-contract.js";
+import { getBrainPetDifficultyParameters, getBrainPetTaskDefinition, getBrainPetTaskManifest, isPlayableBrainPetTaskId, isRegisteredBrainPetTaskId, listPlayableBrainPetTaskIds } from "./task-registry.js";
 import { appendBrainPetResult, createBrainPetPersistedState, loadBrainPetState, saveBrainPetState, type BrainPetPersistedState } from "./state.js";
+import { matchesIssuedBrainPetSession } from "./session-ownership.js";
 
 const STAGE_READY_CHANNEL = "brainpet:stage-ready";
 const STAGE_EVENT_CHANNEL = "brainpet:stage-event";
 const STAGE_CLOSE_CHANNEL = "brainpet:stage-close";
 const STAGE_BOOTSTRAP_CHANNEL = "brainpet:stage-bootstrap";
 const STAGE_HOST_EVENT_CHANNEL = "brainpet:host-event";
+const STAGE_NEXT_SESSION_CHANNEL = "brainpet:stage-next-session";
+const STAGE_INTERACTIVE_CHANNEL = "brainpet:stage-interactive";
+const PET_THROW_CHANNEL = "brainpet:pet-throw";
+const RIG_DRAG_START_CHANNEL = "brainpet:rig-drag-start";
+const RIG_DRAG_MOVE_CHANNEL = "brainpet:rig-drag-move";
+const RIG_DRAG_END_CHANNEL = "brainpet:rig-drag-end";
 
 let stageWindow: BrowserWindow | null = null;
 let runtime: BrainPetRuntimeSnapshot = createBrainPetRuntimeSnapshot();
 let ipcInstalled = false;
 let repositionTimer: NodeJS.Timeout | null = null;
+let stageHitTestTimer: NodeJS.Timeout | null = null;
+let rendererRequestedInteractive = false;
+let stageMouseInteractive: boolean | null = null;
 let stageAnchorWindow: BrowserWindow | null = null;
 let statePath: string | null = null;
 let persistedState: BrainPetPersistedState = createBrainPetPersistedState();
 let stateSaveChain: Promise<void> = Promise.resolve();
 let hostEventsInstalled = false;
 let unsubscribeAgentActivity: (() => void) | null = null;
+let issuedSession: BrainPetTaskSessionConfig | null = null;
+const hardenedStageSessions = new WeakSet<Session>();
+let interactionRig: BrainPetInteractionRigSnapshot | null = null;
+let rigDragTransaction: { readonly source: "pet" | "stage"; readonly initial: BrainPetInteractionRigSnapshot; readonly startPointer?: BrainPetRigPointer; readonly settleOnMovement: boolean } | null = null;
+let rigSettleTimer: NodeJS.Timeout | null = null;
+let rigGeometryTimer: NodeJS.Timeout | null = null;
+let applyingRigBounds = false;
+let removeStageAnchorListeners: (() => void) | null = null;
+let anchorSyncScheduled = false;
+let lastPetThrowAt = 0;
 
 export interface BrainPetStageBootstrap {
   readonly apiVersion: 1;
@@ -42,6 +64,7 @@ export interface BrainPetStageBootstrap {
   readonly levelHighScore: number;
   readonly todayCompleted: number;
   readonly petSpriteUrl: string | null;
+  readonly rig: BrainPetInteractionRigSnapshot;
 }
 
 export function initializeBrainPetHost(): void {
@@ -52,8 +75,15 @@ export function initializeBrainPetHost(): void {
   installBrainPetIpc();
   installBrainPetHostEvents();
   statePath = join(app.getPath("userData"), "brainpet-state.json");
-  persistedState = loadBrainPetState(statePath);
-  setBrainPetTrainingRequestHandler((sourceWindow) => openBrainPetStage(sourceWindow));
+  persistedState = loadBrainPetState(statePath, (message) => warn("brainpet.host", message));
+  setBrainPetTrainingRequestHandler((sourceWindow) => {
+    if (stageWindow && !stageWindow.isDestroyed()) {
+      closeBrainPetStage("pet-toggle");
+      return;
+    }
+    openBrainPetStage(sourceWindow);
+  });
+  setBrainPetDragLifecycleHandler(handlePetDragLifecycle);
   info("brainpet.host", "initialized");
 }
 
@@ -61,17 +91,28 @@ export function openBrainPetStage(anchorWindow?: BrowserWindow): void {
   if (!isBrainPetEnabled()) return;
   const current = stageWindow;
   if (current && !current.isDestroyed()) {
-    if (anchorWindow && !anchorWindow.isDestroyed()) stageAnchorWindow = anchorWindow;
-    repositionBrainPetStage();
+    if (anchorWindow && !anchorWindow.isDestroyed() && anchorWindow !== stageAnchorWindow) {
+      bindStageAnchor(anchorWindow);
+      interactionRig = createInteractionRig(anchorWindow);
+      applyInteractionRig(interactionRig, true);
+    } else {
+      synchronizeInteractionRigFromPet();
+    }
     if (current.isMinimized()) current.restore();
     current.show();
     current.focus();
     return;
   }
 
-  stageAnchorWindow = anchorWindow && !anchorWindow.isDestroyed() ? anchorWindow : getDefaultPetWindowForPlugins();
+  const resolvedAnchor = anchorWindow && !anchorWindow.isDestroyed() ? anchorWindow : getDefaultPetWindowForPlugins();
+  if (!resolvedAnchor || resolvedAnchor.isDestroyed()) {
+    warn("brainpet.host", "stage open skipped because no live pet anchor exists");
+    return;
+  }
+  bindStageAnchor(resolvedAnchor);
   runtime = transition({ type: "open-requested", atMs: performance.now() });
-  const bounds = computeCurrentStageBounds();
+  interactionRig = createInteractionRig(resolvedAnchor);
+  const bounds = interactionRig.overlayBoundsScreen;
   const window = new BrowserWindow({
     title: "BrainPet Training Stage",
     ...bounds,
@@ -92,11 +133,17 @@ export function openBrainPetStage(anchorWindow?: BrowserWindow): void {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      partition: "persist:brainpet-stage",
       preload: join(app.getAppPath(), "brainpet-preload.cjs"),
     },
   });
 
   stageWindow = window;
+  resolvedAnchor.webContents.send("openpets:brainpet-stage-state", { open: true });
+  rendererRequestedInteractive = false;
+  stageMouseInteractive = false;
+  window.setIgnoreMouseEvents(true, { forward: true });
+  hardenStageSession(window.webContents.session);
   window.setMenu(null);
   window.setAlwaysOnTop(true, process.platform === "darwin" ? "floating" : "normal");
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -118,32 +165,29 @@ export function openBrainPetStage(anchorWindow?: BrowserWindow): void {
   });
   window.once("ready-to-show", () => {
     if (window.isDestroyed()) return;
-    repositionBrainPetStage();
+    synchronizeInteractionRigFromPet();
     window.show();
     window.focus();
   });
   window.on("closed", () => {
     if (stageWindow === window) stageWindow = null;
-    stageAnchorWindow = null;
+    clearRigSettleTimer();
+    clearRigGeometryTimer();
+    rigDragTransaction = null;
+    interactionRig = null;
+    unbindStageAnchor();
     stopRepositionTimer();
+    stopStageHitTestTimer();
     if (runtime.phase !== "idle") {
       if (runtime.phase !== "closing") runtime = transition({ type: "close-requested", atMs: performance.now() });
       runtime = transition({ type: "closed", atMs: performance.now() });
     }
+    issuedSession = null;
     info("brainpet.host", "stage closed");
   });
 
-  const petWindow = stageAnchorWindow;
-  const handleAnchorClosed = () => closeBrainPetStage("anchor-closed");
-  petWindow?.on("move", scheduleReposition);
-  petWindow?.on("moved", scheduleReposition);
-  petWindow?.once("closed", handleAnchorClosed);
-  window.on("closed", () => {
-    petWindow?.off("move", scheduleReposition);
-    petWindow?.off("moved", scheduleReposition);
-    petWindow?.off("closed", handleAnchorClosed);
-  });
   startRepositionTimer();
+  startStageHitTestTimer();
 
   const devUrl = getSafeRendererDevUrl();
   const load = devUrl
@@ -164,13 +208,19 @@ export function closeBrainPetStage(reason = "requested"): void {
   }
   if (runtime.phase !== "closing" && runtime.phase !== "idle") runtime = transition({ type: "close-requested", atMs: performance.now() });
   info("brainpet.host", "stage close requested", { reason });
+  if (stageAnchorWindow && !stageAnchorWindow.isDestroyed()) stageAnchorWindow.webContents.send("openpets:brainpet-stage-state", { open: false });
   window.close();
 }
 
 export async function shutdownBrainPetHost(): Promise<void> {
   setBrainPetTrainingRequestHandler(null);
+  setBrainPetDragLifecycleHandler(null);
   closeBrainPetStage("app-shutdown");
   stopRepositionTimer();
+  stopStageHitTestTimer();
+  clearRigSettleTimer();
+  clearRigGeometryTimer();
+  unbindStageAnchor();
   removeBrainPetHostEvents();
   await stateSaveChain.catch(() => undefined);
 }
@@ -205,14 +255,21 @@ function removeBrainPetHostEvents(): void {
 function handleLockScreen(): void { sendPauseEvent("pause", "lock-screen"); }
 function handleUnlockScreen(): void { sendPauseEvent("resume", "lock-screen"); }
 function handleSuspend(): void { sendPauseEvent("pause", "suspend"); }
-function handleResume(): void { sendPauseEvent("resume", "suspend"); repositionBrainPetStage(); }
-function handleDisplayChange(): void { repositionBrainPetStage(); }
+function handleResume(): void { sendPauseEvent("resume", "suspend"); reflowInteractionRig("resume"); }
+function handleDisplayChange(): void { reflowInteractionRig("display-change"); }
 
 function sendPauseEvent(type: "pause" | "resume", reason: "lock-screen" | "suspend"): void {
   const window = stageWindow;
   if (!window || window.isDestroyed()) return;
   info("brainpet.host", "host lifecycle event", { type, reason, runtimePhase: runtime.phase });
   window.webContents.send(STAGE_HOST_EVENT_CHANNEL, { type, reason });
+}
+
+function hardenStageSession(stageSession: Session): void {
+  if (hardenedStageSessions.has(stageSession)) return;
+  hardenedStageSessions.add(stageSession);
+  stageSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  stageSession.on("will-download", (event) => event.preventDefault());
 }
 
 function handleAgentActivity(payload: Record<string, unknown>): void {
@@ -234,8 +291,9 @@ function installBrainPetIpc(): void {
 
   ipcMain.handle(STAGE_BOOTSTRAP_CHANNEL, (event): BrainPetStageBootstrap => {
     assertStageSender(event);
+    if (!interactionRig) throw new Error("BrainPet interaction rig is unavailable.");
     const suggestedSeed = createSeed(Date.now(), process.pid);
-    const session = createNextSession(suggestedSeed);
+    const session = issuedSession ??= createNextSession(suggestedSeed);
     return {
       apiVersion: 1,
       mode: getStageMode(),
@@ -247,7 +305,22 @@ function installBrainPetIpc(): void {
       levelHighScore: isPlayableBrainPetTaskId(session.taskId) ? persistedState.taskProgress[session.taskId].highScoresByLevel[String(session.level)] ?? 0 : 0,
       todayCompleted: persistedState.dailyCompletion.localDate === localDateKey(new Date()) ? persistedState.dailyCompletion.count : 0,
       petSpriteUrl: getCurrentPetSpriteUrl(),
+      rig: interactionRig,
     };
+  });
+  ipcMain.handle(STAGE_NEXT_SESSION_CHANNEL, (event, value: unknown): BrainPetTaskSessionConfig => {
+    assertStageSender(event);
+    const completed = runtime.lastResult;
+    if (runtime.phase !== "ready"
+      || !completed
+      || !isRecord(value)
+      || value.taskId !== completed.taskId
+      || value.level !== completed.level
+      || (!isPlayableBrainPetTaskId(completed.taskId) && getStageMode() !== "stage-exerciser")) {
+      throw new Error("BrainPet cannot issue the requested retry session in the current state.");
+    }
+    issuedSession = createSessionConfig(completed.taskId, createSeed(Date.now(), process.pid ^ completed.seed), completed.level);
+    return issuedSession;
   });
   ipcMain.on(STAGE_READY_CHANNEL, (event) => {
     if (!isStageSender(event) || runtime.phase !== "opening") return;
@@ -256,6 +329,35 @@ function installBrainPetIpc(): void {
   ipcMain.on(STAGE_CLOSE_CHANNEL, (event) => {
     if (!isStageSender(event)) return;
     closeBrainPetStage("renderer-requested");
+  });
+  ipcMain.on(STAGE_INTERACTIVE_CHANNEL, (event, interactive: unknown) => {
+    if (!isStageSender(event) || typeof interactive !== "boolean") return;
+    rendererRequestedInteractive = interactive;
+    refreshStageMouseInteractivity();
+  });
+  ipcMain.on(PET_THROW_CHANNEL, (event, stimulusId: unknown) => {
+    if (!isStageSender(event) || typeof stimulusId !== "string" || stimulusId.length === 0 || stimulusId.length > 128 || runtime.phase !== "running") return;
+    const now = performance.now();
+    if (now - lastPetThrowAt < 100) return;
+    const anchor = stageAnchorWindow;
+    const rig = interactionRig;
+    if (!anchor || anchor.isDestroyed() || !rig) return;
+    lastPetThrowAt = now;
+    const petCenterX = rig.petBoundsScreen.x + rig.petBoundsScreen.width / 2;
+    const reactionCenterX = rig.reactionBoundsScreen.x + rig.reactionBoundsScreen.width / 2;
+    anchor.webContents.send("openpets:brainpet-throw", { stimulusId, direction: reactionCenterX < petCenterX ? "left" : "right" });
+  });
+  ipcMain.on(RIG_DRAG_START_CHANNEL, (event, point: unknown) => {
+    if (!isStageSender(event) || !isBrainPetRigPointer(point)) return;
+    beginRigDrag("stage", point);
+  });
+  ipcMain.on(RIG_DRAG_MOVE_CHANNEL, (event, point: unknown) => {
+    if (!isStageSender(event) || !isBrainPetRigPointer(point)) return;
+    moveStageRigDrag(point);
+  });
+  ipcMain.on(RIG_DRAG_END_CHANNEL, (event) => {
+    if (!isStageSender(event)) return;
+    endRigDrag("stage");
   });
   ipcMain.on(STAGE_EVENT_CHANNEL, (event, value: unknown) => {
     if (!isStageSender(event)) return;
@@ -270,8 +372,12 @@ function installBrainPetIpc(): void {
     }
     try {
       runtime = transition(parsed);
+      if (parsed.type === "settled") issuedSession = null;
       if (parsed.type === "session-finished") {
-        const appended = appendBrainPetResult(persistedState, parsed.result);
+        const previousHigh = persistedState.highScores[parsed.result.taskId] ?? 0;
+        const result = { ...parsed.result, petEvents: [...parsed.result.petEvents, ...(parsed.result.score > previousHigh ? ["new-best" as const] : [])] };
+        runtime = { ...runtime, lastResult: result };
+        const appended = appendBrainPetResult(persistedState, result);
         persistedState = appended.state;
         if (appended.outcome && stageWindow && !stageWindow.isDestroyed()) {
           stageWindow.webContents.send(STAGE_HOST_EVENT_CHANNEL, {
@@ -285,7 +391,7 @@ function installBrainPetIpc(): void {
             tone: appended.outcome.isNewLevelBest ? "new-best" : persistedState.dailyCompletion.count >= 2 ? "streak" : "clear",
           });
         }
-        applyExternalPetReaction(parsed.result.petEvents.includes("new-best") || parsed.result.petEvents.includes("stable") ? "celebrating" : "success");
+        applyExternalPetReaction(result.petEvents.includes("new-best") || result.petEvents.includes("stable") ? "celebrating" : "success", { showMessage: false });
         if (statePath) {
           const snapshot = persistedState;
           stateSaveChain = stateSaveChain
@@ -304,19 +410,25 @@ function parseRuntimeEvent(value: unknown): BrainPetRuntimeEvent | null {
   if (!isRecord(value) || typeof value.type !== "string") return null;
   const atMs = performance.now();
   if (value.type === "pause-requested" || value.type === "resume-requested" || value.type === "settled") return { type: value.type, atMs };
-  if (value.type === "session-started" && isSession(value.session)) return { type: value.type, atMs, session: value.session };
-  if (value.type === "session-finished" && isResult(value.result)) return { type: value.type, atMs, result: value.result };
+  if (value.type === "session-started" && isIssuedSession(value.session)) return { type: value.type, atMs, session: issuedSession! };
+  if (value.type === "session-finished") {
+    const result = parseResult(value.result);
+    if (result) return { type: value.type, atMs, result };
+  }
   return null;
 }
 
-function isSession(value: unknown): value is BrainPetTaskSessionConfig {
-  if (!isRecord(value) || !isTaskId(value.taskId)) return false;
-  const manifest = getBrainPetTaskManifest(value.taskId);
-  return Number.isInteger(value.seed) && value.durationMs === manifest.durationMs && Number.isInteger(value.level) && (value.level as number) >= 1 && (value.level as number) <= manifest.difficulty.maxLevel && value.difficultyPolicyVersion === manifest.difficulty.policyVersion && value.parameterVersion === manifest.difficulty.parameterVersion && value.blockCount === manifest.difficulty.blockCount && isParameterVector(value.parameters) && parameterVectorsEqual(value.parameters, getBrainPetDifficultyParameters(value.taskId, value.level as number));
+function isIssuedSession(value: unknown): value is BrainPetTaskSessionConfig {
+  return matchesIssuedBrainPetSession(issuedSession, value);
 }
 
-function isResult(value: unknown): value is BrainPetTaskResult {
-  if (!isRecord(value) || !isTaskId(value.taskId)) return false;
+function parseResult(value: unknown): BrainPetTaskResult | null {
+  if (!isRecord(value) || !isRegisteredBrainPetTaskId(value.taskId) || !issuedSession || value.taskId !== issuedSession.taskId || value.seed !== issuedSession.seed || value.level !== issuedSession.level) {
+    warn("brainpet.host", "stage result rejected", { reason: "session-ownership" });
+    return null;
+  }
+  const definition = getBrainPetTaskDefinition(value.taskId);
+  const manifest = definition.manifest;
   if (!(Number.isInteger(value.seed)
     && Number.isFinite(value.score)
     && Number.isInteger(value.correct)
@@ -333,28 +445,32 @@ function isResult(value: unknown): value is BrainPetTaskResult {
     && typeof value.parameterVersion === "string"
     && isParameterVector(value.parameters)
     && value.blockCount === 3
-    && value.scoreVersion === "brainpet-score-v1"
+    && value.scoreVersion === manifest.scoring.version
     && Number.isInteger(value.level)
     && Number.isInteger(value.falseAlarms)
     && (value.meanReactionTimeMs === null || Number.isFinite(value.meanReactionTimeMs))
     && Array.isArray(value.trials) && value.trials.length <= 256 && value.trials.every(isTrial)
     && isResultQuality(value.quality)
-    && Array.isArray(value.petEvents) && value.petEvents.every((item) => item === "complete" || item === "stable" || item === "new-best"))) return false;
-  const manifest = getBrainPetTaskManifest(value.taskId);
-  if (value.taskVersion !== manifest.taskVersion || value.assetVersion !== manifest.assetVersion || value.parameterVersion !== manifest.difficulty.parameterVersion || !parameterVectorsEqual(value.parameters as Record<string, number | string | boolean>, getBrainPetDifficultyParameters(value.taskId, value.level as number))) return false;
-  const trials = value.trials as BrainPetTaskResult["trials"];
-  const correct = trials.filter((trial) => isRecord(trial) && trial.correct === true).length;
-  const incorrect = trials.filter((trial) => isRecord(trial) && trial.correct === false && trial.inputType !== "none").length;
-  const missed = trials.filter((trial) => isRecord(trial) && trial.correct === false && trial.inputType === "none").length;
-  const falseAlarms = trials.filter((trial) => trial.stimulusKind === "no-go" && trial.correct === false && trial.inputType !== "none").length;
-  const reactionTimes = trials.flatMap((trial) => trial.reactionTimeMs === null ? [] : [trial.reactionTimeMs]);
-  const meanReactionTimeMs = reactionTimes.length === 0 ? null : Math.round(reactionTimes.reduce((total, item) => total + item, 0) / reactionTimes.length);
-  return value.correct === correct
-    && value.incorrect === incorrect
-    && value.missed === missed
-    && value.falseAlarms === falseAlarms
-    && value.meanReactionTimeMs === meanReactionTimeMs
-    && value.score === computeDeclaredScore(manifest, trials);
+    && Array.isArray(value.petEvents) && value.petEvents.every((item) => item === "complete" || item === "stable" || item === "new-best"))) {
+    warn("brainpet.host", "stage result rejected", { reason: "structural-contract", taskId: value.taskId, trialCount: Array.isArray(value.trials) ? value.trials.length : null });
+    return null;
+  }
+  if (value.taskVersion !== manifest.taskVersion || value.assetVersion !== manifest.assetVersion || value.parameterVersion !== manifest.difficulty.parameterVersion || !parameterVectorsEqual(value.parameters as Record<string, number | string | boolean>, issuedSession.parameters)) {
+    warn("brainpet.host", "stage result rejected", { reason: "version-or-parameters", taskId: value.taskId });
+    return null;
+  }
+  const expectedKinds = definition.trialKindsForSession?.(issuedSession.seed, issuedSession.parameters);
+  if (expectedKinds) {
+    const trials = value.trials as Array<Record<string, unknown>>;
+    const mismatchIndex = expectedKinds.findIndex((kind, index) => trials[index]?.stimulusKind !== kind);
+    if (expectedKinds.length !== trials.length || mismatchIndex >= 0) {
+      warn("brainpet.host", "stage result rejected", { reason: "trial-sequence", taskId: value.taskId, expectedCount: expectedKinds.length, actualCount: trials.length, mismatchIndex });
+      return null;
+    }
+  }
+  const result = canonicalizeBrainPetTaskResult(manifest, value as unknown as BrainPetTaskResult, definition.expectedInputForTrial);
+  if (!result) warn("brainpet.host", "stage result rejected", { reason: "trial-evaluator", taskId: value.taskId });
+  return result;
 }
 
 function isTrial(value: unknown): boolean {
@@ -373,45 +489,216 @@ function isTrial(value: unknown): boolean {
 function isResultQuality(value: unknown): boolean {
   return isRecord(value)
     && typeof value.valid === "boolean"
-    && Number.isInteger(value.focusLossCount)
-    && Number.isFinite(value.pausedMs)
-    && Number.isInteger(value.droppedFrameCount)
-    && Number.isInteger(value.longFrameCount)
-    && Number.isFinite(value.maxFrameMs)
+    && Number.isInteger(value.focusLossCount) && (value.focusLossCount as number) >= 0
+    && Number.isFinite(value.pausedMs) && (value.pausedMs as number) >= 0
+    && Number.isInteger(value.droppedFrameCount) && (value.droppedFrameCount as number) >= 0
+    && Number.isInteger(value.longFrameCount) && (value.longFrameCount as number) >= 0
+    && Number.isFinite(value.maxFrameMs) && (value.maxFrameMs as number) >= 0
     && Array.isArray(value.flags)
     && value.flags.length <= 16
     && value.flags.every((flag) => typeof flag === "string" && flag.length <= 64);
 }
 
-function computeCurrentStageBounds(): Electron.Rectangle {
-  const petWindow = stageAnchorWindow && !stageAnchorWindow.isDestroyed() ? stageAnchorWindow : getDefaultPetWindowForPlugins();
-  const petBounds = petWindow && !petWindow.isDestroyed() ? petWindow.getBounds() : undefined;
-  const display = petBounds ? screen.getDisplayMatching(petBounds) : screen.getPrimaryDisplay();
-  const fallbackPet = {
-    x: display.workArea.x + display.workArea.width - 160,
-    y: display.workArea.y + display.workArea.height - 160,
-    width: 140,
-    height: 140,
+function createInteractionRig(anchor: BrowserWindow): BrainPetInteractionRigSnapshot {
+  const petBounds = anchor.getBounds();
+  return createBrainPetInteractionRig({
+    rigId: `brainpet-${anchor.id}-${Date.now()}`,
+    petWindowId: anchor.id,
+    petBounds,
+    environment: environmentForBounds(petBounds),
+    atMs: performance.now(),
+  });
+}
+
+function bindStageAnchor(anchor: BrowserWindow): void {
+  if (stageAnchorWindow === anchor && removeStageAnchorListeners) return;
+  unbindStageAnchor();
+  stageAnchorWindow = anchor;
+  setPetWindowPositionLocked(anchor, true);
+  const handleMove = () => scheduleInteractionRigSynchronization();
+  const handleClosed = () => closeBrainPetStage("anchor-closed");
+  anchor.on("move", handleMove);
+  anchor.on("moved", handleMove);
+  anchor.once("closed", handleClosed);
+  removeStageAnchorListeners = () => {
+    anchor.off("move", handleMove);
+    anchor.off("moved", handleMove);
+    anchor.off("closed", handleClosed);
+    setPetWindowPositionLocked(anchor, false);
   };
-  return computeBrainPetStageBounds(petBounds ?? fallbackPet, display.workArea);
 }
 
-function repositionBrainPetStage(): void {
+function unbindStageAnchor(): void {
+  removeStageAnchorListeners?.();
+  removeStageAnchorListeners = null;
+  stageAnchorWindow = null;
+  anchorSyncScheduled = false;
+}
+
+function handlePetDragLifecycle(sourceWindow: BrowserWindow, phase: "start" | "end"): void {
+  if (sourceWindow !== stageAnchorWindow) return;
+  if (phase === "start") beginRigDrag("pet");
+  else endRigDrag("pet");
+}
+
+function beginRigDrag(source: "pet" | "stage", startPointer?: BrainPetRigPointer, settleOnMovement = false): void {
+  if (!interactionRig || rigDragTransaction) return;
+  clearRigSettleTimer();
+  const next = setBrainPetInteractionRigDragging(interactionRig, true, interactionRig.sequence + 1, performance.now());
+  rigDragTransaction = { source, initial: next, settleOnMovement, ...(startPointer ? { startPointer } : {}) };
+  applyInteractionRig(next, false, true);
+  sendRigHostEvent({ type: "rig-drag-start", source, rig: next });
+  debug("brainpet.runtime", "interaction rig drag started", { source, rigId: next.rigId, sequence: next.sequence });
+}
+
+function moveStageRigDrag(point: BrainPetRigPointer): void {
+  const transaction = rigDragTransaction;
+  if (!transaction || transaction.source !== "stage" || !transaction.startPointer) return;
+  const next = translateBrainPetStageInRig(
+    transaction.initial,
+    { x: Math.round(point.screenX - transaction.startPointer.screenX), y: Math.round(point.screenY - transaction.startPointer.screenY) },
+    environmentForPoint(point),
+    { dragging: true, sequence: (interactionRig?.sequence ?? transaction.initial.sequence) + 1, atMs: performance.now() },
+  );
+  applyInteractionRig(next, false);
+}
+
+function endRigDrag(source: "pet" | "stage"): void {
+  const transaction = rigDragTransaction;
+  if (!transaction || transaction.source !== source) return;
+  clearRigSettleTimer();
+  rigSettleTimer = setTimeout(() => {
+    rigSettleTimer = null;
+    synchronizeInteractionRigFromPet(false);
+    if (!interactionRig) return;
+    const next = setBrainPetInteractionRigDragging(interactionRig, false, interactionRig.sequence + 1, performance.now());
+    rigDragTransaction = null;
+    applyInteractionRig(next, false, true);
+    if (stageWindow && !stageWindow.isDestroyed()) stageWindow.focus();
+    sendRigHostEvent({ type: "rig-drag-end", source, rig: next });
+    debug("brainpet.runtime", "interaction rig drag settled", { source, rigId: next.rigId, sequence: next.sequence });
+  }, 150);
+  rigSettleTimer.unref?.();
+}
+
+function synchronizeInteractionRigFromPet(interruptUnexpectedMove = true): void {
+  const anchor = stageAnchorWindow;
+  const before = interactionRig;
+  if (!anchor || anchor.isDestroyed() || !before) return;
+  const petBounds = anchor.getBounds();
+  if (rectanglesEqual(petBounds, before.petBoundsScreen)) return;
+  const startedUnexpectedMove = !rigDragTransaction && interruptUnexpectedMove;
+  if (startedUnexpectedMove) beginRigDrag("pet", undefined, true);
+  const current = interactionRig ?? before;
+  const next = reanchorBrainPetInteractionRig(current, petBounds, environmentForBounds(petBounds), {
+    dragging: Boolean(rigDragTransaction),
+    sequence: current.sequence + 1,
+    atMs: performance.now(),
+  });
+  applyInteractionRig(next, false);
+  if (rigDragTransaction?.source === "pet" && rigDragTransaction.settleOnMovement) endRigDrag("pet");
+}
+
+function scheduleInteractionRigSynchronization(): void {
+  if (applyingRigBounds || anchorSyncScheduled) return;
+  anchorSyncScheduled = true;
+  setTimeout(() => {
+    anchorSyncScheduled = false;
+    synchronizeInteractionRigFromPet();
+  }, 0).unref?.();
+}
+
+function reflowInteractionRig(reason: "display-change" | "resume"): void {
+  const anchor = stageAnchorWindow;
+  const before = interactionRig;
+  if (!anchor || anchor.isDestroyed() || !before) return;
+  sendRigHostEvent({ type: "rig-invalidated", reason, rig: before });
+  clearRigSettleTimer();
+  rigDragTransaction = null;
+  beginRigDrag("pet", undefined, true);
+  const current = interactionRig ?? before;
+  const petBounds = anchor.getBounds();
+  const next = reflowBrainPetInteractionRig(current, petBounds, environmentForBounds(petBounds), {
+    dragging: true,
+    sequence: current.sequence + 1,
+    atMs: performance.now(),
+  });
+  applyInteractionRig(next, true, true);
+  endRigDrag("pet");
+}
+
+function applyInteractionRig(next: BrainPetInteractionRigSnapshot, movePet: boolean, flushGeometry = false): void {
+  interactionRig = next;
+  const anchor = stageAnchorWindow;
   const window = stageWindow;
-  if (!window || window.isDestroyed()) return;
-  const next = computeCurrentStageBounds();
-  const current = window.getContentBounds();
-  if (current.x === next.x && current.y === next.y && current.width === next.width && current.height === next.height) return;
-  window.setContentBounds(next, false);
+  applyingRigBounds = true;
+  try {
+    if (movePet && anchor && !anchor.isDestroyed() && !rectanglesEqual(anchor.getBounds(), next.petBoundsScreen)) {
+      anchor.setBounds(next.petBoundsScreen, false);
+    }
+    if (window && !window.isDestroyed() && !rectanglesEqual(window.getContentBounds(), next.overlayBoundsScreen)) {
+      window.setContentBounds(next.overlayBoundsScreen, false);
+    }
+  } finally {
+    applyingRigBounds = false;
+  }
+  scheduleRigGeometryEvent(flushGeometry);
 }
 
-function scheduleReposition(): void {
-  setTimeout(repositionBrainPetStage, 0).unref?.();
+function scheduleRigGeometryEvent(flush = false): void {
+  if (flush) {
+    clearRigGeometryTimer();
+    emitRigGeometry();
+    return;
+  }
+  if (rigGeometryTimer) return;
+  rigGeometryTimer = setTimeout(() => {
+    rigGeometryTimer = null;
+    emitRigGeometry();
+  }, 34);
+  rigGeometryTimer.unref?.();
+}
+
+function emitRigGeometry(): void {
+  if (!interactionRig) return;
+  sendRigHostEvent({ type: "rig-geometry-changed", rig: interactionRig });
+}
+
+function sendRigHostEvent(event: Record<string, unknown>): void {
+  const window = stageWindow;
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
+  window.webContents.send(STAGE_HOST_EVENT_CHANNEL, event);
+}
+
+function environmentForBounds(bounds: Electron.Rectangle): BrainPetRigEnvironment {
+  const display = screen.getDisplayMatching(bounds);
+  return { displayId: String(display.id), scaleFactor: display.scaleFactor, workArea: display.workArea };
+}
+
+function environmentForPoint(point: BrainPetRigPointer): BrainPetRigEnvironment {
+  const display = screen.getDisplayNearestPoint({ x: Math.round(point.screenX), y: Math.round(point.screenY) });
+  return { displayId: String(display.id), scaleFactor: display.scaleFactor, workArea: display.workArea };
+}
+
+function rectanglesEqual(left: Electron.Rectangle, right: Electron.Rectangle): boolean {
+  return left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height;
+}
+
+function clearRigSettleTimer(): void {
+  if (!rigSettleTimer) return;
+  clearTimeout(rigSettleTimer);
+  rigSettleTimer = null;
+}
+
+function clearRigGeometryTimer(): void {
+  if (!rigGeometryTimer) return;
+  clearTimeout(rigGeometryTimer);
+  rigGeometryTimer = null;
 }
 
 function startRepositionTimer(): void {
   stopRepositionTimer();
-  repositionTimer = setInterval(repositionBrainPetStage, 1_000);
+  repositionTimer = setInterval(() => synchronizeInteractionRigFromPet(false), 1_000);
   repositionTimer.unref?.();
 }
 
@@ -421,6 +708,32 @@ function stopRepositionTimer(): void {
   repositionTimer = null;
 }
 
+function startStageHitTestTimer(): void {
+  stopStageHitTestTimer();
+  refreshStageMouseInteractivity();
+  stageHitTestTimer = setInterval(refreshStageMouseInteractivity, 25);
+  stageHitTestTimer.unref?.();
+}
+
+function stopStageHitTestTimer(): void {
+  if (stageHitTestTimer) clearInterval(stageHitTestTimer);
+  stageHitTestTimer = null;
+  rendererRequestedInteractive = false;
+  stageMouseInteractive = null;
+}
+
+function refreshStageMouseInteractivity(): void {
+  const window = stageWindow;
+  const rig = interactionRig;
+  if (!window || window.isDestroyed() || !rig) return;
+  const cursor = screen.getCursorScreenPoint();
+  const stageInteractive = isBrainPetPointInsideRectangle(cursor, rig.stageBoundsScreen, 3);
+  const interactive = rendererRequestedInteractive || stageInteractive;
+  if (stageMouseInteractive === interactive) return;
+  stageMouseInteractive = interactive;
+  window.setIgnoreMouseEvents(!interactive, { forward: true });
+}
+
 function transition(event: BrainPetRuntimeEvent): BrainPetRuntimeSnapshot {
   const next = reduceBrainPetRuntime(runtime, event);
   debug("brainpet.runtime", "transition", { from: runtime.phase, to: next.phase, event: event.type });
@@ -428,7 +741,7 @@ function transition(event: BrainPetRuntimeEvent): BrainPetRuntimeSnapshot {
 }
 
 function isBrainPetEnabled(): boolean {
-  return process.env.OPENPETS_BRAINPET_ENABLED !== "0";
+  return isBrainPetFeatureEnabled(resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath)), process.env.OPENPETS_BRAINPET_ENABLED);
 }
 
 function getStageMode(): "stage-exerciser" | "training" {
@@ -437,13 +750,14 @@ function getStageMode(): "stage-exerciser" | "training" {
 
 function getAvailableTasks(): readonly BrainPetTaskResult["taskId"][] {
   const forced = process.env.OPENPETS_BRAINPET_FORCE_TASK;
-  if (isPlayableBrainPetTaskId(forced)) return [forced];
+  if (isPlayableBrainPetTaskId(forced) || getStageMode() === "stage-exerciser" && isRegisteredBrainPetTaskId(forced)) return [forced];
   return listPlayableBrainPetTaskIds();
 }
 
 function createNextSession(seed: number): BrainPetTaskSessionConfig {
   if (getStageMode() === "stage-exerciser") {
-    const manifest = getBrainPetTaskManifest("stage-exerciser");
+    const forced = process.env.OPENPETS_BRAINPET_FORCE_TASK;
+    const manifest = getBrainPetTaskManifest(isRegisteredBrainPetTaskId(forced) ? forced : "stage-exerciser");
     return createSessionConfig(manifest.id, seed, 1);
   }
   const available = getAvailableTasks().filter(isPlayableBrainPetTaskId);

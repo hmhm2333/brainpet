@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, Menu, screen, type IpcMainEvent } from "electron";
 import { readFileSync } from "node:fs";
 import { mkdir, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { getAppStateSnapshot, markPetBroken, type PetScaleValue } from "./app-state.js";
@@ -20,7 +20,7 @@ import { isFocusActionAvailable } from "./capabilities.js";
 import { canForwardMouseEvents as platformCanForwardMouseEvents, shouldWatchForwardedMouseEvents } from "./mouse-forwarding.js";
 import { computeEffectiveWaylandBackend, shouldPetWindowBeFocusable } from "./wayland-backend.js";
 import { createIdleSpriteKeyframes } from "./pet-animation-timing.js";
-import { resolveDesktopDistributionSettings } from "./distribution-profile.js";
+import { isBrainPetFeatureEnabled, resolveDesktopDistributionSettings } from "./distribution-profile.js";
 
 export interface PetWindowInteractionHooks {
   readonly onBubbleDismissed?: (dismissToken: string) => void;
@@ -101,10 +101,25 @@ const windowLoadSequences = new WeakMap<BrowserWindow, number>();
 const petWindowFocusPolicy = new WeakMap<BrowserWindow, boolean>();
 const petMouseInteropRecovery = new WeakMap<BrowserWindow, (reason: string) => void>();
 const petWindowDragging = new WeakMap<BrowserWindow, boolean>();
+const petWindowPositionLocks = new WeakSet<BrowserWindow>();
 let brainPetTrainingRequestHandler: ((sourceWindow: BrowserWindow) => void) | null = null;
+let brainPetDragLifecycleHandler: ((sourceWindow: BrowserWindow, phase: "start" | "end") => void) | null = null;
 
 export function setBrainPetTrainingRequestHandler(handler: ((sourceWindow: BrowserWindow) => void) | null): void {
   brainPetTrainingRequestHandler = handler;
+}
+
+export function setBrainPetDragLifecycleHandler(handler: ((sourceWindow: BrowserWindow, phase: "start" | "end") => void) | null): void {
+  brainPetDragLifecycleHandler = handler;
+}
+
+export function setPetWindowPositionLocked(window: BrowserWindow, locked: boolean): void {
+  if (locked) petWindowPositionLocks.add(window);
+  else petWindowPositionLocks.delete(window);
+}
+
+export function isPetWindowPositionLocked(window: BrowserWindow): boolean {
+  return petWindowPositionLocks.has(window);
 }
 
 /**
@@ -345,7 +360,10 @@ function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowI
 
   const scheduleMouseInteropRecovery = (reason: string): void => {
     if (window.isDestroyed()) return;
+    const wasDragging = dragging !== null;
     dragging = null;
+    petWindowDragging.set(window, false);
+    if (wasDragging) brainPetDragLifecycleHandler?.(window, "end");
     rendererReady = false;
     lastInteractive = false;
     clearRearmTimers();
@@ -507,6 +525,7 @@ function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowI
     clearForwardingWatch();
     setPassthrough(false);
     onPetEvent?.("pet:dragStart", {});
+    brainPetDragLifecycleHandler?.(window, "start");
   };
 
   const handleDragMove = (event: IpcMainEvent, point: unknown): void => {
@@ -530,7 +549,10 @@ function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowI
     dragging = null;
     petWindowDragging.set(window, false);
     debug("pet.window", "drag end", { windowId, position: window.isDestroyed() ? null : readWindowPosition(window) });
-    if (wasDragging) onPetEvent?.("pet:dragEnd", {});
+    if (wasDragging) {
+      onPetEvent?.("pet:dragEnd", {});
+      brainPetDragLifecycleHandler?.(window, "end");
+    }
   };
 
   const handleBubbleDismissed = (event: IpcMainEvent, dismissToken: unknown): void => {
@@ -568,8 +590,10 @@ function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowI
   };
 
   const resetForNavigation = (): void => {
+    const wasDragging = dragging !== null;
     dragging = null;
     petWindowDragging.set(window, false);
+    if (wasDragging) brainPetDragLifecycleHandler?.(window, "end");
     rendererReady = false;
     lastInteractive = false;
     clearRearmTimers();
@@ -578,8 +602,10 @@ function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowI
   };
 
   const rearmAfterLoad = (): void => {
+    const wasDragging = dragging !== null;
     dragging = null;
     petWindowDragging.set(window, false);
+    if (wasDragging) brainPetDragLifecycleHandler?.(window, "end");
     lastInteractive = false;
     debug("pet.window", "load rearm passthrough", { windowId });
     rearmPassthroughAfterLoad();
@@ -590,7 +616,10 @@ function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowI
   };
 
   const handleLoadFailure = (): void => {
+    const wasDragging = dragging !== null;
     dragging = null;
+    petWindowDragging.set(window, false);
+    if (wasDragging) brainPetDragLifecycleHandler?.(window, "end");
     lastInteractive = false;
     debug("pet.window", "load failure rearm passthrough", { windowId });
     setPassthrough(true);
@@ -612,6 +641,7 @@ function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowI
     clearForwardingWatch();
     petMouseInteropRecovery.delete(window);
     petWindowDragging.delete(window);
+    petWindowPositionLocks.delete(window);
     if (!webContents.isDestroyed()) {
       webContents.off("did-start-navigation", resetForNavigation);
       webContents.off("did-start-loading", resetForNavigation);
@@ -908,7 +938,11 @@ export function readWindowPosition(window: BrowserWindow): Point {
 
 function usesNativePetWindowShape(): boolean {
   return process.platform === "linux"
-    || process.platform === "win32" && resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE).profile === "brainpet";
+    || process.platform === "win32" && isBrainPetFeatureEnabled(resolveCurrentDistribution(), process.env.OPENPETS_BRAINPET_ENABLED);
+}
+
+function resolveCurrentDistribution() {
+  return resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath));
 }
 
 function applyNativePetWindowShape(window: BrowserWindow, scale: PetScaleValue, hasBubble: boolean): void {
@@ -1095,9 +1129,9 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
 }
 
 function createPetBodyMarkup(stageLabel: string, bubble: string, spriteMarkup: string, pinnedBubble = "", hasPinned = false): string {
-  const brainPetTrigger = process.env.OPENPETS_BRAINPET_ENABLED === "0"
+  const brainPetTrigger = !isBrainPetFeatureEnabled(resolveCurrentDistribution(), process.env.OPENPETS_BRAINPET_ENABLED)
     ? ""
-    : `<button class="brainpet-trigger" type="button" data-brainpet-trigger aria-label="打开 BrainPet 训练" title="BrainPet 训练"><span aria-hidden="true">B</span></button>`;
+    : `<button class="brainpet-trigger" type="button" data-brainpet-trigger aria-label="打开或关闭 BrainPet 训练" title="训练"><span class="brainpet-gem" aria-hidden="true"></span></button>`;
   return `<div class="stage${hasPinned ? " has-pinned" : ""}" aria-label="${stageLabel}">
     ${pinnedBubble}
     ${bubble}
@@ -1131,19 +1165,25 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
     .stage { width: 100%; height: 100%; position: relative; box-sizing: border-box; overflow: visible; }
     .pet-hitbox { position: absolute; left: 50%; bottom: ${Math.max(0, petBottom - hitPadding)}px; z-index: 1; width: ${scaledWidth + hitPadding * 2}px; height: ${scaledHeight + hitPadding * 2}px; display: grid; place-items: center; transform: translateX(-50%); pointer-events: auto; -webkit-app-region: ${petDragRegion}; cursor: grab; }
     .pet-shell { position: relative; width: ${scaledWidth}px; height: ${scaledHeight}px; display: block; opacity: var(--pet-opacity); filter: ${petShellFilter}; transition-property: opacity, filter; transition-duration: 180ms; transition-timing-function: cubic-bezier(0.2, 0, 0, 1); pointer-events: auto; -webkit-app-region: ${petDragRegion}; cursor: grab; }
-    .brainpet-trigger { position: absolute; left: calc(50% + ${Math.max(18, Math.round(scaledWidth / 2) - 18)}px); bottom: ${Math.max(0, petBottom - 2)}px; z-index: 6; width: 30px; height: 30px; padding: 0; border: 3px solid #17243b; border-radius: 4px; background: #f5bd3d; color: #17243b; box-shadow: inset -3px -3px 0 #d9952f, 3px 3px 0 rgba(23,36,59,.28); font: 900 15px/24px ui-monospace, "Cascadia Mono", monospace; text-align: center; pointer-events: auto; -webkit-app-region: no-drag; cursor: pointer; image-rendering: pixelated; }
-    .brainpet-trigger:hover { transform: translateY(-2px); background: #ffe57c; }
-    .brainpet-trigger:active { transform: translate(2px, 2px); box-shadow: inset -2px -2px 0 #d9952f, 1px 1px 0 rgba(23,32,51,.28); }
+    .brainpet-trigger { position: absolute; left: calc(50% + ${Math.max(0, Math.round(scaledWidth / 2) - 36)}px); bottom: ${petBottom + 10}px; z-index: 6; width: 30px; height: 30px; padding: 0; border: 0; background: transparent; box-shadow: none; pointer-events: auto; -webkit-app-region: no-drag; cursor: pointer; image-rendering: pixelated; }
+    .brainpet-gem { display:block; box-sizing:border-box; width:14px; height:14px; margin:8px; border:2px solid #17243b; background:#f5bd3d; box-shadow:inset -3px -3px 0 #d9952f,2px 2px 0 rgba(23,36,59,.3); transform:rotate(45deg); }
+    .brainpet-trigger:hover .brainpet-gem { background:#ffe57c; transform:translateY(-2px) rotate(45deg); }
+    .brainpet-trigger:active .brainpet-gem { transform:translate(2px,2px) rotate(45deg); box-shadow:inset -2px -2px 0 #d9952f; }
     .brainpet-trigger:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
     [data-brainpet-launching="true"] .pet-shell { animation: brainpet-ready 480ms steps(4,end); }
-    [data-brainpet-launching="true"] .brainpet-trigger { animation: brainpet-toss 480ms steps(4,end); pointer-events: none; }
-    [data-brainpet-feedback="clear"] .brainpet-trigger,
-    [data-brainpet-feedback="streak"] .brainpet-trigger,
-    [data-brainpet-feedback="new-best"] .brainpet-trigger { animation: brainpet-clear 1.1s steps(6,end); }
-    [data-brainpet-feedback="streak"] .brainpet-trigger { background:#9fe9ff; }
-    [data-brainpet-feedback="new-best"] .brainpet-trigger { background:#fff7dc; box-shadow:inset -2px -2px 0 #d9952f,0 0 0 4px #f5bd3d,3px 3px 0 rgba(23,32,51,.28); }
+    [data-brainpet-launching="true"] .brainpet-trigger { pointer-events: none; }
+    [data-brainpet-launching="true"] .brainpet-gem { animation: brainpet-gem-ready 480ms steps(4,end); }
+    [data-brainpet-throw="right"] .pet-shell { animation: brainpet-throw-right 280ms steps(4,end); transform-origin: 58% 72%; }
+    [data-brainpet-throw="left"] .pet-shell { animation: brainpet-throw-left 280ms steps(4,end); transform-origin: 42% 72%; }
+    [data-brainpet-feedback="clear"] .brainpet-gem,
+    [data-brainpet-feedback="streak"] .brainpet-gem,
+    [data-brainpet-feedback="new-best"] .brainpet-gem { animation: brainpet-clear 1.1s steps(6,end); }
+    [data-brainpet-feedback="streak"] .brainpet-gem { background:#9fe9ff; }
+    [data-brainpet-feedback="new-best"] .brainpet-gem { background:#fff7dc; box-shadow:inset -2px -2px 0 #d9952f,0 0 0 3px #f5bd3d,2px 2px 0 rgba(23,32,51,.28); }
     @keyframes brainpet-ready { 25%{transform:translateY(-5px) rotate(-2deg)} 55%{transform:translateY(2px) rotate(2deg)} 100%{transform:none} }
-    @keyframes brainpet-toss { 30%{transform:translate(-4px,-9px) rotate(-15deg)} 65%{transform:translate(8px,-16px) rotate(18deg)} 100%{transform:none} }
+    @keyframes brainpet-gem-ready { 30%{transform:translateY(-2px) rotate(45deg) scale(1.15)} 65%{transform:rotate(45deg) scale(.9)} 100%{transform:rotate(45deg)} }
+    @keyframes brainpet-throw-right { 25%{transform:translate(-3px,1px) rotate(-4deg) scale(.98)} 58%{transform:translate(7px,-4px) rotate(7deg) scale(1.02)} 100%{transform:none} }
+    @keyframes brainpet-throw-left { 25%{transform:translate(3px,1px) rotate(4deg) scale(.98)} 58%{transform:translate(-7px,-4px) rotate(-7deg) scale(1.02)} 100%{transform:none} }
     @keyframes brainpet-clear { 20%{transform:translateY(-9px) rotate(-8deg)} 45%{transform:translateY(1px) rotate(8deg)} 70%{transform:translateY(-5px) rotate(-4deg)} 100%{transform:none} }
     .bubble { position: absolute; left: 50%; bottom: ${bubbleBottom}px; z-index: 4; box-sizing: border-box; display: inline-flex; flex-direction: column; width: fit-content; min-width: 92px; max-width: min(220px, calc(100vw - 18px)); max-height: 128px; padding: 10px 12px; background: linear-gradient(135deg, rgba(239, 246, 255, 0.97), rgba(237, 233, 254, 0.96)); color: #172033; font: 760 11px/14px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-align: left; border: 1px solid rgba(255, 255, 255, 0.78); border-radius: 14px; box-shadow: 0 12px 24px rgba(15, 23, 42, 0.16), 0 2px 5px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.82); white-space: normal; overflow-wrap: break-word; word-break: normal; overflow: visible; pointer-events: auto; -webkit-app-region: no-drag; opacity: 1; backdrop-filter: ${bubbleBackdropFilter}; transform: translateX(-50%); transform-origin: 64% 100%; animation: bubble-in 180ms cubic-bezier(0.2, 0, 0, 1); }
     .bubble[data-dismiss-token] { cursor: pointer; }

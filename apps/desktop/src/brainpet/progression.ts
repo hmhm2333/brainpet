@@ -24,9 +24,11 @@ export function createTaskProgress(manifest: BrainPetTaskManifest): BrainPetTask
 export function evaluateBrainPetResult(result: BrainPetTaskResult, manifest: BrainPetTaskManifest, progress: BrainPetTaskProgress): BrainPetProgressionOutcome {
   const decisions = result.correct + result.incorrect + result.missed;
   const accuracy = decisions === 0 ? 0 : result.correct / decisions;
+  const correctInhibitions = result.trials.filter((trial) => trial.stimulusKind === "no-go" && trial.correct).length;
   const passed = result.quality.valid
     && result.correct >= manifest.difficulty.minimumCorrect
-    && accuracy >= manifest.difficulty.passAccuracy;
+    && accuracy >= manifest.difficulty.passAccuracy
+    && (manifest.difficulty.minimumCorrectInhibitions === undefined || correctInhibitions >= manifest.difficulty.minimumCorrectInhibitions);
   const previousBest = progress.highScoresByLevel[String(result.level)] ?? 0;
   return {
     passed,

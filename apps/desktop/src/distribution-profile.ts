@@ -5,6 +5,7 @@ export interface DesktopDistributionSettings {
   readonly displayName: "OpenPets" | "BrainPet";
   readonly appUserModelId: "dev.openpets.app" | "dev.brainpet.app";
   readonly seedBundledPlugins: boolean;
+  readonly brainPetEnabled: boolean;
 }
 
 export function resolveDesktopDistributionSettings(appName: string, override?: string, executableName?: string): DesktopDistributionSettings {
@@ -21,8 +22,14 @@ export function resolveDesktopDistributionSettings(appName: string, override?: s
         : "openpets";
 
   return profile === "brainpet"
-    ? { profile, displayName: "BrainPet", appUserModelId: "dev.brainpet.app", seedBundledPlugins: false }
-    : { profile, displayName: "OpenPets", appUserModelId: "dev.openpets.app", seedBundledPlugins: true };
+    ? { profile, displayName: "BrainPet", appUserModelId: "dev.brainpet.app", seedBundledPlugins: false, brainPetEnabled: true }
+    : { profile, displayName: "OpenPets", appUserModelId: "dev.openpets.app", seedBundledPlugins: true, brainPetEnabled: false };
+}
+
+export function isBrainPetFeatureEnabled(settings: DesktopDistributionSettings, override?: string): boolean {
+  if (override === "1") return true;
+  if (override === "0") return false;
+  return settings.brainPetEnabled;
 }
 
 export function shouldUseIsolatedBrainPetUserData(profile: DesktopDistributionProfile, argv: readonly string[]): boolean {

@@ -1,0 +1,17 @@
+Fusion Pixel Font 12px Proportional SC
+
+Copyright (c) 2022, TakWolf (https://takwolf.com)
+Reserved Font Name: Fusion Pixel
+Upstream: https://github.com/TakWolf/fusion-pixel-font
+
+This unmodified WOFF2 was packaged from:
+@fontsource/fusion-pixel-12px-proportional-sc 5.3.0
+Fontsource metadata upstream version: 2024.05.12
+Fontsource tarball integrity (SHA-512):
+3c381f0ae9d96d580f339fc749a3f6f4a8d06b12d4b1502783ababa52417c30f3b7bd00e7c0ee3fcf0f35983bf43cca13f26b0ea8506879b36786967d474a03f
+Embedded WOFF2 SHA-256:
+043eae5e616b0d1e75dc746d3d687b4413f9f1c70c1a09bc4ebb705ef1cc8e32
+
+The font is licensed under the SIL Open Font License 1.1. The complete
+copyright notice and license are distributed alongside this file as:
+FusionPixelFont.OFL-1.1.txt

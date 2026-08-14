@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { isBrainPetAgentCompletion, parseBrainPetAgentActivity } from "../src/brainpet/agent-activity-policy.js";
@@ -23,7 +24,8 @@ test("BrainPet completion policy ignores progress and failure reactions", () => 
 });
 
 test("Host observes completion without routing it through close or pause", () => {
-  const host = readFileSync(resolve("src/brainpet/host.ts"), "utf8");
+  const desktopRoot = process.env.OPENPETS_DESKTOP_ROOT ?? fileURLToPath(new URL("../..", import.meta.url));
+  const host = readFileSync(resolve(desktopRoot, "src/brainpet/host.ts"), "utf8");
   assert.match(host, /subscribePluginEvent\("agent:activity", handleAgentActivity\)/);
   const handler = host.slice(host.indexOf("function handleAgentActivity"), host.indexOf("export function getBrainPetRuntimeSnapshot"));
   assert.match(handler, /agent-completed/);

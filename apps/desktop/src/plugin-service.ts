@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, promises as fs } from "node:fs";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { getCatalogPlugin, getPluginCatalog, type PluginCatalogOptions } from "./plugin-catalog.js";
 import type { PluginCatalogEntryV2 } from "./plugin-catalog-validation.js";
@@ -778,7 +778,8 @@ function isStringSubset(next: readonly string[], approved: readonly string[]): b
 }
 
 function isUnderPath(child: string, parent: string): boolean {
-  return child === parent || child.startsWith(`${parent}/`);
+  const path = relative(resolve(parent), resolve(child));
+  return path === "" || (!path.startsWith("..") && !isAbsolute(path));
 }
 
 function isMissingPluginInstall(error: unknown): boolean {

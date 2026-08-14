@@ -27,6 +27,7 @@ const args = [
   electronBuilderCli,
   "--win",
   "portable",
+  "--config.appId=dev.brainpet.app",
   "--config.productName=BrainPet",
   "--config.executableName=brainpet",
   "--config.artifactName=BrainPet-${version}-${os}-${arch}.${ext}",

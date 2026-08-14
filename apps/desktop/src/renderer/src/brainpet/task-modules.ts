@@ -1,5 +1,6 @@
-import type { BrainPetTaskId, BrainPetTaskInput, BrainPetTaskManifest, BrainPetTaskResult, BrainPetTrialRecord } from "../../../brainpet/task-contract.js";
-import { getBrainPetDifficultyParameters, getBrainPetTaskManifest } from "../../../brainpet/task-registry.js";
+import { computeBrainPetTrialScore, type BrainPetTaskId, type BrainPetTaskInput, type BrainPetTaskManifest, type BrainPetTaskResult, type BrainPetTrialRecord } from "../../../brainpet/task-contract.js";
+import { createCargoSignalTrialPlan, getBrainPetDifficultyParameters, getBrainPetTaskManifest, type CargoSignalTrialPlanItem } from "../../../brainpet/task-registry.js";
+import { validateStageScene, type StageScene } from "./stage-services.js";
 
 export interface BrainPetTaskFrame {
   readonly eyebrow: string;
@@ -11,10 +12,12 @@ export interface BrainPetTaskFrame {
   readonly choices?: readonly string[];
   readonly feedback?: "correct" | "incorrect" | "neutral";
   readonly feedbackText?: string;
+  readonly feedbackScore?: number;
   readonly primarySurface?: boolean;
   readonly combo?: number;
   readonly progress: number;
   readonly score: number;
+  readonly scene?: StageScene;
 }
 
 export interface BrainPetTaskModule {
@@ -24,17 +27,24 @@ export interface BrainPetTaskModule {
   start(seed: number, level: number, nowMs: number, parameters?: Readonly<Record<string, number | string | boolean>>): void;
   input(input: BrainPetTaskInput): void;
   tick(nowMs: number): void;
+  restartActiveTrial(nowMs: number): boolean;
   result(nowMs: number): BrainPetTaskResult;
 }
 
-const CARGO_SYMBOLS = ["◆", "●", "▲", "■", "✦", "⬟"] as const;
 const PACK_SYMBOLS = ["⚙", "✦", "◆", "●", "▲", "■", "★", "⬢", "✚", "◇"] as const;
 
 export function createTaskModule(taskId: BrainPetTaskId): BrainPetTaskModule {
-  if (taskId === "cargo-signal") return new CargoSignalTask();
-  if (taskId === "pack-refresh") return new PackRefreshTask();
-  return new StageExerciserTask();
+  const factory = TASK_MODULE_FACTORIES.get(taskId);
+  if (!factory) throw new Error(`No BrainPet renderer module registered for ${taskId}.`);
+  return factory();
 }
+
+const TASK_MODULE_FACTORIES = new Map<string, () => BrainPetTaskModule>([
+  ["cargo-signal", () => new CargoSignalTask()],
+  ["pack-refresh", () => new PackRefreshTask()],
+  ["stage-exerciser", () => new StageExerciserTask()],
+  ["foundation-probe", () => new FoundationProbeTask()],
+]);
 
 abstract class BaseTask implements BrainPetTaskModule {
   abstract readonly manifest: BrainPetTaskManifest;
@@ -76,6 +86,10 @@ abstract class BaseTask implements BrainPetTaskModule {
   abstract tick(nowMs: number): void;
   protected abstract onStart(nowMs: number): void;
 
+  restartActiveTrial(_nowMs: number): boolean {
+    return false;
+  }
+
   result(nowMs: number): BrainPetTaskResult {
     return {
       taskId: this.manifest.id,
@@ -84,7 +98,7 @@ abstract class BaseTask implements BrainPetTaskModule {
       correct: this.correct,
       incorrect: this.incorrect,
       missed: this.missed,
-      durationMs: Math.min(this.manifest.durationMs, Math.max(0, nowMs - this.startedAt)),
+      durationMs: Math.round(Math.min(this.manifest.durationMs, Math.max(0, nowMs - this.startedAt))),
       startedAt: this.startedAtIso,
       completedAt: new Date().toISOString(),
       completionStatus: "completed",
@@ -94,7 +108,7 @@ abstract class BaseTask implements BrainPetTaskModule {
       parameterVersion: this.manifest.difficulty.parameterVersion,
       parameters: this.parameters,
       blockCount: this.manifest.difficulty.blockCount,
-      scoreVersion: "brainpet-score-v1",
+      scoreVersion: this.manifest.scoring.version,
       level: this.level,
       falseAlarms: this.falseAlarms,
       meanReactionTimeMs: mean(this.trials.flatMap((trial) => trial.reactionTimeMs === null ? [] : [trial.reactionTimeMs])),
@@ -121,125 +135,143 @@ abstract class BaseTask implements BrainPetTaskModule {
 class CargoSignalTask extends BaseTask {
   readonly manifest = getBrainPetTaskManifest("cargo-signal");
   frame: BrainPetTaskFrame = emptyFrame();
-  private isGo = true;
-  private stimulusEndsAt = 0;
-  private nextStimulusAt = 0;
-  private answered = false;
-  private feedbackUntil = 0;
+  private plan: readonly CargoSignalTrialPlanItem[] = [];
+  private trialIndex = 0;
+  private phase: "flight" | "feedback" | "intertrial" = "flight";
+  private phaseStartedAt = 0;
+  private phaseEndsAt = 0;
+  private trialPlannedAt = 0;
   private stimulusCounter = 0;
-  private stimulusPresentedAt = 0;
-  private stimulusPlannedAt = 0;
   private currentStimulusId = "";
-  private anticipationRecorded = false;
 
   protected onStart(nowMs: number): void {
-    this.nextStimulus(nowMs);
+    this.plan = createCargoSignalTrialPlan(this.seed, this.parameters);
+    this.trialIndex = 0;
+    this.startTrial(nowMs);
   }
 
   input(input: BrainPetTaskInput): void {
-    if (input.type !== "primary" || this.finished) return;
-    if (input.atMs > this.stimulusEndsAt) {
-      if (!this.anticipationRecorded && input.atMs < this.nextStimulusAt) {
-        this.anticipationRecorded = true;
-        this.incorrect += 1;
-        this.combo = 0;
-        this.score -= 40;
-        this.trials.push({ stimulusId: `cargo-anticipation-${this.stimulusCounter}`, stimulusKind: "anticipation", blockIndex: this.blockIndex(input.atMs), plannedAtMs: this.nextStimulusAt, presentedAtMs: input.atMs, inputType: "primary", inputAtMs: input.atMs, correct: false, reactionTimeMs: 0 });
-        this.showFeedback(false, "别着急，等货物出现", input.atMs);
-      }
-      return;
-    }
-    if (this.answered) return;
-    this.answered = true;
-    if (this.isGo) this.mark(true, "装箱成功！", input.atMs);
-    else {
-      this.falseAlarms += 1;
-      this.mark(false, "这个要放过", input.atMs);
-    }
-    this.recordTrial(input.type, input.atMs, this.isGo);
+    if (input.type !== "primary" || this.finished || this.phase !== "flight") return;
+    const correct = this.currentTrial.kind === "go";
+    this.finishDecision(this.createTrialRecord("primary", input.atMs, correct), input.atMs);
   }
 
   tick(nowMs: number): void {
     if (this.finished) return;
-    if (this.progress(nowMs) >= 1) {
-      if (!this.answered && this.isGo) {
-        this.missed += 1;
-        this.score -= 40;
-        this.recordTrial("none", null, false);
+    while (!this.finished && nowMs >= this.phaseEndsAt) {
+      const transitionAt = this.phaseEndsAt;
+      if (this.phase === "flight") {
+        const correct = this.currentTrial.kind === "no-go";
+        this.finishDecision(this.createTrialRecord("none", null, correct), transitionAt);
+      } else if (this.phase === "feedback") {
+        if (this.trialIndex >= this.plan.length - 1) {
+          this.finished = true;
+          this.frame = { ...this.frame, progress: 1, feedback: "neutral", feedbackText: undefined, feedbackScore: undefined, scene: this.createScene(transitionAt) };
+        } else this.enterPhase("intertrial", transitionAt, this.currentTrial.itiMs);
+      } else {
+        this.trialIndex += 1;
+        this.startTrial(transitionAt);
       }
-      this.finished = true;
-      this.frame = { ...this.frame, progress: 1 };
-      return;
     }
-    if (nowMs >= this.stimulusEndsAt && !this.answered) {
-      this.answered = true;
-      if (this.isGo) {
-        this.missed += 1;
-        this.score -= 40;
-        this.showFeedback(false, "错过货物", nowMs);
-      } else this.mark(true, "判断漂亮！", nowMs);
-      this.recordTrial("none", null, !this.isGo);
-    }
-    if (nowMs >= this.nextStimulusAt) this.nextStimulus(nowMs, this.nextStimulusAt);
-    this.frame = { ...this.frame, progress: this.progress(nowMs), score: Math.max(0, Math.round(this.score)), feedback: nowMs < this.feedbackUntil ? this.frame.feedback : "neutral", feedbackText: nowMs < this.feedbackUntil ? this.frame.feedbackText : undefined };
+    if (!this.finished && this.phase !== "feedback") this.frame = this.createFrame(nowMs);
   }
 
-  private nextStimulus(nowMs: number, plannedAtMs = nowMs): void {
-    const blockIndex = this.blockIndex(nowMs);
-    this.isGo = this.random() < this.numberParameter("goProbabilityPercent", 72) / 100;
-    this.answered = false;
-    this.anticipationRecorded = false;
-    this.stimulusEndsAt = nowMs + Math.max(500, this.numberParameter("responseWindowMs", 1_050) - (blockIndex - 1) * this.numberParameter("blockStepMs", 70));
-    this.nextStimulusAt = this.stimulusEndsAt + 260;
-    this.stimulusPresentedAt = nowMs;
-    this.stimulusPlannedAt = plannedAtMs;
+  restartActiveTrial(nowMs: number): boolean {
+    if (this.finished || this.phase === "feedback" || this.phase === "intertrial") return false;
+    this.startTrial(nowMs);
+    return true;
+  }
+
+  private get currentTrial(): CargoSignalTrialPlanItem {
+    const trial = this.plan[this.trialIndex];
+    if (!trial) throw new Error("BrainPet cargo trial plan is exhausted.");
+    return trial;
+  }
+
+  private startTrial(nowMs: number): void {
+    this.phase = "flight";
+    this.phaseStartedAt = nowMs;
+    this.phaseEndsAt = nowMs + this.currentTrial.flightMs;
+    this.trialPlannedAt = nowMs;
     this.currentStimulusId = `cargo-${this.stimulusCounter += 1}`;
-    const symbol = pick(this.random, CARGO_SYMBOLS);
-    this.frame = {
-      eyebrow: `第 ${this.level} 关 · 区段 ${blockIndex}/3`,
-      title: this.isGo ? "蓝印货物" : "红印货物",
-      instruction: this.isGo ? "点击 / 空格：装箱" : "不要操作：放过",
-      symbol,
-      tone: this.isGo ? "sky" : "rose",
-      progress: this.progress(nowMs),
-      score: Math.max(0, Math.round(this.score)),
-      feedback: "neutral",
-      primarySurface: true,
-      combo: this.combo,
-    };
+    this.frame = this.createFrame(nowMs);
   }
 
-  private recordTrial(inputType: "primary" | "none", inputAtMs: number | null, correct: boolean): void {
-    this.trials.push({
-      stimulusId: this.currentStimulusId,
-      stimulusKind: this.isGo ? "go" : "no-go",
-      blockIndex: this.blockIndex(this.stimulusPresentedAt),
-      plannedAtMs: this.stimulusPlannedAt,
-      presentedAtMs: this.stimulusPresentedAt,
-      inputType,
-      inputAtMs,
-      correct,
-      reactionTimeMs: inputAtMs === null ? null : Math.max(0, inputAtMs - this.stimulusPresentedAt),
+  private enterPhase(phase: typeof this.phase, nowMs: number, durationMs: number): void {
+    this.phase = phase;
+    this.phaseStartedAt = nowMs;
+    this.phaseEndsAt = nowMs + Math.max(0, durationMs);
+  }
+
+  private createScene(nowMs: number): StageScene {
+    const flightProgress = this.phase === "flight" ? Math.min(1, Math.max(0, (nowMs - this.phaseStartedAt) / Math.max(1, this.currentTrial.flightMs))) : 1;
+    const showCargo = this.phase === "flight";
+    const cargoAsset = cargoAssetId(this.currentTrial.kind, this.currentTrial.cargoVariant);
+    return validateStageScene({
+      id: "cargo-toss",
+      camera: { x: 0, y: 0, zoom: 1 },
+      reactionInput: "primary",
+      layers: [
+        { id: "goal", z: 1, sprites: [{ id: "cargo-dock", assetId: "cargo-dock", x: 50, y: 72, frame: 0, ariaLabel: "补给箱" }] },
+        { id: "cargo", z: 10, sprites: [] },
+      ],
+      particles: [],
+      rigProjectiles: showCargo ? [{ id: this.currentStimulusId, assetId: cargoAsset, progress: flightProgress, arcHeightPx: this.currentTrial.arcHeightPx, curveOffsetPx: this.currentTrial.curveOffsetPx, spinTurns: this.currentTrial.spinTurns, ariaLabel: this.currentTrial.kind === "go" ? "蓝色补给" : "红色故障包" }] : [],
     });
   }
 
-  private mark(correct: boolean, text: string, nowMs: number): void {
-    if (correct) {
-      this.correct += 1;
-      this.score += 100;
-      this.combo += 1;
-    } else {
-      this.incorrect += 1;
-      this.score -= 40;
-      this.combo = 0;
-    }
-    this.showFeedback(correct, text, nowMs);
+  private createTrialRecord(inputType: "primary" | "none", inputAtMs: number | null, correct: boolean): BrainPetTrialRecord {
+    return {
+      stimulusId: this.currentStimulusId,
+      stimulusKind: this.currentTrial.kind,
+      blockIndex: Math.min(3, Math.floor(this.trialIndex / 8) + 1) as 1 | 2 | 3,
+      plannedAtMs: this.trialPlannedAt,
+      presentedAtMs: this.trialPlannedAt,
+      inputType,
+      inputAtMs,
+      correct,
+      reactionTimeMs: inputAtMs === null ? null : Math.max(0, inputAtMs - this.trialPlannedAt),
+    };
   }
 
-  private showFeedback(correct: boolean, text: string, nowMs: number): void {
-    this.feedbackUntil = nowMs + 420;
-    this.frame = { ...this.frame, feedback: correct ? "correct" : "incorrect", feedbackText: text, primarySurface: false };
+  private finishDecision(trial: BrainPetTrialRecord, nowMs: number): void {
+    this.trials.push(trial);
+    const delta = computeBrainPetTrialScore(this.manifest, trial, this.parameters);
+    this.score += delta;
+    const correct = trial.correct;
+    if (correct) {
+      this.correct += 1;
+      this.combo += 1;
+    } else {
+      if (trial.inputType === "none") this.missed += 1;
+      else this.incorrect += 1;
+      if (trial.stimulusKind === "no-go") this.falseAlarms += 1;
+      this.combo = 0;
+    }
+    this.enterPhase("feedback", nowMs, this.numberParameter("feedbackMs", 220));
+    this.frame = { ...this.createFrame(nowMs), feedback: correct ? "correct" : "incorrect", feedbackText: "score", feedbackScore: delta };
   }
+
+  private createFrame(nowMs: number): BrainPetTaskFrame {
+    const trialProgress = this.phase === "flight" ? Math.min(1, Math.max(0, (nowMs - this.phaseStartedAt) / Math.max(1, this.currentTrial.flightMs))) : 1;
+    return {
+      eyebrow: `第 ${this.level} 关 · ${this.trialIndex + 1}/${this.plan.length}`,
+      title: this.currentTrial.kind === "go" ? "蓝色补给" : "红色故障包",
+      instruction: this.currentTrial.kind === "go" ? "接住" : "放过",
+      symbol: "",
+      tone: this.currentTrial.kind === "go" ? "sky" : "rose",
+      progress: Math.min(1, (this.trialIndex + trialProgress) / Math.max(1, this.plan.length)),
+      score: Math.max(0, Math.round(this.score)),
+      feedback: "neutral",
+      combo: this.combo,
+      scene: this.createScene(nowMs),
+    };
+  }
+}
+
+function cargoAssetId(kind: "go" | "no-go", variant: 0 | 1 | 2): string {
+  const suffix = variant === 1 ? "-capsule" : variant === 2 ? "-orb" : "";
+  return `cargo-${kind === "go" ? "go" : "no-go"}${suffix}`;
 }
 
 class PackRefreshTask extends BaseTask {
@@ -349,7 +381,7 @@ class PackRefreshTask extends BaseTask {
   private recordRound(inputType: "primary" | "secondary" | "none", inputAtMs: number | null, correct: boolean): void {
     this.trials.push({
       stimulusId: `pack-${this.roundCounter}`,
-      stimulusKind: "continuous-update",
+      stimulusKind: this.choices[0] === this.dropped ? "continuous-update-left" : "continuous-update-right",
       blockIndex: this.blockIndex(this.roundPresentedAt),
       plannedAtMs: this.roundPlannedAt,
       presentedAtMs: this.roundPresentedAt,
@@ -373,7 +405,7 @@ class StageExerciserTask extends BaseTask {
     if (input.type === "primary" || input.type === "secondary") {
       this.correct += 1;
       this.score += 10;
-      this.trials.push({ stimulusId: `exercise-${this.correct}`, stimulusKind: "input-echo", blockIndex: this.blockIndex(input.atMs), plannedAtMs: input.atMs, presentedAtMs: input.atMs, inputType: input.type, inputAtMs: input.atMs, correct: true, reactionTimeMs: 0 });
+      this.trials.push({ stimulusId: `exercise-${this.correct}`, stimulusKind: `input-echo-${input.type}`, blockIndex: this.blockIndex(input.atMs), plannedAtMs: input.atMs, presentedAtMs: input.atMs, inputType: input.type, inputAtMs: input.atMs, correct: true, reactionTimeMs: 0 });
       this.frame = { ...this.frame, feedback: "correct", feedbackText: `INPUT ${this.correct} OK` };
     }
   }
@@ -381,6 +413,45 @@ class StageExerciserTask extends BaseTask {
   tick(nowMs: number): void {
     if (this.progress(nowMs) >= 1) this.finished = true;
     this.frame = { ...this.frame, progress: this.progress(nowMs), score: this.score };
+  }
+}
+
+class FoundationProbeTask extends BaseTask {
+  readonly manifest = getBrainPetTaskManifest("foundation-probe");
+  frame: BrainPetTaskFrame = emptyFrame();
+
+  protected onStart(nowMs: number): void {
+    this.frame = this.createFrame(nowMs);
+  }
+
+  input(input: BrainPetTaskInput): void {
+    if (this.finished || (input.type !== "primary" && input.type !== "secondary")) return;
+    const expected = this.correct % 2 === 0 ? "primary" : "secondary";
+    const correct = input.type === expected;
+    this.trials.push({ stimulusId: `probe-${this.trials.length + 1}`, stimulusKind: expected === "primary" ? "probe-left" : "probe-right", blockIndex: this.blockIndex(input.atMs), plannedAtMs: input.atMs, presentedAtMs: input.atMs, inputType: input.type, inputAtMs: input.atMs, correct, reactionTimeMs: 0 });
+    if (correct) { this.correct += 1; this.score += 10; } else { this.incorrect += 1; this.score -= 5; }
+    this.frame = this.createFrame(input.atMs);
+  }
+
+  tick(nowMs: number): void {
+    if (this.progress(nowMs) >= 1) this.finished = true;
+    this.frame = this.createFrame(nowMs);
+  }
+
+  private createFrame(nowMs: number): BrainPetTaskFrame {
+    const scene = validateStageScene({
+      id: "foundation-probe",
+      camera: { x: 0, y: 0, zoom: 1 },
+      layers: [
+        { id: "background", z: 0, sprites: [{ id: "label", assetId: "text", x: 50, y: 18, frame: 0, text: "SCENE CONTRACT" }] },
+        { id: "targets", z: 10, sprites: [
+          { id: "left", assetId: "probe-gem", x: 28, y: 58, frame: 0, text: "L", input: "primary" },
+          { id: "right", assetId: "probe-gem", x: 72, y: 58, frame: 0, text: "R", input: "secondary" },
+        ] },
+      ],
+      particles: [{ id: "pulse", x: 50, y: 58, lifetimeMs: 300 }],
+    });
+    return { eyebrow: "FOUNDATION PROBE", title: "异构场景模块", instruction: "点击左右目标，验证通用 scene/input 路径", symbol: "", tone: "gold", scene, progress: this.progress(nowMs), score: Math.max(0, this.score), feedback: "neutral" };
   }
 }
 

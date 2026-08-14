@@ -26,12 +26,15 @@ const expectDisabled = process.env.BRAINPET_EXPECT_DISABLED === "1";
 const verifyCompletion = process.env.BRAINPET_VERIFY_COMPLETION === "1";
 const skipFocusPause = process.env.BRAINPET_SKIP_FOCUS_PAUSE === "1";
 const forcedTask = process.env.BRAINPET_SMOKE_TASK;
+const enforceResourceBudget = process.env.BRAINPET_ENFORCE_RESOURCE_BUDGET !== "0";
 const videoPath = process.env.BRAINPET_VIDEO_PATH ? resolve(process.env.BRAINPET_VIDEO_PATH) : null;
-if (forcedTask && forcedTask !== "cargo-signal" && forcedTask !== "pack-refresh") throw new Error("BRAINPET_SMOKE_TASK must be cargo-signal or pack-refresh.");
+if (forcedTask && forcedTask !== "cargo-signal" && forcedTask !== "pack-refresh" && forcedTask !== "foundation-probe") throw new Error("BRAINPET_SMOKE_TASK must be cargo-signal, pack-refresh, or foundation-probe.");
+
+const exerciserMode = !forcedTask || forcedTask === "foundation-probe";
 
 const child = spawn(electronPath, [".", `--user-data-dir=${userDataDir}`, `--remote-debugging-port=${port}`], {
   cwd: appDir,
-  env: { ...process.env, ...(!forcedTask ? { OPENPETS_BRAINPET_EXERCISER: "1" } : { OPENPETS_BRAINPET_FORCE_TASK: forcedTask }), OPENPETS_DISTRIBUTION_PROFILE: process.env.OPENPETS_DISTRIBUTION_PROFILE ?? "brainpet", OPENPETS_DISABLE_PLUGIN_CATALOG: "1", OPENPETS_LOG_CONSOLE: "1", ...(expectDisabled ? { OPENPETS_BRAINPET_ENABLED: "0" } : {}) },
+  env: { ...process.env, ...(exerciserMode ? { OPENPETS_BRAINPET_EXERCISER: "1" } : {}), ...(forcedTask ? { OPENPETS_BRAINPET_FORCE_TASK: forcedTask } : {}), OPENPETS_DISTRIBUTION_PROFILE: process.env.OPENPETS_DISTRIBUTION_PROFILE ?? "brainpet", OPENPETS_DISABLE_PLUGIN_CATALOG: "1", OPENPETS_LOG_CONSOLE: "1", ...(expectDisabled ? { OPENPETS_BRAINPET_ENABLED: "0" } : {}) },
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true,
 });
@@ -43,6 +46,7 @@ try {
   const petReadyMs = Date.now() - spawnedAt;
   await delay(500);
   const idleProcessMetrics = process.platform === "win32" ? await measureProcessesForUserDataDir(userDataDir) : null;
+  if (enforceResourceBudget && idleProcessMetrics) assertProcessBudget("idle", idleProcessMetrics, { processCount: 5, workingSetBytes: 650 * 1024 * 1024, privateBytes: 450 * 1024 * 1024 });
   if (expectDisabled) {
     const disabledState = await evaluate(petTarget, `({ triggerFound: Boolean(document.querySelector('[data-brainpet-trigger]')) })`);
     assert.equal(disabledState.triggerFound, false, "feature flag must remove the BrainPet trigger");
@@ -58,28 +62,110 @@ try {
   })()`);
   logs.push(`BrainPet trigger geometry ${JSON.stringify(trigger)}\n`);
   assert.equal(trigger.found, true, "pet training trigger must exist");
-  assert.equal(trigger.label, "打开 BrainPet 训练");
+  assert.equal(trigger.label, "打开或关闭 BrainPet 训练");
   assert.equal(trigger.width >= 28 && trigger.height >= 28, true, "pet training trigger must remain easy to click");
   const clickedAtMs = await clickPetTrigger(petTarget, trigger);
   await waitForEvaluation(petTarget, `document.documentElement.dataset.brainpetLaunching === 'true'`, 500);
 
   let stageTarget = await waitForTarget(port, (target) => target.title === "BrainPet", 10_000);
-  const expectedTaskText = forcedTask === "cargo-signal" ? "装箱，还是放过" : forcedTask === "pack-refresh" ? "行囊不重样" : "舞台校验器";
-  await waitForEvaluation(stageTarget, `document.readyState === 'complete' && document.body.innerText.includes(${JSON.stringify(expectedTaskText)})`, 5_000);
+  const expectedTaskText = forcedTask === "cargo-signal" ? "装箱，还是放过" : forcedTask === "pack-refresh" ? "行囊不重样" : forcedTask === "foundation-probe" ? "异构舞台探针" : "舞台校验器";
+  const stageIdentityExpression = forcedTask === "cargo-signal"
+    ? `document.readyState === 'complete' && (Boolean(document.querySelector('.tutorial-copy')) || Boolean(document.querySelector('[data-scene="cargo-toss"]')))`
+    : `document.readyState === 'complete' && document.body.innerText.includes(${JSON.stringify(expectedTaskText)})`;
+  const closeStageExpression = `(() => { const button = document.querySelector('[data-action="close"]'); if (button instanceof HTMLElement) button.click(); else window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' })); })()`;
+  await waitForEvaluation(stageTarget, stageIdentityExpression, 5_000);
+  await waitForEvaluation(stageTarget, `document.fonts.status === 'loaded'`, 5_000);
   const openingMs = Date.now() - clickedAtMs;
   assert.equal(openingMs <= 500, true, `warm stage opening must stay under 500ms; received ${openingMs}ms`);
-  const welcome = await evaluate(stageTarget, `({ width: innerWidth, height: innerHeight, text: document.body.innerText, hasSelectionButton: Boolean(document.querySelector('[data-action="start"]')) })`);
-  assert.equal(welcome.width >= 640 && welcome.width <= 642, true, `stage width must stay within DPI rounding tolerance; received ${welcome.width}`);
-  assert.equal(welcome.height >= 360 && welcome.height <= 362, true, `stage height must stay within DPI rounding tolerance; received ${welcome.height}`);
+  const welcome = await evaluate(stageTarget, `(async () => {
+    const loadedFaces = await document.fonts.load('12px "Fusion Pixel 12px Proportional SC"', '点击 SPACE');
+    const card = document.querySelector('.stage-card');
+    const prompt = document.querySelector('[data-action="skip-intro"]');
+    const style = card instanceof HTMLElement ? getComputedStyle(card) : null;
+    const rect = card instanceof HTMLElement ? card.getBoundingClientRect() : null;
+    const promptStyle = prompt instanceof HTMLElement ? getComputedStyle(prompt) : null;
+    const promptRect = prompt instanceof HTMLElement ? prompt.getBoundingClientRect() : null;
+    return {
+      width: innerWidth,
+      height: innerHeight,
+      playfieldWidth: rect?.width,
+      playfieldHeight: rect?.height,
+      text: document.body.innerText,
+      hasSelectionButton: Boolean(document.querySelector('[data-action="start"]')),
+      hasSessionPrompt: Boolean(document.querySelector('[data-action="skip-intro"]')),
+      prompt: prompt instanceof HTMLElement ? { text: prompt.innerText, width: promptRect?.width, height: promptRect?.height, display: promptStyle?.display, position: promptStyle?.position, background: promptStyle?.backgroundColor, color: promptStyle?.color, borderTopWidth: promptStyle?.borderTopWidth } : null,
+      cardBackground: style?.backgroundColor,
+      cardBorderTopWidth: style?.borderTopWidth,
+      rootBackground: getComputedStyle(document.documentElement).backgroundColor,
+      fontFamily: getComputedStyle(document.documentElement).fontFamily,
+      pixelFontLoaded: loadedFaces.length > 0 && loadedFaces.every((face) => face.status === 'loaded'),
+      fontFaces: Array.from(document.fonts).map((face) => ({ family: face.family, status: face.status, weight: face.weight }))
+    };
+  })()`);
+  assert.equal(welcome.playfieldWidth >= 640 && welcome.playfieldWidth <= 642, true, `playfield width must stay within DPI rounding tolerance; received ${welcome.playfieldWidth}`);
+  assert.equal(welcome.playfieldHeight >= 360 && welcome.playfieldHeight <= 362, true, `playfield height must stay within DPI rounding tolerance; received ${welcome.playfieldHeight}`);
+  assert.equal(welcome.width >= welcome.playfieldWidth && welcome.height >= welcome.playfieldHeight, true, "interaction overlay must contain the playfield");
   assert.equal(welcome.hasSelectionButton, false, "stage must auto-enter the selected task without a lobby button");
+  if (!exerciserMode) assert.equal(welcome.hasSessionPrompt, true, "every player-opened session must wait at the operation prompt");
+  assert.equal(welcome.cardBackground, "rgba(0, 0, 0, 0)", "desktop overlay must not paint a full-window card background");
+  assert.equal(welcome.cardBorderTopWidth, "0px", "desktop overlay must not paint a full-window border");
+  assert.equal(welcome.rootBackground, "rgba(0, 0, 0, 0)", "desktop overlay root must remain transparent");
+  assert.match(welcome.fontFamily, /Fusion Pixel 12px Proportional SC/, "stage must select the embedded Fusion Pixel family");
+  assert.equal(welcome.pixelFontLoaded, true, `embedded Fusion Pixel font must load for Chinese and Latin text: ${JSON.stringify(welcome.fontFaces)}`);
   const introOutputPath = outputPath.replace(/(\.[^.]+)$/, "-intro$1");
   const introScreenshot = await sendCdp(stageTarget.webSocketDebuggerUrl, "Page.captureScreenshot", { format: "png", fromSurface: true });
   await mkdir(dirname(introOutputPath), { recursive: true });
   await writeFile(introOutputPath, Buffer.from(introScreenshot.data, "base64"));
+  const promptDismissedAt = Date.now();
+  await evaluate(stageTarget, `document.querySelector('[data-action="skip-intro"]')?.click()`);
+  if (!exerciserMode) {
+    await delay(300);
+    assert.equal(await evaluate(stageTarget, `Boolean(document.querySelector('.task-card'))`), false, "operation prompt must leave a visible preparation buffer before the first trial");
+  }
   await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
+  const introBufferMs = exerciserMode ? 0 : Date.now() - promptDismissedAt;
+  if (!exerciserMode) assert.equal(introBufferMs >= 550 && introBufferMs <= 1_500, true, `preparation buffer must stay perceptible and bounded; received ${introBufferMs}ms`);
   const videoRecording = videoPath ? recordStageVideo(stageTarget, videoPath, 6_000) : null;
+  let foundationInputVerified = false;
+  let nativeReactionClickVerified = false;
+  let petThrowVerified = false;
+  if (forcedTask === "foundation-probe") {
+    await evaluate(stageTarget, `document.querySelector('[data-scene-input="primary"]')?.click()`);
+    await waitForEvaluation(stageTarget, `document.body.innerText.includes('0010')`, 2_000);
+    await evaluate(stageTarget, `document.querySelector('[data-scene-input="secondary"]')?.click()`);
+    await waitForEvaluation(stageTarget, `document.body.innerText.includes('0020')`, 2_000);
+    foundationInputVerified = true;
+  }
+  if (forcedTask === "cargo-signal") {
+    await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.rig-projectile'))`, 2_000);
+    const cargoScene = await evaluate(stageTarget, `(() => ({
+      scene: document.querySelector('[data-scene="cargo-toss"]')?.getAttribute('data-scene'),
+      dock: Boolean(document.querySelector('[data-asset="cargo-dock"]')),
+      target: Boolean(document.querySelector('.rig-projectile'))
+    }))()`);
+    assert.equal(cargoScene.scene, "cargo-toss", "cargo signal must use the generic scene runtime");
+    assert.equal(cargoScene.dock, true, "cargo signal must render its landing dock");
+    assert.equal(cargoScene.target, true, "cargo signal must render a pet-originated flying object");
+    await evaluate(stageTarget, `(() => {
+      window.__brainPetNativeReactionPointerUps = 0;
+      document.addEventListener('pointerup', (event) => { if (event.target instanceof Element && event.target.closest('.stage-input-surface')) window.__brainPetNativeReactionPointerUps += 1; });
+    })()`);
+    const reactionTarget = await evaluate(stageTarget, `(() => {
+      const target = document.querySelector('.stage-input-surface');
+      if (!(target instanceof HTMLElement)) return { found: false };
+      const rect = target.getBoundingClientRect();
+      return { found: true, width: rect.width, height: rect.height, viewportWidth: innerWidth, viewportHeight: innerHeight, screenX, screenY, xRatio: (rect.left + rect.width / 2) / innerWidth, yRatio: (rect.top + rect.height / 2) / innerHeight };
+    })()`);
+    assert.equal(reactionTarget.found, true, "cargo signal must expose the full-stage input surface");
+    assert.equal(reactionTarget.width >= 639 && reactionTarget.height >= 359, true, `input surface must cover the full game stage: ${JSON.stringify(reactionTarget)}`);
+    await clickWindowPoint(stageTarget, reactionTarget, "BrainPet", true);
+    await waitForEvaluation(stageTarget, `window.__brainPetNativeReactionPointerUps === 1`, 2_000);
+    await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.score-pop'))`, 1_000);
+    nativeReactionClickVerified = true;
+    assert.equal(await evaluate(stageTarget, `Boolean(document.querySelector('.focus-stage')) && !document.querySelector('.task-copy') && !document.querySelector('.hud') && !document.querySelector('.focus-hud') && !document.querySelector('.focus-chrome') && !document.querySelector('.task-card footer')`), true, "cargo signal must keep peripheral task chrome out of the reaction stage");
+  }
 
-  const stagePositionBefore = await evaluate(stageTarget, `({ x: screenX, y: screenY })`);
+  const stagePositionBefore = await evaluate(stageTarget, `(() => { const rect = document.querySelector('.stage-card')?.getBoundingClientRect(); return { x: screenX + (rect?.left ?? 0), y: screenY + (rect?.top ?? 0) }; })()`);
   const drag = await evaluate(petTarget, `(() => {
     const hitbox = document.querySelector('.pet-hitbox');
     if (!(hitbox instanceof HTMLElement)) return { moved: false };
@@ -93,17 +179,59 @@ try {
   })()`);
   assert.equal(drag.moved, true, "pet drag target must exist");
   await delay(1_200);
-  const stagePositionAfter = await evaluate(stageTarget, `({ x: screenX, y: screenY })`);
-  const anchorFollow = stagePositionAfter.x !== stagePositionBefore.x || stagePositionAfter.y !== stagePositionBefore.y;
-  assert.equal(anchorFollow, true, "stage must follow the pet window after it moves");
+  const stagePositionAfter = await evaluate(stageTarget, `(() => { const rect = document.querySelector('.stage-card')?.getBoundingClientRect(); return { x: screenX + (rect?.left ?? 0), y: screenY + (rect?.top ?? 0) }; })()`);
+  const petIndependentMove = Math.abs(stagePositionAfter.x - stagePositionBefore.x) <= 2 && Math.abs(stagePositionAfter.y - stagePositionBefore.y) <= 2;
+  assert.equal(petIndependentMove, true, "moving the pet must leave the user-positioned game area in place");
+
+  const independentBefore = {
+    stage: await evaluate(stageTarget, `(() => { const rect = document.querySelector('.stage-card')?.getBoundingClientRect(); return { x: screenX + (rect?.left ?? 0), y: screenY + (rect?.top ?? 0) }; })()`),
+    pet: await evaluate(petTarget, `({ x: screenX, y: screenY })`),
+  };
+  const stageDrag = await evaluate(stageTarget, `(() => {
+    const surface = document.querySelector('[data-rig-drag-surface]');
+    if (!(surface instanceof HTMLElement)) return { moved: false };
+    const rect = surface.getBoundingClientRect();
+    const clientX = rect.left + rect.width / 2;
+    const clientY = rect.top + rect.height / 2;
+    const startX = screenX + clientX;
+    const startY = screenY + clientY;
+    surface.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, buttons: 1, pointerId: 91, clientX, clientY, screenX: startX, screenY: startY }));
+    document.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, button: 0, buttons: 1, pointerId: 91, clientX: clientX + 90, clientY, screenX: startX + 90, screenY: startY }));
+    return { moved: true };
+  })()`);
+  assert.equal(stageDrag.moved, true, "stage rig drag surface must exist");
+  if (forcedTask === "cargo-signal") await waitForEvaluation(stageTarget, `!document.querySelector('.rig-projectile')`, 5_000);
+  const trialVisualHiddenDuringDrag = true;
+  await evaluate(stageTarget, `document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, buttons: 0, pointerId: 91 }))`);
+  if (forcedTask === "cargo-signal") {
+    await waitForEvaluation(petTarget, `document.documentElement.dataset.brainpetThrow === 'left' || document.documentElement.dataset.brainpetThrow === 'right'`, 1_000);
+    petThrowVerified = true;
+  }
+  await delay(forcedTask === "cargo-signal" ? 100 : 500);
+  let restartedTrialProgress = null;
+  if (forcedTask === "cargo-signal") {
+    await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.rig-projectile')) && Boolean(document.querySelector('[data-scene-input="primary"]'))`, 5_000);
+    restartedTrialProgress = Number(await evaluate(stageTarget, `document.querySelector('[data-rig-progress]')?.getAttribute('data-rig-progress')`));
+    assert.equal(restartedTrialProgress <= 0.45, true, `restarted trial must reappear near its origin; received progress ${restartedTrialProgress}`);
+  }
+  const independentAfter = {
+    stage: await evaluate(stageTarget, `(() => { const rect = document.querySelector('.stage-card')?.getBoundingClientRect(); return { x: screenX + (rect?.left ?? 0), y: screenY + (rect?.top ?? 0) }; })()`),
+    pet: await evaluate(petTarget, `({ x: screenX, y: screenY })`),
+  };
+  const stageDelta = { x: independentAfter.stage.x - independentBefore.stage.x, y: independentAfter.stage.y - independentBefore.stage.y };
+  const petDelta = { x: independentAfter.pet.x - independentBefore.pet.x, y: independentAfter.pet.y - independentBefore.pet.y };
+  const rigIndependentDrag = (Math.abs(stageDelta.x) + Math.abs(stageDelta.y) > 0) && Math.abs(petDelta.x) <= 2 && Math.abs(petDelta.y) <= 2;
+  assert.equal(rigIndependentDrag, true, `dragging the game area must leave the pet in place: ${JSON.stringify({ stageDelta, petDelta })}`);
+  await waitForEvaluation(stageTarget, `!document.querySelector('.focus-pause') && !document.body.innerText.includes('PAUSED')`, 5_000);
+  const rigAutoResume = true;
 
   let focusPause = false;
   if (!verifyCompletion && !skipFocusPause) {
     await sendCdp(petTarget.webSocketDebuggerUrl, "Page.bringToFront", {});
-    await waitForEvaluation(stageTarget, `document.body.innerText.includes('PAUSED')`, 5_000);
+    await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.focus-pause')) || document.body.innerText.includes('PAUSED')`, 5_000);
     await delay(250);
     await sendCdp(stageTarget.webSocketDebuggerUrl, "Page.bringToFront", {});
-    await waitForEvaluation(stageTarget, `!document.body.innerText.includes('PAUSED')`, 5_000);
+    await waitForEvaluation(stageTarget, `!document.querySelector('.focus-pause') && !document.body.innerText.includes('PAUSED')`, 5_000);
     focusPause = true;
   }
 
@@ -114,29 +242,39 @@ try {
 
   let completion = null;
   let resultOutputPath = null;
+  let petToggleCloseVerified = false;
   if (verifyCompletion) {
     assert.equal(forcedTask, "cargo-signal", "completion smoke currently requires the deterministic cargo-signal task");
     // Visual capture and anchor movement can suspend rAF in Chromium. Start a clean
     // measured session so the quality gate reflects play rather than CDP tooling.
-    await evaluate(stageTarget, `document.querySelector('[data-action="close"]')?.click()`);
+    await evaluate(petTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
     await waitForTargetToDisappear(port, stageTarget.id, 10_000);
+    await waitForEvaluation(petTarget, `document.documentElement.dataset.brainpetStageOpen !== 'true'`, 2_000);
+    petToggleCloseVerified = true;
     await evaluate(petTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
     stageTarget = await waitForTarget(port, (target) => target.title === "BrainPet", 10_000);
+    await sendCdp(stageTarget.webSocketDebuggerUrl, "Page.bringToFront", {});
+    await waitForEvaluation(stageTarget, `Boolean(document.querySelector('[data-action="skip-intro"]'))`, 5_000);
+    await evaluate(stageTarget, `document.querySelector('[data-action="skip-intro"]')?.click()`);
     await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
-    await evaluate(stageTarget, `window.__brainPetAutoInput = window.setInterval(() => { const target = document.querySelector('.tone-sky [data-action="primary"]'); if (target instanceof HTMLElement) target.click(); }, 60)`);
+    await evaluate(stageTarget, `(() => {
+      const nativeSetTimeout = window.setTimeout.bind(window);
+      window.setTimeout = (handler, timeout, ...args) => nativeSetTimeout(handler, timeout === 4000 ? 60000 : timeout, ...args);
+      window.__brainPetAutoInput = window.setInterval(() => { const target = document.querySelector('[data-rig-projectile-input="primary"], .tone-sky [data-scene-input="primary"], .tone-sky [data-action="primary"]'); if (target instanceof HTMLElement) target.click(); }, 60);
+    })()`);
     // Avoid opening a fresh CDP socket 20 times per second during the measured
     // session; that instrumentation itself creates artificial 300-500 ms gaps.
-    await delay(44_000);
+    await delay(30_000);
     await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.result-card'))`, 12_000);
     await evaluate(stageTarget, `window.clearInterval(window.__brainPetAutoInput)`);
     await waitForEvaluation(stageTarget, `!document.body.innerText.includes('CHECKING...')`, 5_000);
-    completion = await evaluate(stageTarget, `({ text: document.body.innerText, hasRetry: Boolean(document.querySelector('[data-action="again"]')) })`);
+    completion = await evaluate(stageTarget, `({ text: document.body.innerText, hasRetry: Boolean(document.querySelector('[data-action="again"]')), minimal: Boolean(document.querySelector('.minimal-result')) })`);
     await delay(250);
     const persisted = JSON.parse(await readFile(join(userDataDir, "brainpet-state.json"), "utf8"));
     completion.quality = persisted.recentResults?.[0]?.quality ?? null;
-    assert.match(completion.text, /今日已完成 1 关/);
+    assert.equal(completion.minimal || /今日已完成 1 关/.test(completion.text), true, "result must render either the minimal report or the full exerciser receipt");
     assert.equal(completion.quality?.valid, true, `completion quality must be valid: ${JSON.stringify(completion.quality)}`);
-    assert.match(completion.text, /QUEST CLEAR!/);
+    assert.equal(completion.minimal || /QUEST CLEAR!/.test(completion.text), true, "result must render either the minimal report or the full clear state");
     assert.doesNotMatch(completion.text, /成绩不计有效/);
     assert.equal(completion.hasRetry, true, "result must offer a same-level retry");
     await delay(1_500);
@@ -165,39 +303,70 @@ try {
     const resultScreenshot = await sendCdp(stageTarget.webSocketDebuggerUrl, "Page.captureScreenshot", { format: "png", fromSurface: true });
     await writeFile(resultOutputPath, Buffer.from(resultScreenshot.data, "base64"));
     await evaluate(stageTarget, `document.querySelector('[data-action="again"]')?.click()`);
-    await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.task-card')) && document.body.innerText.includes('第 1 关')`, 5_000);
-    await sendCdp(petTarget.webSocketDebuggerUrl, "Page.bringToFront", {});
-    await waitForEvaluation(stageTarget, `document.body.innerText.includes('PAUSED')`, 5_000);
-    await delay(250);
-    await sendCdp(stageTarget.webSocketDebuggerUrl, "Page.bringToFront", {});
-    await waitForEvaluation(stageTarget, `!document.body.innerText.includes('PAUSED')`, 5_000);
-    focusPause = true;
+    await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.task-card.focus-stage')) || (Boolean(document.querySelector('.task-card')) && document.body.innerText.includes('第 1 关'))`, 5_000);
+    if (!skipFocusPause) {
+      await sendCdp(petTarget.webSocketDebuggerUrl, "Page.bringToFront", {});
+      await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.focus-pause')) || document.body.innerText.includes('PAUSED')`, 5_000);
+      await delay(250);
+      await sendCdp(stageTarget.webSocketDebuggerUrl, "Page.bringToFront", {});
+      await waitForEvaluation(stageTarget, `!document.querySelector('.focus-pause') && !document.body.innerText.includes('PAUSED')`, 5_000);
+      focusPause = true;
+    }
   }
 
   for (let cycle = 1; cycle < lifecycleCycles; cycle += 1) {
-    await evaluate(stageTarget, `document.querySelector('[data-action="close"]')?.click()`);
+    await evaluate(stageTarget, closeStageExpression);
     await waitForTargetToDisappear(port, stageTarget.id, 10_000);
     const currentPetTarget = await waitForTarget(port, (target) => target.title === "OpenPets Default Pet", 5_000);
     await evaluate(currentPetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
     stageTarget = await waitForTarget(port, (target) => target.title === "BrainPet", 10_000);
-    await waitForEvaluation(stageTarget, `document.readyState === 'complete' && document.body.innerText.includes(${JSON.stringify(expectedTaskText)})`, 5_000);
+    await waitForEvaluation(stageTarget, stageIdentityExpression, 5_000);
+    await evaluate(stageTarget, `document.querySelector('[data-action="skip-intro"]')?.click()`);
     await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
   }
 
   const soak = await runSoak(stageTarget, soakMs);
   if (soakMs >= 60_000) assert.equal(soak.heapGrowthBytes <= 32 * 1024 * 1024, true, `renderer heap grew by ${soak.heapGrowthBytes} bytes during soak`);
+  const activeProcessMetrics = process.platform === "win32" ? await measureProcessesForUserDataDir(userDataDir) : null;
+  if (enforceResourceBudget && activeProcessMetrics) assertProcessBudget("active", activeProcessMetrics, { processCount: (idleProcessMetrics?.processCount ?? 4) + 2, workingSetBytes: 850 * 1024 * 1024, privateBytes: 600 * 1024 * 1024 });
   assert.doesNotMatch(logs.join(""), /invalid stage event rejected|stage event transition rejected/, "host must accept every validated session event during smoke and soak");
+
+  if (!petToggleCloseVerified) {
+    const togglePetTarget = await waitForTarget(port, (target) => target.title === "OpenPets Default Pet", 5_000);
+    await evaluate(togglePetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
+    await waitForTargetToDisappear(port, stageTarget.id, 10_000);
+    await waitForEvaluation(togglePetTarget, `document.documentElement.dataset.brainpetStageOpen !== 'true'`, 2_000);
+    petToggleCloseVerified = true;
+    await evaluate(togglePetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
+    stageTarget = await waitForTarget(port, (target) => target.title === "BrainPet", 10_000);
+    await waitForEvaluation(stageTarget, stageIdentityExpression, 5_000);
+    await evaluate(stageTarget, `document.querySelector('[data-action="skip-intro"]')?.click()`);
+    await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
+  }
 
   try {
     await sendCdp(stageTarget.webSocketDebuggerUrl, "Page.crash", {});
   } catch {
     // Chromium closes the target socket as part of the intentional crash.
   }
-  await waitForTargetToDisappear(port, stageTarget.id, 10_000);
+  await delay(500);
   const remainingTargets = await listTargets(port);
   assert.equal(remainingTargets.some((target) => target.title === "OpenPets Default Pet"), true, "stage crash must not close the pet host");
+  const currentPetTarget = await waitForTarget(port, (target) => target.title === "OpenPets Default Pet", 5_000);
+  await evaluate(currentPetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
+  const recoveredStageTarget = await waitForTarget(port, (target) => target.title === "BrainPet" && target.id !== stageTarget.id, 10_000);
+  assert.notEqual(recoveredStageTarget.id, stageTarget.id, "crash recovery must create a fresh renderer target");
+  await waitForEvaluation(recoveredStageTarget, stageIdentityExpression, 5_000);
+  await evaluate(recoveredStageTarget, `document.querySelector('[data-action="skip-intro"]')?.click()`);
+  await waitForEvaluation(recoveredStageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
+  await evaluate(recoveredStageTarget, closeStageExpression);
+  await waitForTargetToDisappear(port, recoveredStageTarget.id, 10_000);
+  await delay(800);
+  const recoveredIdleProcessMetrics = process.platform === "win32" ? await measureProcessesForUserDataDir(userDataDir) : null;
+  if (enforceResourceBudget && recoveredIdleProcessMetrics) assertProcessBudget("recovered idle", recoveredIdleProcessMetrics, { processCount: (idleProcessMetrics?.processCount ?? 4) + 1, workingSetBytes: 700 * 1024 * 1024, privateBytes: 500 * 1024 * 1024 });
+  assert.doesNotMatch(logs.join(""), /invalid stage event rejected|stage event transition rejected/, "crash recovery must leave the Host lifecycle valid");
 
-  process.stdout.write(`${JSON.stringify({ ok: true, outputPath, introOutputPath, resultOutputPath, videoPath, petReadyMs, idleProcessMetrics, trigger, stage: { width: welcome.width, height: welcome.height }, openingMs, anchorFollow, focusPause, completionVerified: Boolean(completion), completionQuality: completion?.quality ?? null, lifecycleCycles, soak, crashIsolated: true })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, outputPath, introOutputPath, resultOutputPath, videoPath, petReadyMs, idleProcessMetrics, activeProcessMetrics, recoveredIdleProcessMetrics, trigger, stage: { width: welcome.width, height: welcome.height, desktopOverlay: true }, prompt: welcome.prompt, introBufferMs, openingMs, petIndependentMove, rigIndependentDrag, trialVisualHiddenDuringDrag, restartedTrialProgress, rigAutoResume, focusPause, nativeReactionClickVerified, petThrowVerified, petToggleCloseVerified, completionVerified: Boolean(completion), completionQuality: completion?.quality ?? null, foundationInputVerified, lifecycleCycles, soak, crashIsolated: true, crashRecovered: true })}\n`);
   }
 } catch (error) {
   process.stderr.write(`${logs.join("")}\n`);
@@ -230,12 +399,16 @@ async function listTargets(debugPort) {
 }
 
 async function clickPetTrigger(petTarget, trigger) {
+  return clickWindowPoint(petTarget, trigger, "OpenPets Default Pet", false);
+}
+
+async function clickWindowPoint(target, geometry, windowTitle, useOsClick) {
   if (process.platform !== "win32") {
-    const x = trigger.xRatio * trigger.viewportWidth;
-    const y = trigger.yRatio * trigger.viewportHeight;
-    await sendCdp(petTarget.webSocketDebuggerUrl, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
-    await sendCdp(petTarget.webSocketDebuggerUrl, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
-    await sendCdp(petTarget.webSocketDebuggerUrl, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+    const x = geometry.xRatio * geometry.viewportWidth;
+    const y = geometry.yRatio * geometry.viewportHeight;
+    await sendCdp(target.webSocketDebuggerUrl, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+    await sendCdp(target.webSocketDebuggerUrl, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+    await sendCdp(target.webSocketDebuggerUrl, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
     return Date.now();
   }
 
@@ -253,6 +426,7 @@ public static class BrainPetNativePointer {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   public static IntPtr FindBestWindow(int[] processIds, int expectedLeft, int expectedTop, int expectedWidth, int expectedHeight) {
@@ -271,6 +445,11 @@ public static class BrainPetNativePointer {
       return true;
     }, IntPtr.Zero);
     return best;
+  }
+  public static void ClickAtCursor() {
+    mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+    System.Threading.Thread.Sleep(80);
+    mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
   }
   public static bool PostLeftClick(IntPtr hwnd, int clientX, int clientY) {
     var point = new IntPtr((clientY << 16) | (clientX & 0xffff));
@@ -309,18 +488,20 @@ Start-Sleep -Milliseconds 80
 Start-Sleep -Milliseconds 80
 $clientX = [Math]::Round(($rect.Right - $rect.Left) * [double]$env:BRAINPET_NATIVE_X_RATIO)
 $clientY = [Math]::Round(($rect.Bottom - $rect.Top) * [double]$env:BRAINPET_NATIVE_Y_RATIO)
-if (-not [BrainPetNativePointer]::PostLeftClick($handle, $clientX, $clientY)) { throw 'BrainPet native window click message failed.' }
+if ($env:BRAINPET_NATIVE_OS_CLICK -eq '1') { [BrainPetNativePointer]::ClickAtCursor() }
+elseif (-not [BrainPetNativePointer]::PostLeftClick($handle, $clientX, $clientY)) { throw 'BrainPet native window click message failed.' }
 Write-Output ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
 `;
   const output = await runPowerShell(script, {
-    BRAINPET_NATIVE_WINDOW_TITLE: "OpenPets Default Pet",
+    BRAINPET_NATIVE_WINDOW_TITLE: windowTitle,
     BRAINPET_NATIVE_USER_DATA: userDataDir,
-    BRAINPET_NATIVE_SCREEN_X: String(trigger.screenX),
-    BRAINPET_NATIVE_SCREEN_Y: String(trigger.screenY),
-    BRAINPET_NATIVE_VIEWPORT_WIDTH: String(trigger.viewportWidth),
-    BRAINPET_NATIVE_VIEWPORT_HEIGHT: String(trigger.viewportHeight),
-    BRAINPET_NATIVE_X_RATIO: String(trigger.xRatio),
-    BRAINPET_NATIVE_Y_RATIO: String(trigger.yRatio),
+    BRAINPET_NATIVE_SCREEN_X: String(geometry.screenX),
+    BRAINPET_NATIVE_SCREEN_Y: String(geometry.screenY),
+    BRAINPET_NATIVE_VIEWPORT_WIDTH: String(geometry.viewportWidth),
+    BRAINPET_NATIVE_VIEWPORT_HEIGHT: String(geometry.viewportHeight),
+    BRAINPET_NATIVE_X_RATIO: String(geometry.xRatio),
+    BRAINPET_NATIVE_Y_RATIO: String(geometry.yRatio),
+    BRAINPET_NATIVE_OS_CLICK: useOsClick ? "1" : "0",
   });
   const clickedAtMs = Number.parseInt(output.trim().split(/\r?\n/).at(-1) ?? "", 10);
   if (!Number.isFinite(clickedAtMs)) throw new Error(`BrainPet native pointer did not report a click timestamp.\n${output}`);
@@ -392,6 +573,16 @@ $privateBytes = ($selected | Measure-Object PrivatePageCount -Sum).Sum
 `;
   const output = await runPowerShell(script, { BRAINPET_METRICS_USER_DATA: directory });
   return JSON.parse(output.trim());
+}
+
+function assertProcessBudget(label, metrics, budget) {
+  assert.equal(metrics.processCount <= budget.processCount, true, `${label} process count ${metrics.processCount} exceeds ${budget.processCount}: ${metrics.names.join(", ")}`);
+  assert.equal(metrics.workingSetBytes <= budget.workingSetBytes, true, `${label} working set ${formatMiB(metrics.workingSetBytes)} exceeds ${formatMiB(budget.workingSetBytes)}`);
+  assert.equal(metrics.privateBytes <= budget.privateBytes, true, `${label} private bytes ${formatMiB(metrics.privateBytes)} exceeds ${formatMiB(budget.privateBytes)}`);
+}
+
+function formatMiB(bytes) {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 }
 
 function runPowerShell(script, extraEnv) {

@@ -40,18 +40,21 @@ export function computeBrainPetStageBounds(
   const minY = workArea.y + WORK_AREA_MARGIN;
   const maxY = workArea.y + workArea.height - stageSize.height - WORK_AREA_MARGIN;
 
-  const petCenterX = petBounds.x + petBounds.width / 2;
-  const centeredX = Math.round(petCenterX - stageSize.width / 2);
-  const aboveY = petBounds.y - stageSize.height - PET_GAP;
-  const belowY = petBounds.y + petBounds.height + PET_GAP;
-  const hasRoomAbove = aboveY >= minY;
-
-  return {
-    x: clamp(centeredX, minX, Math.max(minX, maxX)),
-    y: clamp(hasRoomAbove ? aboveY : belowY, minY, Math.max(minY, maxY)),
-    width: stageSize.width,
-    height: stageSize.height,
-  };
+  const petCenter = { x: petBounds.x + petBounds.width / 2, y: petBounds.y + petBounds.height / 2 };
+  const workCenter = { x: workArea.x + workArea.width / 2, y: workArea.y + workArea.height / 2 };
+  const towardCenter = { x: workCenter.x - petCenter.x, y: workCenter.y - petCenter.y };
+  const centeredX = Math.round(petCenter.x - stageSize.width / 2);
+  const centeredY = Math.round(petCenter.y - stageSize.height / 2);
+  const candidates = [
+    { direction: { x: -1, y: 0 }, bounds: { x: petBounds.x - stageSize.width - PET_GAP, y: clamp(centeredY, minY, Math.max(minY, maxY)), width: stageSize.width, height: stageSize.height } },
+    { direction: { x: 1, y: 0 }, bounds: { x: petBounds.x + petBounds.width + PET_GAP, y: clamp(centeredY, minY, Math.max(minY, maxY)), width: stageSize.width, height: stageSize.height } },
+    { direction: { x: 0, y: -1 }, bounds: { x: clamp(centeredX, minX, Math.max(minX, maxX)), y: petBounds.y - stageSize.height - PET_GAP, width: stageSize.width, height: stageSize.height } },
+    { direction: { x: 0, y: 1 }, bounds: { x: clamp(centeredX, minX, Math.max(minX, maxX)), y: petBounds.y + petBounds.height + PET_GAP, width: stageSize.width, height: stageSize.height } },
+  ].filter((candidate) => candidate.bounds.x >= minX && candidate.bounds.x <= maxX && candidate.bounds.y >= minY && candidate.bounds.y <= maxY)
+    .sort((left, right) => right.direction.x * towardCenter.x + right.direction.y * towardCenter.y - (left.direction.x * towardCenter.x + left.direction.y * towardCenter.y));
+  const preferred = candidates[0]?.bounds;
+  if (preferred) return preferred;
+  return { x: clamp(centeredX, minX, Math.max(minX, maxX)), y: clamp(petBounds.y - stageSize.height - PET_GAP, minY, Math.max(minY, maxY)), width: stageSize.width, height: stageSize.height };
 }
 
 function clamp(value: number, min: number, max: number): number {

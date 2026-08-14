@@ -33,7 +33,9 @@ Run the suite with `pnpm test` (builds first, then each package's tests) and
 
 The desktop runner (`apps/desktop/scripts/run-tests.mjs`) orchestrates:
 preload syntax checks → test compilation → behavior tests → contract tests →
-dist checks. Three buckets:
+fresh main-process build → dist checks. Behavior and contract files are discovered
+from the compiled directories rather than maintained in a hand-written allowlist,
+so adding a test makes it part of the default gate automatically. Three buckets:
 
 - **Behavior** (`apps/desktop/tests/*.test.ts`): lease manager, app state,
   version checking, ZIP safety, Codex pets, Claude memory, reaction-animation
@@ -66,9 +68,11 @@ window, and verifies that the stage appears. A DOM `button.click()` is not
 accepted as evidence for transparent-window hit testing. Teardown first asks
 Electron to close through CDP, then scopes any fallback process-tree cleanup to
 that unique directory and fails if the temporary profile cannot be removed.
-The smoke reports pet-ready time plus idle process working-set/private-memory
-snapshots so the lean BrainPet profile can be compared with the full OpenPets
-plugin baseline.
+The smoke reports pet-ready time plus idle, active, and recovered-idle process
+working-set/private-memory snapshots and enforces budgets by default. The
+`foundation-probe` variant also loads a versioned fallback asset, renders the
+generic scene contract, clicks both generic input targets, crashes the renderer,
+then proves a fresh stage can open and close without an invalid Host transition.
 
 ## Package tests & contracts
 

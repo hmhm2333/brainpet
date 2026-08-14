@@ -12,6 +12,7 @@ const child = spawn(process.execPath, [
   electronBuilderCli,
   "--dir",
   "--win",
+  "--config.appId=dev.brainpet.app",
   "--config.productName=BrainPet",
   "--config.executableName=brainpet",
   `--config.electronDist=${electronDist}`,

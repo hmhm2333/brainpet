@@ -22,7 +22,7 @@ import { createAppTray, refreshTrayMenu } from "./tray.js";
 import { checkForGitHubReleaseUpdate } from "./update-checker.js";
 import { installInternalUiHandlers, installInternalUiProtocol } from "./windows.js";
 import { initializeBrainPetHost } from "./brainpet/host.js";
-import { resolveDesktopDistributionSettings, shouldUseIsolatedBrainPetUserData } from "./distribution-profile.js";
+import { isBrainPetFeatureEnabled, resolveDesktopDistributionSettings, shouldUseIsolatedBrainPetUserData } from "./distribution-profile.js";
 
 const distribution = resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath));
 if (shouldUseIsolatedBrainPetUserData(distribution.profile, process.argv)) {
@@ -120,7 +120,7 @@ if (!gotSingleInstanceLock) {
     installInternalUiHandlers();
     createAppTray();
     installDefaultPetDisplayHandlers();
-    initializeBrainPetHost();
+    if (isBrainPetFeatureEnabled(distribution, process.env.OPENPETS_BRAINPET_ENABLED)) initializeBrainPetHost();
     await startLocalIpcServer();
     releaseStartupInstallLock();
     const roots = parseDevPluginEnv(process.env.OPENPETS_DEV_PLUGIN_ROOTS);

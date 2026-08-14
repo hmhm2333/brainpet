@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { computeDeclaredScore, validateBrainPetTaskManifest } from "../src/brainpet/task-contract.js";
+import { computeBrainPetTrialScore, computeDeclaredScore, validateBrainPetTaskManifest } from "../src/brainpet/task-contract.js";
 import { getBrainPetTaskManifest, listPlayableBrainPetTaskIds } from "../src/brainpet/task-registry.js";
 
 test("task contract accepts a deterministic bounded task", () => {
@@ -14,10 +14,21 @@ test("task contract accepts a deterministic bounded task", () => {
 });
 
 test("task registry is the only task-specific manifest boundary", () => {
-  assert.deepEqual(listPlayableBrainPetTaskIds(), ["cargo-signal", "pack-refresh"]);
+  assert.deepEqual(listPlayableBrainPetTaskIds(), ["cargo-signal"]);
   for (const taskId of ["stage-exerciser", ...listPlayableBrainPetTaskIds()] as const) {
     assert.equal(validateBrainPetTaskManifest(getBrainPetTaskManifest(taskId)).id, taskId);
   }
+});
+
+test("cargo score v2 rewards Go speed and gives a fixed 40 points for correct No-Go", () => {
+  const manifest = getBrainPetTaskManifest("cargo-signal");
+  const parameters = { responseWindowMs: 900, fastRtMs: 220 };
+  const trial = { stimulusId: "1", stimulusKind: "go", blockIndex: 1 as const, plannedAtMs: 0, presentedAtMs: 0, inputType: "primary" as const, inputAtMs: 220, correct: true, reactionTimeMs: 220 };
+  assert.equal(computeBrainPetTrialScore(manifest, trial, parameters), 200);
+  assert.equal(computeBrainPetTrialScore(manifest, { ...trial, inputAtMs: 900, reactionTimeMs: 900 }, parameters), 40);
+  assert.equal(computeBrainPetTrialScore(manifest, { ...trial, stimulusKind: "no-go", inputType: "none", inputAtMs: null, reactionTimeMs: null }, parameters), 40);
+  assert.equal(computeBrainPetTrialScore(manifest, { ...trial, stimulusKind: "no-go" }, parameters), -40);
+  assert.equal(computeBrainPetTrialScore(manifest, { ...trial, inputType: "none", inputAtMs: null, reactionTimeMs: null }, parameters), -20);
 });
 
 test("task contract rejects unsupported, long, and unseeded tasks", () => {

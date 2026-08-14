@@ -7,83 +7,12 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { readdir } from "node:fs/promises";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "..");
 
 const preloadChecks = ["control-center-preload.cjs", "pet-preload.cjs", "brainpet-preload.cjs", "plugin-sdk-preload.cjs", "panel-preload.cjs"];
-const behaviorTests = [
-  ".test-dist/tests/lease-manager.test.js",
-  ".test-dist/tests/lease-manager-fixes.test.js",
-  ".test-dist/tests/lan-state.test.js",
-  ".test-dist/tests/lan-pet-presence.test.js",
-  ".test-dist/tests/lan-pet-activity.test.js",
-  ".test-dist/tests/lan-auth.test.js",
-  ".test-dist/tests/lan-controller.test.js",
-  ".test-dist/tests/lan-client-retry.test.js",
-  ".test-dist/tests/lan-persistence.test.js",
-  ".test-dist/tests/default-pet-external-show.test.js",
-  ".test-dist/tests/onboarding-state.test.js",
-  ".test-dist/tests/opencode-command.test.js",
-  ".test-dist/tests/update-version.test.js",
-  ".test-dist/tests/reaction-animation-mapping.test.js",
-  ".test-dist/tests/zip-safety.test.js",
-  ".test-dist/tests/codex-pets.test.js",
-  ".test-dist/tests/claude-memory.test.js",
-  ".test-dist/tests/plugin-config.test.js",
-  ".test-dist/tests/plugin-assets.test.js",
-  ".test-dist/tests/plugin-delivery.test.js",
-  ".test-dist/tests/plugin-state.test.js",
-  ".test-dist/tests/plugin-runtime.test.js",
-  ".test-dist/tests/plugin-catalog-validation.test.js",
-  ".test-dist/tests/plugin-package.test.js",
-  ".test-dist/tests/plugin-service.test.js",
-  ".test-dist/tests/plugin-ai-gateway.test.js",
-  ".test-dist/tests/voice-bridge.test.js",
-  ".test-dist/tests/voice-lifecycle.test.js",
-  ".test-dist/tests/tray-voice.test.js",
-  ".test-dist/tests/plugin-bridge-fuzz.test.js",
-  ".test-dist/tests/pet-fallback-notify.test.js",
-  ".test-dist/tests/pet-pool-order.test.js",
-  ".test-dist/tests/pet-pool.test.js",
-  ".test-dist/tests/pool-toggle.test.js",
-  ".test-dist/tests/local-ipc-confinement.test.js",
-  ".test-dist/tests/remote-control.test.js",
-  ".test-dist/tests/logger-redaction.test.js",
-  ".test-dist/tests/confinement-permission.test.js",
-  ".test-dist/tests/confinement-poller-backoff.test.js",
-  ".test-dist/tests/window-tracker.test.js",
-  ".test-dist/tests/window-tracker-chain.test.js",
-  ".test-dist/tests/window-tracker-win32.test.js",
-  ".test-dist/tests/window-tracker-reentry.test.js",
-  ".test-dist/tests/confinement-manager.test.js",
-  ".test-dist/tests/pet-confinement-enabled.test.js",
-  ".test-dist/tests/pet-motion-gravity.test.js",
-  ".test-dist/tests/pet-motion-engine-clamp.test.js",
-  ".test-dist/tests/pet-motion-engine-shared-ticker.test.js",
-  ".test-dist/tests/pet-motion-engine-single-writer.test.js",
-  ".test-dist/tests/pet-motion-engine-gravity-seam.test.js",
-  ".test-dist/tests/pet-motion-engine-hidden-move.test.js",
-  ".test-dist/tests/pet-motion-engine-nan-guard.test.js",
-  ".test-dist/tests/pet-roaming-controller.test.js",
-  ".test-dist/tests/display.test.js",
-  ".test-dist/tests/preference-patch.test.js",
-  ".test-dist/tests/plugin-agent-activity.test.js",
-  ".test-dist/tests/pet-window-wayland-predicate.test.js",
-  ".test-dist/tests/pet-window-mouse-forwarding-predicate.test.js",
-  ".test-dist/tests/brainpet-geometry.test.js",
-  ".test-dist/tests/brainpet-runtime-core.test.js",
-  ".test-dist/tests/brainpet-task-contract.test.js",
-  ".test-dist/tests/brainpet-state.test.js",
-  ".test-dist/tests/brainpet-stage-exerciser.test.js",
-  ".test-dist/tests/brainpet-task-modules.test.js",
-];
-const contractTests = [
-  ".test-dist/contracts/local-ipc-protocol.contract.js",
-  ".test-dist/contracts/remote-control-protocol.contract.js",
-  ".test-dist/contracts/catalog-fixture.contract.js",
-  ".test-dist/contracts/plugin-manifest.contract.js",
-];
 const distChecks = [
   "dist/check-opencode-desktop-setup.js",
   "dist/check-cursor-desktop.js",
@@ -126,6 +55,15 @@ async function main() {
   console.log("\n[2/5] Building tests...");
   await run("pnpm", ["test:build"]);
 
+  const behaviorTests = (await readdir(join(rootDir, ".test-dist", "tests")))
+    .filter((name) => name.endsWith(".test.js"))
+    .sort()
+    .map((name) => `.test-dist/tests/${name}`);
+  const contractTests = (await readdir(join(rootDir, ".test-dist", "contracts")))
+    .filter((name) => name.endsWith(".contract.js"))
+    .sort()
+    .map((name) => `.test-dist/contracts/${name}`);
+
   // 3. Run behavior tests
   console.log("\n[3/5] Running behavior tests...");
   for (const test of behaviorTests) await run("node", [test]);
@@ -136,6 +74,7 @@ async function main() {
 
   // 5. Run remaining dist checks
   console.log("\n[5/5] Running dist checks...");
+  await run("pnpm", ["build:main"]);
   for (const check of distChecks) {
     await run("node", [check]);
   }

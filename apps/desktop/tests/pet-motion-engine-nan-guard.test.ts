@@ -149,8 +149,7 @@ describe("pet-motion-engine NaN coordinate guards", () => {
     const outcome = await Promise.race([
       movePromise.then(() => "resolved" as const),
       new Promise<"timeout">((resolve) => {
-        const t = setTimeout(() => resolve("timeout"), 1000);
-        t.unref?.();
+        setTimeout(() => resolve("timeout"), 1000);
       }),
     ]);
 

@@ -55,14 +55,19 @@ try {
   const symlinkTarget = join(dir, "outside");
   mkdirSync(symlinkHome);
   mkdirSync(symlinkTarget);
-  symlinkSync(symlinkTarget, join(symlinkHome, ".claude"));
+  symlinkSync(symlinkTarget, join(symlinkHome, ".claude"), process.platform === "win32" ? "junction" : "dir");
   assert.throws(() => installClaudeOpenPetsMemory(symlinkHome));
 
   const symlinkFileHome = join(dir, "symlink-file-home");
   mkdirSync(join(symlinkFileHome, ".claude"), { recursive: true });
   writeFileSync(join(dir, "outside-file"), "x", "utf8");
-  symlinkSync(join(dir, "outside-file"), join(symlinkFileHome, ".claude", "CLAUDE.md"));
-  assert.throws(() => installClaudeOpenPetsMemory(symlinkFileHome));
+  try {
+    symlinkSync(join(dir, "outside-file"), join(symlinkFileHome, ".claude", "CLAUDE.md"), "file");
+    assert.throws(() => installClaudeOpenPetsMemory(symlinkFileHome));
+  } catch (error) {
+    if (!(process.platform === "win32" && error && typeof error === "object" && "code" in error && error.code === "EPERM")) throw error;
+    console.warn("Skipping file-symlink assertion because Windows symbolic-link privilege is unavailable.");
+  }
 
   const oversizedHome = join(dir, "oversized-home");
   mkdirSync(join(oversizedHome, ".claude"), { recursive: true });

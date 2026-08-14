@@ -245,7 +245,7 @@ await localScenario("loadLocal rejects invalid manifest safely", async ({ servic
 await localScenario("loadLocal rejects source symlink", async ({ service, source, root }) => {
   writeManifest(source, manifest({ id: "symlink-folder" }));
   const link = join(root, "source-link");
-  symlinkSync(source, link, "dir");
+  if (!tryCreateTestLink(source, link, "dir")) return;
   service["__source"] = link;
   const result = await service.loadLocal();
   assert.equal(result.ok, false);
@@ -254,7 +254,7 @@ await localScenario("loadLocal rejects source symlink", async ({ service, source
 await localScenario("loadLocal rejects manifest symlink", async ({ service, source, root }) => {
   const real = join(root, "real-manifest.json");
   writeFileSync(real, JSON.stringify(manifest({ id: "symlink-manifest" })), "utf8");
-  symlinkSync(real, join(source, OPENPETS_PLUGIN_MANIFEST_FILENAME));
+  if (!tryCreateTestLink(real, join(source, OPENPETS_PLUGIN_MANIFEST_FILENAME), "file")) return;
   const result = await service.loadLocal();
   assert.equal(result.ok, false);
 });
@@ -286,7 +286,7 @@ await localScenario("loadLocal rejects destination symlink before write", async 
   writeManifest(source, manifest({ id: "dest-link" }));
   const outside = join(root, "outside-target");
   mkdirSync(outside, { recursive: true });
-  symlinkSync(outside, join(userData, "plugins-dev", "dest-link"), "dir");
+  if (!tryCreateTestLink(outside, join(userData, "plugins-dev", "dest-link"), "dir")) return;
   const result = await service.loadLocal();
   assert.equal(result.ok, false);
   assert.equal(existsSync(join(outside, OPENPETS_PLUGIN_MANIFEST_FILENAME)), false);
@@ -453,7 +453,7 @@ await localScenario("bundled stale prune refuses unsafe path", async ({ userData
   const outside = join(root, "outside-stale");
   mkdirSync(outside, { recursive: true });
   const link = join(userData, "plugins", "openpets.pomodoro");
-  symlinkSync(outside, link, "dir");
+  if (!tryCreateTestLink(outside, link, "dir")) return;
   store.upsertRecord({ id: "openpets.pomodoro", version: "1.0.0", installPath: link, manifestPath: join(link, OPENPETS_PLUGIN_MANIFEST_FILENAME), source: "catalog", enabled: true, approvedPermissions: ["timer", "pet:speak"], config: {} });
   const runtime = new FakeRuntime();
   const service = new PluginService({ userDataPath: userData, stateStore: store, runtime: runtime as never, bundledPluginSourceDirs: [] });
@@ -467,7 +467,7 @@ await localScenario("bundled seeding rejects plugins root symlink", async ({ use
   rmSync(join(userData, "plugins"), { recursive: true, force: true });
   const outsideRoot = join(root, "outside-plugins");
   mkdirSync(outsideRoot, { recursive: true });
-  symlinkSync(outsideRoot, join(userData, "plugins"), "dir");
+  if (!tryCreateTestLink(outsideRoot, join(userData, "plugins"), "dir")) return;
   const official = join(root, "official");
   const source = join(official, "openpets.reminders");
   writeManifest(source, { manifestVersion: 2, id: "openpets.reminders", name: "Quick Reminders", version: "1.0.0", runtime: "javascript", sdkVersion: "1.0.0", entry: "index.js", permissions: ["pet:speak"] });
@@ -543,7 +543,7 @@ await localScenario("loadLocal rejects javascript nested entry symlink", async (
   mkdirSync(join(source, "nested"), { recursive: true });
   const real = join(root, "real-entry.mjs");
   writeFileSync(real, "export default {};\n", "utf8");
-  symlinkSync(real, join(source, "nested", "index.mjs"));
+  if (!tryCreateTestLink(real, join(source, "nested", "index.mjs"), "file")) return;
   const result = await service.loadLocal();
   assert.equal(result.ok, false);
 });
@@ -553,7 +553,7 @@ await localScenario("loadLocal rejects javascript symlinked entry parent", async
   const realNested = join(root, "real-nested");
   mkdirSync(realNested, { recursive: true });
   writeFileSync(join(realNested, "index.mjs"), "export default {};\n", "utf8");
-  symlinkSync(realNested, join(source, "nested"), "dir");
+  if (!tryCreateTestLink(realNested, join(source, "nested"), "dir")) return;
   const result = await service.loadLocal();
   assert.equal(result.ok, false);
 });
@@ -570,7 +570,7 @@ await localScenario("uninstall removes state reloads and rejects symlink deletio
   const outside = join(root, "outside-remove");
   mkdirSync(outside, { recursive: true });
   const link = join(userData, "plugins", "link-plug");
-  symlinkSync(outside, link, "dir");
+  if (!tryCreateTestLink(outside, link, "dir")) return;
   store.upsertRecord({ id: "link-plug", version: "1.0.0", installPath: link, manifestPath: join(link, OPENPETS_PLUGIN_MANIFEST_FILENAME), source: "catalog", enabled: true, approvedPermissions: ["timer", "pet:speak"], config: {} });
   const rejected = await service.uninstall("link-plug");
   assert.equal(rejected.ok, false);
@@ -580,7 +580,7 @@ await localScenario("uninstall removes state reloads and rejects symlink deletio
   const rootOutside = join(root, "outside-root");
   mkdirSync(rootOutside, { recursive: true });
   rmSync(join(userData, "plugins"), { recursive: true, force: true });
-  symlinkSync(rootOutside, join(userData, "plugins"), "dir");
+  if (!tryCreateTestLink(rootOutside, join(userData, "plugins"), "dir")) return;
   store.upsertRecord({ id: "root-link", version: "1.0.0", installPath: join(userData, "plugins", "root-link"), manifestPath: join(userData, "plugins", "root-link", OPENPETS_PLUGIN_MANIFEST_FILENAME), source: "catalog", enabled: true, approvedPermissions: ["timer", "pet:speak"], config: {} });
   const rootRejected = await service.uninstall("root-link");
   assert.equal(rootRejected.ok, false);
@@ -749,6 +749,17 @@ function writeManifest(dir: string, data: unknown): string {
   const path = join(dir, OPENPETS_PLUGIN_MANIFEST_FILENAME);
   writeFileSync(path, JSON.stringify(data), "utf8");
   return path;
+}
+
+function tryCreateTestLink(target: string, path: string, type: "file" | "dir"): boolean {
+  try {
+    symlinkSync(target, path, process.platform === "win32" && type === "dir" ? "junction" : type);
+    return true;
+  } catch (error) {
+    if (!(process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM")) throw error;
+    console.error(`Skipping ${type}-link assertion because Windows link privilege is unavailable.`);
+    return false;
+  }
 }
 
 function makeZip(name: string, data: Buffer): Buffer {

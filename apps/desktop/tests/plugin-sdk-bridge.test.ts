@@ -131,7 +131,8 @@ await scenario("unregistered command diagnostics identify safe command and plugi
 
 await scenario("status validation reports safe actionable errors", ({ bridge, store }) => {
   const record = store.getRecord("plug")!;
-  const api = bridge.createApi({ ...record, approvedPermissions: [...record.approvedPermissions, "status"] }, manifest());
+  const permissions = [...record.approvedPermissions, "status" as const];
+  const api = bridge.createApi({ ...record, approvedPermissions: permissions }, manifest({ permissions: permissions as OpenPetsJavascriptPluginManifest["permissions"] }));
 
   assert.throws(() => api.status.set({ text: 42 } as never), /Plugin status text must be a string; received number\./);
   assert.throws(() => api.status.set(" \t "), /Plugin status text must not be empty\./);

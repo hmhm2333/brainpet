@@ -73,8 +73,13 @@ assert.equal(readFileSync(join(userData, "plugins", manifest.id, "openpets.plugi
 
 const deleteRoot = mkdtempSync(join(tmpdir(), "openpets-plugin-delete-"));
 const outside = mkdtempSync(join(tmpdir(), "openpets-plugin-outside-"));
-symlinkSync(outside, join(deleteRoot, "plugins"), "dir");
-await assert.rejects(() => safeDeletePluginInstallDir(deleteRoot, manifest.id, join(deleteRoot, "plugins", manifest.id), "catalog"), /invalid|unexpected/);
+try {
+  symlinkSync(outside, join(deleteRoot, "plugins"), process.platform === "win32" ? "junction" : "dir");
+  await assert.rejects(() => safeDeletePluginInstallDir(deleteRoot, manifest.id, join(deleteRoot, "plugins", manifest.id), "catalog"), /invalid|unexpected/);
+} catch (error) {
+  if (!(process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM")) throw error;
+  console.error("Skipping directory-link assertion because Windows link privilege is unavailable.");
+}
 
 console.error("Plugin package validation passed.");
 

@@ -39,6 +39,18 @@ Docs here are the *narrative* layer on top of those maps.
   OpenCode, Cursor, and Pi are configured and how each turns agent activity into
   pet reactions, plus the CLI that ties them together.
 
+## BrainPet
+
+- **[brainpet-v1-product-requirements.md](brainpet-v1-product-requirements.md)** -
+  V1 product scope, runtime-first delivery order, and acceptance boundaries.
+- **[brainpet-runtime.md](brainpet-runtime.md)** - the currently implemented
+  transparent stage, session ownership, task loading, and host boundaries.
+- **[brainpet-gonogo-game-spec.md](brainpet-gonogo-game-spec.md)** - the target
+  Go/No-Go game, pet-to-reaction-zone interaction rig, independent placement,
+  scoring V2, telemetry, and implementation acceptance criteria.
+- **[brainpet-v1-parameter-freeze.md](brainpet-v1-parameter-freeze.md)** - the
+  current implemented task parameters and their approval/versioning rules.
+
 ## Plugins & SDK
 
 - **[plugins.md](plugins.md)** - the plugin platform: manifest schema,

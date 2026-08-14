@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { isTaskId, type BrainPetTaskId, type BrainPetTaskResult } from "./task-contract.js";
+import type { BrainPetTaskId, BrainPetTaskResult } from "./task-contract.js";
 import { createTaskProgress, evaluateBrainPetResult, localDateKey, type BrainPetProgressionOutcome, type BrainPetTaskProgress, type PlayableBrainPetTaskId } from "./progression.js";
-import { getBrainPetTaskManifest, isPlayableBrainPetTaskId, listPlayableBrainPetTaskIds } from "./task-registry.js";
+import { getBrainPetTaskManifest, isPlayableBrainPetTaskId, isRegisteredBrainPetTaskId, listPlayableBrainPetTaskIds } from "./task-registry.js";
 
 export interface BrainPetPersistedState {
   readonly version: 2;
@@ -33,11 +33,21 @@ export function createBrainPetPersistedState(now = new Date()): BrainPetPersiste
   };
 }
 
-export function loadBrainPetState(path: string): BrainPetPersistedState {
+export function loadBrainPetState(path: string, reportRecovery?: (message: string) => void): BrainPetPersistedState {
   try {
-    return parseBrainPetState(JSON.parse(readFileSync(path, "utf8")));
-  } catch {
-    return createBrainPetPersistedState();
+    const value = JSON.parse(readFileSync(path, "utf8"));
+    if (!isStateEnvelope(value)) throw new Error("BrainPet state schema is invalid.");
+    return parseBrainPetState(value);
+  } catch (error) {
+    try {
+      const backup = JSON.parse(readFileSync(`${path}.bak`, "utf8"));
+      if (!isStateEnvelope(backup)) throw new Error("BrainPet backup schema is invalid.");
+      reportRecovery?.(`Recovered BrainPet progress from backup after ${describeStateReadError(error)}.`);
+      return parseBrainPetState(backup);
+    } catch {
+      if (!isMissingFileError(error)) reportRecovery?.(`BrainPet progress could not be read: ${describeStateReadError(error)}.`);
+      return createBrainPetPersistedState();
+    }
   }
 }
 
@@ -79,8 +89,19 @@ export function appendBrainPetResult(state: BrainPetPersistedState, result: Brai
 export async function saveBrainPetState(path: string, state: BrainPetPersistedState): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  await rename(temporaryPath, path);
+  try {
+    try {
+      const existing = JSON.parse(await readFile(path, "utf8"));
+      if (isStateEnvelope(existing)) await copyFile(path, `${path}.bak`);
+    } catch {
+      // A missing or malformed primary file must not overwrite a valid backup.
+    }
+    await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    await rename(temporaryPath, path);
+  } catch (error) {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 export function parseBrainPetState(value: unknown): BrainPetPersistedState {
@@ -89,7 +110,7 @@ export function parseBrainPetState(value: unknown): BrainPetPersistedState {
   const highScores: Partial<Record<BrainPetTaskId, number>> = {};
   if (isRecord(value.highScores)) {
     for (const [taskId, score] of Object.entries(value.highScores)) {
-      if (isTaskId(taskId) && typeof score === "number" && Number.isFinite(score) && score >= 0) highScores[taskId] = Math.round(score);
+      if (isRegisteredBrainPetTaskId(taskId) && typeof score === "number" && Number.isFinite(score) && score >= 0) highScores[taskId] = Math.round(score);
     }
   }
   const recentResults = Array.isArray(value.recentResults) ? value.recentResults.filter(isPersistedResult).slice(0, 20) : [];
@@ -119,7 +140,7 @@ function parseTaskProgress(value: unknown, manifest: ReturnType<typeof getBrainP
 
 function isPersistedResult(value: unknown): value is BrainPetTaskResult {
   return isRecord(value)
-    && isTaskId(value.taskId)
+    && isRegisteredBrainPetTaskId(value.taskId)
     && Number.isInteger(value.seed)
     && typeof value.score === "number" && Number.isFinite(value.score)
     && Number.isInteger(value.correct)
@@ -132,7 +153,7 @@ function isPersistedResult(value: unknown): value is BrainPetTaskResult {
     && typeof value.taskVersion === "string"
     && typeof value.assetVersion === "string"
     && value.difficultyPolicyVersion === "brainpet-block-v1"
-    && value.scoreVersion === "brainpet-score-v1"
+    && (value.scoreVersion === "brainpet-score-v1" || value.scoreVersion === "brainpet-score-v2")
     && Number.isInteger(value.level)
     && Number.isInteger(value.falseAlarms)
     && (value.meanReactionTimeMs === null || Number.isFinite(value.meanReactionTimeMs))
@@ -144,4 +165,16 @@ function isPersistedResult(value: unknown): value is BrainPetTaskResult {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStateEnvelope(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && (value.version === 1 || value.version === 2) && Number.isInteger(value.totalSessions) && (value.totalSessions as number) >= 0;
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return isRecord(error) && error.code === "ENOENT";
+}
+
+function describeStateReadError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

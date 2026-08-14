@@ -7,7 +7,7 @@ import { motionMoveTo } from "./pet-motion-engine.js";
 import { registerRoamingPet } from "./pet-roaming-controller.js";
 import { debug, info } from "./logger.js";
 import { transientDisplayMs, type OpenPetsReaction } from "./local-ipc-protocol.js";
-import { clearTransientReaction, createDefaultPetWindow, getSafeDefaultPetPosition, getTransientDisplayDurationMs, getTransientReactionAnimationMs, isPetWindowDragging, loadDefaultPetContent, mergePetTransientDisplay, readWindowPosition, recoverPetMouseInterop, setPetReactionState, type PetPluginBubbles, type PetShowMediaOptions, type PetStatusBadgeReaction, type PetTransientDisplay } from "./pet-window.js";
+import { clearTransientReaction, createDefaultPetWindow, getSafeDefaultPetPosition, getTransientDisplayDurationMs, getTransientReactionAnimationMs, isPetWindowDragging, isPetWindowPositionLocked, loadDefaultPetContent, mergePetTransientDisplay, readWindowPosition, recoverPetMouseInterop, setPetReactionState, type PetPluginBubbles, type PetShowMediaOptions, type PetStatusBadgeReaction, type PetTransientDisplay } from "./pet-window.js";
 import { PetBubbleArbiter, type ActiveBubble, type PetBubbleSink } from "./plugin-bubble-arbiter.js";
 import { publishPluginPetEvent } from "./plugin-events-source.js";
 import { reclampAgentPetWindows } from "./agent-pet-controller.js";
@@ -406,6 +406,7 @@ function getMovementBlockedReason(window: BrowserWindow, allowMoving = false): s
   if (!window.isVisible()) return "hidden";
   if (paused) return "paused";
   if (isPetWindowDragging(window)) return "dragging";
+  if (isPetWindowPositionLocked(window)) return "interaction-locked";
   if (transientDisplay) return "transient-display";
   if (statusBadge) return "status-active";
   return undefined;

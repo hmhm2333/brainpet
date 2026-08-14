@@ -1,6 +1,8 @@
 import { app, shell } from "electron";
 import https from "node:https";
+import { basename } from "node:path";
 
+import { resolveDesktopDistributionSettings } from "./distribution-profile.js";
 import { createParsedUpdateStatus, normalizeVersion } from "./update-version.js";
 
 export type UpdateStatusState = "idle" | "checking" | "available" | "current" | "error";
@@ -20,7 +22,8 @@ interface GitHubReleaseResponse {
   readonly html_url?: unknown;
 }
 
-const githubRepository = process.env.OPENPETS_GITHUB_REPOSITORY || "alvinunreal/openpets";
+const distribution = resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath));
+const githubRepository = process.env.OPENPETS_GITHUB_REPOSITORY || (distribution.profile === "brainpet" ? "hmhm2333/brainpet" : "alvinunreal/openpets");
 const latestReleaseApiUrl = `https://api.github.com/repos/${githubRepository}/releases/latest`;
 const releasesPageUrl = `https://github.com/${githubRepository}/releases`;
 const releaseCheckTimeoutMs = 6_000;
@@ -90,7 +93,7 @@ function fetchLatestRelease(): Promise<GitHubReleaseResponse> {
     const request = https.get(latestReleaseApiUrl, {
       headers: {
         Accept: "application/vnd.github+json",
-        "User-Agent": `OpenPets/${getCurrentAppVersion()}`,
+        "User-Agent": `${distribution.displayName}/${getCurrentAppVersion()}`,
       },
       timeout: releaseCheckTimeoutMs,
     }, (response) => {
@@ -104,7 +107,7 @@ function fetchLatestRelease(): Promise<GitHubReleaseResponse> {
       });
       response.on("end", () => {
         if (response.statusCode === 404) {
-          reject(new Error("No public OpenPets releases found yet."));
+          reject(new Error(`No public ${distribution.displayName} releases found yet.`));
           return;
         }
         if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {

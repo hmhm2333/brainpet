@@ -54,15 +54,19 @@ export class StageQualityMonitor {
   private maximumFrameMs = 0;
   private focusLosses = 0;
   private renderedFrames = 0;
+  private timedFrames = 0;
+  private sampledDurationMs = 0;
 
   frame(nowMs: number): void {
     this.renderedFrames += 1;
     if (this.previousFrameAt !== null) {
       const elapsed = Math.max(0, nowMs - this.previousFrameAt);
+      this.timedFrames += 1;
+      this.sampledDurationMs += elapsed;
       this.maximumFrameMs = Math.max(this.maximumFrameMs, elapsed);
       // V1 explicitly supports a 30 fps low-performance floor. Do not classify
       // ordinary 30 fps cadence or minor scheduler jitter as lost frames.
-      if (elapsed > 50) this.droppedFrames += Math.max(1, Math.round(elapsed / (1000 / 60)) - 1);
+      if (elapsed > 40) this.droppedFrames += Math.max(1, Math.round(elapsed / (1000 / 30)) - 1);
       if (elapsed > 120) this.longFrames += 1;
     }
     this.previousFrameAt = nowMs;
@@ -78,13 +82,13 @@ export class StageQualityMonitor {
 
   snapshot(pausedMs: number): BrainPetResultQuality {
     const flags: string[] = [];
-    const frameLossRatio = this.droppedFrames / Math.max(1, this.renderedFrames + this.droppedFrames);
+    const effectiveFps = this.sampledDurationMs > 0 ? this.timedFrames * 1_000 / this.sampledDurationMs : 60;
     if (this.focusLosses > 0) flags.push("focus-lost");
     if (this.longFrames > 0) flags.push("long-frame");
     // Absolute drop counts scale with session length. Invalidate only when the
     // effective cadence falls below the declared 30 fps floor for a sustained
     // sample, while still reporting isolated long frames as diagnostics.
-    if (this.renderedFrames >= 120 && frameLossRatio > 0.5) flags.push("excessive-frame-loss");
+    if (this.renderedFrames >= 120 && effectiveFps < 29) flags.push("excessive-frame-loss");
     return {
       valid: !flags.includes("excessive-frame-loss"),
       focusLossCount: this.focusLosses,

@@ -18,12 +18,12 @@ test("stage shrinks for a constrained work area without leaving it", () => {
   assert.equal(bounds.y + bounds.height <= workArea.y + workArea.height, true);
 });
 
-test("stage prefers the space above the pet and clamps horizontally", () => {
+test("stage opens from the pet toward the work-area center", () => {
   const bounds = computeBrainPetStageBounds(
     { x: 1850, y: 800, width: 80, height: 80 },
     { x: 0, y: 0, width: 1920, height: 1040 },
   );
-  assert.equal(bounds.y < 800, true);
+  assert.equal(bounds.x + bounds.width < 1850, true);
   assert.equal(bounds.x + bounds.width <= 1908, true);
 });
 
