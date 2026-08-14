@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
+import { createOpenPetsClient } from "../../../packages/client/dist/index.js";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(scriptDir, "..");
@@ -16,6 +17,7 @@ const outputPath = resolve(process.argv[2] ?? join(repoRoot, "output", "playwrig
 const require = createRequire(import.meta.url);
 const electronPath = process.env.BRAINPET_ELECTRON_EXECUTABLE || require("electron");
 const userDataDir = await mkdtemp(join(tmpdir(), "brainpet-electron-smoke-"));
+const discoveryPath = join(userDataDir, "brainpet-ipc.json");
 const port = await reservePort();
 const logs = [];
 const spawnedAt = Date.now();
@@ -34,7 +36,7 @@ const exerciserMode = !forcedTask || forcedTask === "foundation-probe";
 
 const child = spawn(electronPath, [".", `--user-data-dir=${userDataDir}`, `--remote-debugging-port=${port}`], {
   cwd: appDir,
-  env: { ...process.env, ...(exerciserMode ? { OPENPETS_BRAINPET_EXERCISER: "1" } : {}), ...(forcedTask ? { OPENPETS_BRAINPET_FORCE_TASK: forcedTask } : {}), OPENPETS_DISTRIBUTION_PROFILE: process.env.OPENPETS_DISTRIBUTION_PROFILE ?? "brainpet", OPENPETS_DISABLE_PLUGIN_CATALOG: "1", OPENPETS_LOG_CONSOLE: "1", ...(expectDisabled ? { OPENPETS_BRAINPET_ENABLED: "0" } : {}) },
+  env: { ...process.env, ...(exerciserMode ? { OPENPETS_BRAINPET_EXERCISER: "1" } : {}), ...(forcedTask ? { OPENPETS_BRAINPET_FORCE_TASK: forcedTask } : {}), OPENPETS_DISTRIBUTION_PROFILE: process.env.OPENPETS_DISTRIBUTION_PROFILE ?? "brainpet", OPENPETS_DISCOVERY_FILE: discoveryPath, OPENPETS_DISABLE_PLUGIN_CATALOG: "1", OPENPETS_LOG_CONSOLE: "1", ...(expectDisabled ? { OPENPETS_BRAINPET_ENABLED: "0" } : {}) },
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true,
 });
@@ -54,6 +56,42 @@ try {
     process.stdout.write(`${JSON.stringify({ ok: true, featureFlagRollback: true })}\n`);
     process.exitCode = 0;
   } else {
+  const companionClient = createOpenPetsClient({ discoveryPath });
+  const companionNow = Date.now();
+  await companionClient.reportAgentActivity({ agent: "codex", sessionId: "smoke-working", turnId: "turn-working", state: "working", occurredAt: companionNow, capabilities: ["observeLifecycle"] });
+  await companionClient.reportAgentActivity({ agent: "claude", sessionId: "smoke-review", turnId: "turn-review", state: "ready", occurredAt: companionNow + 1, capabilities: ["observeLifecycle"] });
+  await waitForEvaluation(petTarget, `Boolean(document.querySelector('[data-companion-toggle]'))`, 2_000);
+  const companionBadge = await evaluate(petTarget, `(() => {
+    const button = document.querySelector('[data-companion-toggle]');
+    if (!(button instanceof HTMLButtonElement)) return { found: false };
+    const rect = button.getBoundingClientRect();
+    return { found: true, expanded: button.getAttribute('aria-expanded'), width: rect.width, height: rect.height, viewportWidth: innerWidth, viewportHeight: innerHeight, screenX, screenY, xRatio: (rect.left + rect.width / 2) / innerWidth, yRatio: (rect.top + rect.height / 2) / innerHeight };
+  })()`);
+  assert.equal(companionBadge.found, true, "Agent activity must render a companion status badge");
+  assert.equal(companionBadge.expanded, "false");
+  assert.equal(companionBadge.width >= 28 && companionBadge.height >= 20, true, "companion badge must keep a usable native hit target");
+  await clickWindowPoint(petTarget, companionBadge, "OpenPets Default Pet", false);
+  await waitForEvaluation(petTarget, `document.querySelectorAll('.primary-companion-item').length === 2`, 2_000);
+  const companionTray = await evaluate(petTarget, `({
+    expanded: document.querySelector('[data-companion-toggle]')?.getAttribute('aria-expanded'),
+    rows: document.querySelectorAll('.primary-companion-item').length,
+    hasHostAction: Boolean(document.querySelector('[data-companion-allow], [data-companion-deny], [data-companion-stop], [data-companion-reply]')),
+    fontFamily: getComputedStyle(document.querySelector('.primary-companion-tray')).fontFamily
+  })`);
+  assert.equal(companionTray.expanded, "true");
+  assert.equal(companionTray.rows, 2);
+  assert.equal(companionTray.hasHostAction, false, "observe-only providers must not receive fake host action controls");
+  assert.match(companionTray.fontFamily, /BrainPet Pixel/);
+  await evaluate(petTarget, `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+  const companionOutputPath = outputPath.replace(/(\.[^.]+)$/, "-companion$1");
+  const companionScreenshot = await sendCdp(petTarget.webSocketDebuggerUrl, "Page.captureScreenshot", { format: "png", fromSurface: true });
+  await mkdir(dirname(companionOutputPath), { recursive: true });
+  await writeFile(companionOutputPath, Buffer.from(companionScreenshot.data, "base64"));
+  await clickWindowPoint(petTarget, await evaluate(petTarget, `(() => { const button = document.querySelector('[data-companion-toggle]'); const rect = button.getBoundingClientRect(); return { viewportWidth: innerWidth, viewportHeight: innerHeight, screenX, screenY, xRatio: (rect.left + rect.width / 2) / innerWidth, yRatio: (rect.top + rect.height / 2) / innerHeight }; })()`), "OpenPets Default Pet", false);
+  await waitForEvaluation(petTarget, `document.querySelector('[data-companion-toggle]')?.getAttribute('aria-expanded') === 'false'`, 2_000);
+  await companionClient.reportAgentActivity({ agent: "codex", sessionId: "smoke-working", turnId: "turn-working", state: "idle", occurredAt: companionNow + 2, capabilities: ["observeLifecycle"] });
+  await companionClient.reportAgentActivity({ agent: "claude", sessionId: "smoke-review", turnId: "turn-cleanup", state: "idle", occurredAt: companionNow + 3, capabilities: ["observeLifecycle"] });
+  await waitForEvaluation(petTarget, `!document.querySelector('[data-companion-toggle]')`, 2_000);
   const trigger = await evaluate(petTarget, `(() => {
     const button = document.querySelector('[data-brainpet-trigger]');
     if (!(button instanceof HTMLButtonElement)) return { found: false };
@@ -62,7 +100,7 @@ try {
   })()`);
   logs.push(`BrainPet trigger geometry ${JSON.stringify(trigger)}\n`);
   assert.equal(trigger.found, true, "pet training trigger must exist");
-  assert.equal(trigger.label, "打开或关闭 BrainPet 训练");
+  assert.match(trigger.label, /训练|training/i);
   assert.equal(trigger.width >= 28 && trigger.height >= 28, true, "pet training trigger must remain easy to click");
   const clickedAtMs = await clickPetTrigger(petTarget, trigger);
   await waitForEvaluation(petTarget, `document.documentElement.dataset.brainpetLaunching === 'true'`, 500);
@@ -366,7 +404,7 @@ try {
   if (enforceResourceBudget && recoveredIdleProcessMetrics) assertProcessBudget("recovered idle", recoveredIdleProcessMetrics, { processCount: (idleProcessMetrics?.processCount ?? 4) + 1, workingSetBytes: 700 * 1024 * 1024, privateBytes: 500 * 1024 * 1024 });
   assert.doesNotMatch(logs.join(""), /invalid stage event rejected|stage event transition rejected/, "crash recovery must leave the Host lifecycle valid");
 
-  process.stdout.write(`${JSON.stringify({ ok: true, outputPath, introOutputPath, resultOutputPath, videoPath, petReadyMs, idleProcessMetrics, activeProcessMetrics, recoveredIdleProcessMetrics, trigger, stage: { width: welcome.width, height: welcome.height, desktopOverlay: true }, prompt: welcome.prompt, introBufferMs, openingMs, petIndependentMove, rigIndependentDrag, trialVisualHiddenDuringDrag, restartedTrialProgress, rigAutoResume, focusPause, nativeReactionClickVerified, petThrowVerified, petToggleCloseVerified, completionVerified: Boolean(completion), completionQuality: completion?.quality ?? null, foundationInputVerified, lifecycleCycles, soak, crashIsolated: true, crashRecovered: true })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, outputPath, introOutputPath, companionOutputPath, resultOutputPath, videoPath, petReadyMs, idleProcessMetrics, activeProcessMetrics, recoveredIdleProcessMetrics, companionVerified: true, trigger, stage: { width: welcome.width, height: welcome.height, desktopOverlay: true }, prompt: welcome.prompt, introBufferMs, openingMs, petIndependentMove, rigIndependentDrag, trialVisualHiddenDuringDrag, restartedTrialProgress, rigAutoResume, focusPause, nativeReactionClickVerified, petThrowVerified, petToggleCloseVerified, completionVerified: Boolean(completion), completionQuality: completion?.quality ?? null, foundationInputVerified, lifecycleCycles, soak, crashIsolated: true, crashRecovered: true })}\n`);
   }
 } catch (error) {
   process.stderr.write(`${logs.join("")}\n`);

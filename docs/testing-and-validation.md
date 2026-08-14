@@ -41,6 +41,7 @@ so adding a test makes it part of the default gate automatically. Three buckets:
   version checking, ZIP safety, Codex pets, Claude memory, reaction-animation
   mapping, plugin bridge/gateway guards, BrainPet's session-aware agent
   lifecycle aggregation, the privacy-minimized Codex bridge manifest/mapping,
+  the bounded Primary Companion badge/tray view model and unread identity,
   and `voice-lifecycle.test.ts` for the
   privacy indicator, capture cancellation/cleanup races, separate timeouts,
   empty transcripts, and shutdown behavior. `remote-control.test.ts` covers
@@ -66,7 +67,10 @@ so adding a test makes it part of the default gate automatically. Three buckets:
 
 BrainPet's Electron smoke uses a unique `user-data-dir`, moves the Windows
 cursor through the real shaped hotspot, sends the click through the native
-window, and verifies that the stage appears. A DOM `button.click()` is not
+window, and verifies that the stage appears. Before opening the stage it also
+sends two real `agent.activity` IPC events, native-clicks the status badge,
+checks the bounded pixel activity tray, and proves an observe-only provider
+does not receive fake host-action controls. A DOM `button.click()` is not
 accepted as evidence for transparent-window hit testing. Teardown first asks
 Electron to close through CDP, then scopes any fallback process-tree cleanup to
 that unique directory and fails if the temporary profile cannot be removed.

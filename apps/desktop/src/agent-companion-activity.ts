@@ -37,11 +37,12 @@ const statusPriority: Readonly<Record<AgentCompanionStatus, number>> = {
 export function deriveAgentCompanionActivitySummary(
   entries: ReadonlyMap<string, AgentLifecycleEntry>,
   maximumItems = 50,
+  seenActivityKeys: ReadonlySet<string> = new Set(),
 ): AgentCompanionActivitySummary {
   const limit = Math.max(0, Math.min(50, Math.floor(maximumItems)));
   const allItems = [...entries.values()]
     .filter((entry) => entry.state !== "idle")
-    .map(toActivityItem)
+    .map((entry) => toActivityItem(entry, seenActivityKeys))
     .sort((left, right) => right.occurredAt - left.occurredAt || left.provider.localeCompare(right.provider) || left.sessionId.localeCompare(right.sessionId));
   const items = allItems.slice(0, limit);
   const activeCount = allItems.filter((item) => item.status === "working" || item.status === "waiting").length;
@@ -54,22 +55,26 @@ export function deriveAgentCompanionActivitySummary(
   return { status, activeCount, unreadCount, totalCount: allItems.length, items };
 }
 
+export function agentCompanionActivityKey(item: Pick<AgentCompanionActivityItem, "provider" | "sessionId" | "occurredAt">): string {
+  return `${item.provider}\u0000${item.sessionId}\u0000${item.occurredAt}`;
+}
+
 export function mapAgentLifecycleToCompanionStatus(state: AgentLifecycleState): AgentCompanionStatus {
   if (state === "ready") return "review";
   if (state === "blocked") return "failed";
   return state;
 }
 
-function toActivityItem(entry: AgentLifecycleEntry): AgentCompanionActivityItem {
+function toActivityItem(entry: AgentLifecycleEntry, seenActivityKeys: ReadonlySet<string>): AgentCompanionActivityItem {
   const status = mapAgentLifecycleToCompanionStatus(entry.state);
   if (status === "idle") throw new TypeError("Idle lifecycle entries cannot become companion activity items.");
+  const identity = { provider: entry.agent, sessionId: entry.sessionId, occurredAt: entry.occurredAt };
   return {
-    provider: entry.agent,
-    sessionId: entry.sessionId,
+    ...identity,
     ...(entry.turnId ? { turnId: entry.turnId } : {}),
     status,
     occurredAt: entry.occurredAt,
-    unread: status === "review" || status === "failed",
+    unread: (status === "review" || status === "failed") && !seenActivityKeys.has(agentCompanionActivityKey(identity)),
     capabilities: entry.capabilities,
     ...(entry.request ? { request: entry.request } : {}),
   };

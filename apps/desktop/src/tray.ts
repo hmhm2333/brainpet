@@ -2,7 +2,7 @@ import { Menu, shell, Tray, type MenuItemConstructorOptions } from "electron";
 
 import { getAppStateSnapshot } from "./app-state.js";
 import { createTrayIcon } from "./assets.js";
-import { hideDefaultPet, isDefaultPetVisible, setDefaultPetPaused, showDefaultPet } from "./default-pet-controller.js";
+import { getPrimaryCompanionFollowMode, hideDefaultPet, isDefaultPetVisible, setDefaultPetPaused, showDefaultPet, wakePrimaryCompanion } from "./default-pet-controller.js";
 import { t } from "./i18n/index.js";
 import { quitOpenPets } from "./lifecycle.js";
 import { info, openLogsFolder } from "./logger.js";
@@ -55,10 +55,12 @@ export function refreshTrayMenu(): void {
       click: () => openControlCenterWindow("pets"),
     },
     {
-      label: isDefaultPetVisible() ? t("tray.hideDefaultPet") : t("tray.showDefaultPet"),
+      label: isDefaultPetVisible() ? t("tray.hideDefaultPet") : getPrimaryCompanionFollowMode() === "paused" ? t("tray.wakeBrainPet") : t("tray.showDefaultPet"),
       click: () => {
         if (isDefaultPetVisible()) {
           hideDefaultPet();
+        } else if (getPrimaryCompanionFollowMode() === "paused") {
+          wakePrimaryCompanion();
         } else {
           showDefaultPet();
         }

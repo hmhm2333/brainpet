@@ -21,12 +21,16 @@ import { canForwardMouseEvents as platformCanForwardMouseEvents, shouldWatchForw
 import { computeEffectiveWaylandBackend, shouldPetWindowBeFocusable } from "./wayland-backend.js";
 import { createIdleSpriteKeyframes } from "./pet-animation-timing.js";
 import { isBrainPetFeatureEnabled, resolveDesktopDistributionSettings } from "./distribution-profile.js";
+import type { AgentCompanionActivitySummary } from "./agent-companion-activity.js";
+import { derivePrimaryCompanionView } from "./primary-companion-ui.js";
 
 export interface PetWindowInteractionHooks {
   readonly onBubbleDismissed?: (dismissToken: string) => void;
   readonly onBubbleAction?: (dismissToken: string, actionId: string) => void;
   readonly onBubbleSubmit?: (dismissToken: string, values: Record<string, string | number>) => void;
   readonly onPetEvent?: (name: string, payload: Record<string, unknown>) => void;
+  readonly onCompanionTrayToggled?: (open: boolean) => void;
+  readonly onCompanionActivityDismissed?: (provider: string, sessionId: string) => void;
 }
 
 export interface DefaultPetWindowOptions extends PetWindowInteractionHooks {
@@ -35,6 +39,8 @@ export interface DefaultPetWindowOptions extends PetWindowInteractionHooks {
   readonly display: PetTransientDisplay | null;
   readonly badge: PetStatusBadgeReaction | null;
   readonly pluginBubbles?: PetPluginBubbles | null;
+  readonly companionActivity?: AgentCompanionActivitySummary | null;
+  readonly companionTrayOpen?: boolean;
   readonly onPositionChanged: (position: Point) => void;
   readonly onHideRequested: () => void;
 }
@@ -163,7 +169,7 @@ export function isPetWindowDragging(window: BrowserWindow): boolean {
 
 export function createDefaultPetWindow(options: DefaultPetWindowOptions, dismissToken?: string): BrowserWindow {
   const window = createBasePetWindow("OpenPets — Default Pet", options.position, {
-    hasInteractiveInput: petPluginBubblesHaveInteractiveInput(options.pluginBubbles ?? null),
+    hasInteractiveInput: petPluginBubblesHaveInteractiveInput(options.pluginBubbles ?? null) || options.companionTrayOpen === true,
   });
   info("pet.window", "default window create", { windowId: window.id, position: options.position, paused: options.paused, hasDisplay: Boolean(options.display), badge: options.badge });
   installMousePassthroughAndDrag(window, options);
@@ -185,7 +191,7 @@ export function createDefaultPetWindow(options: DefaultPetWindowOptions, dismiss
     options.onPositionChanged(readWindowPosition(window));
   });
 
-  void loadDefaultPetContent(window, options.paused, options.display, options.badge, dismissToken, options.pluginBubbles ?? null);
+  void loadDefaultPetContent(window, options.paused, options.display, options.badge, dismissToken, options.pluginBubbles ?? null, options.companionActivity ?? null, options.companionTrayOpen === true);
 
   return window;
 }
@@ -216,7 +222,7 @@ function installPetContextMenu(window: BrowserWindow, action: { readonly label: 
   const handleContextMenu = (event: Electron.Event): void => {
     event.preventDefault();
     if (window.isDestroyed()) return;
-    void buildPetContextMenuTemplate(action).then((template) => Menu.buildFromTemplate(template).popup({ window })).catch((error) => { logError("pet.window", "context menu build failed", error); Menu.buildFromTemplate([{ label: action.label, click: action.click }]).popup({ window }); });
+    void buildPetContextMenuTemplate(window, action).then((template) => Menu.buildFromTemplate(template).popup({ window })).catch((error) => { logError("pet.window", "context menu build failed", error); Menu.buildFromTemplate([{ label: action.label, click: action.click }]).popup({ window }); });
   };
   webContents.on("context-menu", handleContextMenu);
   window.once("closed", () => {
@@ -224,7 +230,7 @@ function installPetContextMenu(window: BrowserWindow, action: { readonly label: 
   });
 }
 
-async function buildPetContextMenuTemplate(action: { readonly label: string; readonly click: () => void; readonly defaultPet?: boolean; readonly focusSessionWindow?: () => void }): Promise<Electron.MenuItemConstructorOptions[]> {
+async function buildPetContextMenuTemplate(window: BrowserWindow, action: { readonly label: string; readonly click: () => void; readonly defaultPet?: boolean; readonly focusSessionWindow?: () => void }): Promise<Electron.MenuItemConstructorOptions[]> {
   if (!action.defaultPet) {
     const template: Electron.MenuItemConstructorOptions[] = [];
     if (action.focusSessionWindow) {
@@ -256,9 +262,11 @@ async function buildPetContextMenuTemplate(action: { readonly label: string; rea
     plugins.set(item.pluginId, group);
   }
   const template: Electron.MenuItemConstructorOptions[] = [];
-  if (isBrainPetFeatureEnabled(resolveCurrentDistribution(), process.env.OPENPETS_BRAINPET_ENABLED)) {
+  const brainPetEnabled = isBrainPetFeatureEnabled(resolveCurrentDistribution(), process.env.OPENPETS_BRAINPET_ENABLED);
+  if (brainPetEnabled) {
     const selectedScale = getAppStateSnapshot().preferences.petScale;
-    template.push({
+    const followPaused = getAppStateSnapshot().preferences.primaryCompanionFollowMode === "paused";
+    template.push({ label: t("pet.menu.startTraining"), click: () => brainPetTrainingRequestHandler?.(window) }, {
       label: t("settings.general.petScale.title"),
       submenu: petScaleOptions.map((option) => ({
         label: `${Math.round(option.value * 100)}%`,
@@ -269,6 +277,19 @@ async function buildPetContextMenuTemplate(action: { readonly label: string; rea
           import("./default-pet-controller.js").then(({ refreshDefaultPetContent }) => refreshDefaultPetContent()).catch((error) => logError("pet.window", "BrainPet scale refresh failed", error));
         },
       })),
+    }, {
+      label: t("pet.menu.pauseAgentFollow"),
+      type: "checkbox",
+      checked: followPaused,
+      click: () => {
+        import("./default-pet-controller.js").then(({ getPrimaryCompanionFollowMode, setPrimaryCompanionFollowMode, wakePrimaryCompanion }) => {
+          if (getPrimaryCompanionFollowMode() === "paused") wakePrimaryCompanion();
+          else setPrimaryCompanionFollowMode("paused");
+        }).catch((error) => logError("pet.window", "BrainPet follow toggle failed", error));
+      },
+    }, {
+      label: t("pet.menu.hideUntilActivity"),
+      click: () => import("./default-pet-controller.js").then(({ hidePrimaryCompanionUntilActivity }) => hidePrimaryCompanionUntilActivity()).catch((error) => logError("pet.window", "BrainPet activity hide failed", error)),
     }, { type: "separator" });
   }
   const openControlCenter = (route: "dashboard" | "plugins"): void => {
@@ -279,7 +300,7 @@ async function buildPetContextMenuTemplate(action: { readonly label: string; rea
   template.push(
     { label: t("tray.plugins"), click: () => openControlCenter("plugins") },
     { label: t("pet.menu.openControlCenter"), click: () => openControlCenter("dashboard") },
-    { label: action.label, click: action.click },
+    ...(!brainPetEnabled ? [{ label: action.label, click: action.click }] : []),
   );
   return template;
 }
@@ -357,7 +378,7 @@ function buildPluginCommandFormUrl(title: string, form: PluginCommandForm, chann
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 
 function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowInteractionHooks = {}): void {
-  const { onBubbleDismissed, onBubbleAction, onBubbleSubmit, onPetEvent } = hooks;
+  const { onBubbleDismissed, onBubbleAction, onBubbleSubmit, onPetEvent, onCompanionTrayToggled, onCompanionActivityDismissed } = hooks;
   const windowId = window.id;
   const useWaylandNativeDrag = shouldUseWaylandNativePetDrag();
   if (useWaylandNativeDrag) {
@@ -594,13 +615,21 @@ function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowI
     onBubbleSubmit?.(dismissToken, out);
   };
 
-  const allowedPetEventNames = new Set(["pet:clicked", "pet:doubleClicked", "pet:hover", "pet:drop", "brainpet:trainingRequested"]);
+  const allowedPetEventNames = new Set(["pet:clicked", "pet:doubleClicked", "pet:hover", "pet:drop", "brainpet:trainingRequested", "brainpet:companionTrayToggled", "brainpet:companionActivityDismissed"]);
   const handlePetEvent = (event: IpcMainEvent, name: unknown, payload: unknown): void => {
     if (!isFromWindow(event)) return;
     if (typeof name !== "string" || !allowedPetEventNames.has(name)) return;
     const data = typeof payload === "object" && payload !== null && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
     if (name !== "pet:hover") debug("pet.window", "pet event", { windowId, name });
     if (name === "brainpet:trainingRequested") brainPetTrainingRequestHandler?.(window);
+    if (name === "brainpet:companionTrayToggled") {
+      if (typeof data.open !== "boolean") return;
+      onCompanionTrayToggled?.(data.open);
+    }
+    if (name === "brainpet:companionActivityDismissed") {
+      if (!isSafeCompanionIdentifier(data.provider) || !isSafeCompanionIdentifier(data.sessionId)) return;
+      onCompanionActivityDismissed?.(data.provider, data.sessionId);
+    }
     onPetEvent?.(name, data);
   };
 
@@ -798,12 +827,12 @@ function applyPetAlwaysOnTop(window: BrowserWindow): void {
   }
 }
 
-export async function loadDefaultPetContent(window: BrowserWindow, paused: boolean, display: PetTransientDisplay | null = null, badge: PetStatusBadgeReaction | null = null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null): Promise<void> {
+export async function loadDefaultPetContent(window: BrowserWindow, paused: boolean, display: PetTransientDisplay | null = null, badge: PetStatusBadgeReaction | null = null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false): Promise<void> {
   const sequence = allocateWindowLoadSequence(window);
   debug("pet.window", "default content render begin", { windowId: window.id, sequence, paused, hasDisplay: Boolean(display), reaction: display?.reaction, hasMessage: Boolean(display?.message), badge, hasPluginBubble: Boolean(pluginBubbles?.transient), hasPinned: Boolean(pluginBubbles?.pinned), defaultPetId: getAppStateSnapshot().preferences.defaultPetId });
-  applyPetWindowFocusPolicy(window, petPluginBubblesHaveInteractiveInput(pluginBubbles));
-  const render = await createDefaultPetRender(paused, display, badge, dismissToken, pluginBubbles);
-  applyNativePetWindowShape(window, getAppStateSnapshot().preferences.petScale as PetScaleValue, Boolean(display?.message || display?.reactionMessage || display?.reaction || display?.mediaPath || badge || paused || pluginBubbles?.transient || pluginBubbles?.pinned));
+  applyPetWindowFocusPolicy(window, petPluginBubblesHaveInteractiveInput(pluginBubbles) || companionTrayOpen);
+  const render = await createDefaultPetRender(paused, display, badge, dismissToken, pluginBubbles, companionActivity, companionTrayOpen);
+  applyNativePetWindowShape(window, getAppStateSnapshot().preferences.petScale as PetScaleValue, Boolean(display?.message || display?.reactionMessage || display?.reaction || display?.mediaPath || badge && !companionActivity?.totalCount || paused || pluginBubbles?.transient || pluginBubbles?.pinned || companionTrayOpen));
   if (tryUpdateLoadedPetContent(window, render, "default", sequence)) return;
   await loadPetHtmlFile(window, render.html, "default", sequence).then(() => {
     petWindowRenderCache.set(window, render.cacheKey);
@@ -839,6 +868,10 @@ export async function loadExplicitPetContent(window: BrowserWindow, petId: strin
 
 function petPluginBubblesHaveInteractiveInput(pluginBubbles: PetPluginBubbles | null | undefined): boolean {
   return Boolean(pluginBubbles?.transient?.bubble.input || pluginBubbles?.pinned?.bubble.input);
+}
+
+function isSafeCompanionIdentifier(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 160 && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
 function applyPetWindowFocusPolicy(window: BrowserWindow, hasInteractiveInput: boolean): void {
@@ -996,21 +1029,22 @@ function applyNativePetWindowShape(window: BrowserWindow, scale: PetScaleValue, 
   }
 }
 
-async function createDefaultPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null): Promise<PetContentRender> {
-  const installedPetRender = await tryCreateInstalledPetRender(paused, display, badge, dismissToken, pluginBubbles);
+async function createDefaultPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false): Promise<PetContentRender> {
+  const installedPetRender = await tryCreateInstalledPetRender(paused, display, badge, dismissToken, pluginBubbles, companionActivity, companionTrayOpen);
   if (installedPetRender) {
     return installedPetRender;
   }
 
   const scale = getAppStateSnapshot().preferences.petScale as PetScaleValue;
-  return createBuiltInPetRender(paused, display, badge, scale, "default:builtin", dismissToken, pluginBubbles);
+  return createBuiltInPetRender(paused, display, badge, scale, "default:builtin", dismissToken, pluginBubbles, companionActivity, companionTrayOpen);
 }
 
-function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, scale: PetScaleValue, cachePrefix: string, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null): PetContentRender {
+function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, scale: PetScaleValue, cachePrefix: string, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false): PetContentRender {
   const spriteUrl = pathToFileURL(join(app.getAppPath(), "assets", defaultPetSprite.fileName)).toString();
   const hasPinned = Boolean(pluginBubbles?.pinned);
-  const bodyHtml = createPetBodyMarkup("OpenPets default pet", createBubbleMarkup(display, paused, badge, dismissToken, pluginBubbles), `<div class="sprite" role="img" aria-label="Claude animated default pet"></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned);
-  const reactionState = getReactionSpriteState(display?.reaction);
+  const companionMarkup = createPrimaryCompanionMarkup(companionActivity, companionTrayOpen);
+  const bodyHtml = createPetBodyMarkup("OpenPets default pet", createBubbleMarkup(display, paused, companionActivity?.totalCount ? null : badge, dismissToken, pluginBubbles), `<div class="sprite" role="img" aria-label="Claude animated default pet"></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned, companionMarkup);
+  const reactionState = getReactionSpriteState(display?.reaction ?? getPrimaryCompanionReaction(companionActivity) ?? badge ?? undefined);
   const waitingAnimationDurationMs = getAppStateSnapshot().preferences.waitingAnimationDurationMs;
   const stateRows = getConfiguredSpriteStates(waitingAnimationDurationMs);
 
@@ -1059,7 +1093,7 @@ function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | 
   };
 }
 
-async function tryCreateInstalledPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null): Promise<PetContentRender | null> {
+async function tryCreateInstalledPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false): Promise<PetContentRender | null> {
   const state = getAppStateSnapshot();
   const selected = state.pets.installed.find((pet) => pet.id === state.preferences.defaultPetId);
 
@@ -1068,7 +1102,7 @@ async function tryCreateInstalledPetRender(paused: boolean, display: PetTransien
   }
 
   try {
-    return await createInstalledPetRender(selected.id, selected.displayName, paused, display, state.preferences.petScale as PetScaleValue, badge, `default:${selected.id}`, dismissToken, pluginBubbles);
+    return await createInstalledPetRender(selected.id, selected.displayName, paused, display, state.preferences.petScale as PetScaleValue, badge, `default:${selected.id}`, dismissToken, pluginBubbles, companionActivity, companionTrayOpen);
   } catch (error) {
     console.error(`Failed to render installed default pet ${selected.id}; falling back to built-in pet.`, error);
     try {
@@ -1080,7 +1114,7 @@ async function tryCreateInstalledPetRender(paused: boolean, display: PetTransien
   }
 }
 
-async function createInstalledPetRender(petId: string, displayName: string, paused: boolean, display: PetTransientDisplay | null, scale: PetScaleValue, badge: PetStatusBadgeReaction | null, cachePrefix: string, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null): Promise<PetContentRender> {
+async function createInstalledPetRender(petId: string, displayName: string, paused: boolean, display: PetTransientDisplay | null, scale: PetScaleValue, badge: PetStatusBadgeReaction | null, cachePrefix: string, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false): Promise<PetContentRender> {
   const spritesheetPath = join(getInstalledPetDir(petId), "spritesheet.webp");
   const spritesheet = await stat(spritesheetPath);
   if (!spritesheet.isFile() || spritesheet.size <= 0 || spritesheet.size > 100 * 1024 * 1024) {
@@ -1089,8 +1123,9 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
 
   const imageUrl = pathToFileURL(spritesheetPath).toString();
   const hasPinned = Boolean(pluginBubbles?.pinned);
-  const bodyHtml = createPetBodyMarkup(escapeHtml(displayName), createBubbleMarkup(display, paused, badge, dismissToken, pluginBubbles), `<div class="installed-card" role="img" aria-label="${escapeHtml(displayName)}"><div class="installed-sprite"></div></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned);
-  const reactionState = getReactionSpriteState(display?.reaction);
+  const companionMarkup = createPrimaryCompanionMarkup(companionActivity, companionTrayOpen);
+  const bodyHtml = createPetBodyMarkup(escapeHtml(displayName), createBubbleMarkup(display, paused, companionActivity?.totalCount ? null : badge, dismissToken, pluginBubbles), `<div class="installed-card" role="img" aria-label="${escapeHtml(displayName)}"><div class="installed-sprite"></div></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned, companionMarkup);
+  const reactionState = getReactionSpriteState(display?.reaction ?? getPrimaryCompanionReaction(companionActivity) ?? badge ?? undefined);
   const waitingAnimationDurationMs = getAppStateSnapshot().preferences.waitingAnimationDurationMs;
   const stateRows = getConfiguredSpriteStates(waitingAnimationDurationMs);
 
@@ -1143,13 +1178,48 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
   };
 }
 
-function createPetBodyMarkup(stageLabel: string, bubble: string, spriteMarkup: string, pinnedBubble = "", hasPinned = false): string {
+function createPrimaryCompanionMarkup(summary: AgentCompanionActivitySummary | null, trayOpen: boolean): string {
+  if (!summary || summary.totalCount === 0 || summary.status === "idle") return "";
+  const view = derivePrimaryCompanionView(summary);
+  const statusLabel = getPrimaryCompanionStatusLabel(view.status);
+  const badgeLabel = t("companion.badge.label", { status: statusLabel, count: view.badgeCount });
+  const badge = `<button class="primary-companion-badge status-${view.status}" type="button" data-companion-toggle aria-expanded="${trayOpen}" aria-label="${escapeHtml(badgeLabel)}" title="${escapeHtml(statusLabel)}"><span class="primary-companion-status-mark" aria-hidden="true"></span><span class="primary-companion-count">${view.badgeCount}</span></button>`;
+  if (!trayOpen) return badge;
+  const items = view.items.map((item) => `<li class="primary-companion-item status-${item.status}">
+    <span class="primary-companion-item-mark" aria-hidden="true"></span>
+    <span class="primary-companion-provider">${escapeHtml(item.providerLabel)}</span>
+    <span class="primary-companion-age">${escapeHtml(item.ageLabel === "now" ? t("companion.age.now") : item.ageLabel)}</span>
+    <button class="primary-companion-dismiss" type="button" data-companion-dismiss data-provider="${escapeHtml(item.provider)}" data-session="${escapeHtml(item.sessionId)}" aria-label="${escapeHtml(t("companion.dismiss", { name: item.providerLabel }))}">×</button>
+  </li>`).join("");
+  return `${badge}<section class="primary-companion-tray" aria-label="${escapeHtml(t("companion.tray.label"))}">
+    <header class="primary-companion-header"><span>${escapeHtml(statusLabel)}</span><span>${view.totalCount}</span></header>
+    <ol class="primary-companion-list">${items}</ol>
+  </section>`;
+}
+
+function getPrimaryCompanionStatusLabel(status: AgentCompanionActivitySummary["status"]): string {
+  if (status === "waiting") return t("companion.status.waiting");
+  if (status === "review") return t("companion.status.review");
+  if (status === "failed") return t("companion.status.failed");
+  return t("companion.status.working");
+}
+
+function getPrimaryCompanionReaction(summary: AgentCompanionActivitySummary | null): OpenPetsReaction | undefined {
+  if (!summary || summary.totalCount === 0 || summary.status === "idle") return undefined;
+  if (summary.status === "waiting") return "waiting";
+  if (summary.status === "review") return "success";
+  if (summary.status === "failed") return "error";
+  return "running";
+}
+
+function createPetBodyMarkup(stageLabel: string, bubble: string, spriteMarkup: string, pinnedBubble = "", hasPinned = false, companionMarkup = ""): string {
   const brainPetTrigger = !isBrainPetFeatureEnabled(resolveCurrentDistribution(), process.env.OPENPETS_BRAINPET_ENABLED)
     ? ""
-    : `<button class="brainpet-trigger" type="button" data-brainpet-trigger aria-label="打开或关闭 BrainPet 训练" title="训练"><span class="brainpet-gem" aria-hidden="true"></span></button>`;
+    : `<button class="brainpet-trigger" type="button" data-brainpet-trigger aria-label="${escapeHtml(t("pet.menu.startTraining"))}" title="${escapeHtml(t("pet.menu.startTraining"))}"><span class="brainpet-gem" aria-hidden="true"></span></button>`;
   return `<div class="stage${hasPinned ? " has-pinned" : ""}" aria-label="${stageLabel}">
     ${pinnedBubble}
     ${bubble}
+    ${companionMarkup}
     <div class="pet-hitbox" aria-hidden="true">
       <div class="pet-shell">
         ${spriteMarkup}
@@ -1168,11 +1238,13 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
   const hitPadding = 18;
   const bubbleBottom = Math.ceil(petBottom + scaledHeight + 8);
   const emojiFontUrl = pathToFileURL(join(app.getAppPath(), "assets", "NotoColorEmoji.ttf")).toString();
+  const pixelFontUrl = pathToFileURL(join(app.getAppPath(), "assets", "FusionPixel12ProportionalSC.woff2")).toString();
   const petShellFilter = process.platform === "win32" ? "none" : "drop-shadow(0 10px 12px rgba(15, 23, 42, 0.24)) drop-shadow(0 2px 3px rgba(15, 23, 42, 0.18))";
   const bubbleBackdropFilter = process.platform === "win32" ? "none" : "blur(10px)";
   const petDragRegion = shouldUseWaylandNativePetDrag() ? "drag" : "no-drag";
   return `
     @font-face { font-family: "OpenPets Emoji"; src: url("${escapeCssUrl(emojiFontUrl)}") format("truetype"); font-display: block; }
+    @font-face { font-family: "BrainPet Pixel"; src: url("${escapeCssUrl(pixelFontUrl)}") format("woff2"); font-display: block; }
     :root { color-scheme: dark; --pet-opacity: ${opacity}; --play-state: ${playState}; }
     html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; user-select: none; -webkit-font-smoothing: antialiased; }
     html { color: #172033; }
@@ -1185,6 +1257,26 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
     .brainpet-trigger:hover .brainpet-gem { background:#ffe57c; transform:translateY(-2px) rotate(45deg); }
     .brainpet-trigger:active .brainpet-gem { transform:translate(2px,2px) rotate(45deg); box-shadow:inset -2px -2px 0 #d9952f; }
     .brainpet-trigger:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+    .primary-companion-badge { position:absolute; left:calc(50% - ${Math.max(0, Math.round(scaledWidth / 2) - 2)}px); bottom:${petBottom + Math.max(20, scaledHeight - 22)}px; z-index:7; display:grid; grid-template-columns:8px auto; align-items:center; gap:3px; min-width:28px; height:20px; padding:0 5px; border:2px solid #17243b; border-radius:0; background:#fff3c7; color:#17243b; box-shadow:3px 3px 0 rgba(23,36,59,.36); font:normal 10px/1 "BrainPet Pixel", monospace; pointer-events:auto; -webkit-app-region:no-drag; cursor:pointer; image-rendering:pixelated; }
+    .primary-companion-badge:hover { transform:translateY(-1px); filter:brightness(1.05); }
+    .primary-companion-badge:active { transform:translate(2px,2px); box-shadow:1px 1px 0 rgba(23,36,59,.36); }
+    .primary-companion-badge:focus-visible, .primary-companion-dismiss:focus-visible { outline:3px solid #fff; outline-offset:2px; }
+    .primary-companion-status-mark, .primary-companion-item-mark { display:block; width:6px; height:6px; background:#4f9eea; box-shadow:inset -2px -2px 0 rgba(23,36,59,.28); }
+    .status-waiting .primary-companion-status-mark, .status-waiting .primary-companion-item-mark { background:#f2bc36; }
+    .status-review .primary-companion-status-mark, .status-review .primary-companion-item-mark { background:#61bd73; }
+    .status-failed .primary-companion-status-mark, .status-failed .primary-companion-item-mark { background:#e55f55; }
+    .primary-companion-count { min-width:9px; text-align:center; }
+    .primary-companion-tray { position:absolute; left:50%; bottom:${bubbleBottom + 2}px; z-index:8; box-sizing:border-box; width:224px; padding:6px; border:3px solid #17243b; border-radius:0; background:#fff3c7; color:#17243b; box-shadow:5px 5px 0 rgba(23,36,59,.38); font:normal 10px/12px "BrainPet Pixel", monospace; pointer-events:auto; -webkit-app-region:no-drag; transform:translateX(-50%); animation:companion-tray-in 120ms steps(3,end); image-rendering:pixelated; }
+    .primary-companion-tray::after { content:""; position:absolute; left:34%; bottom:-9px; width:12px; height:12px; border-right:3px solid #17243b; border-bottom:3px solid #17243b; background:#fff3c7; transform:rotate(45deg); }
+    .primary-companion-header { display:flex; justify-content:space-between; align-items:center; min-height:14px; padding:0 2px 5px; border-bottom:2px solid #17243b; text-transform:uppercase; }
+    .primary-companion-list { display:grid; gap:2px; margin:5px 0 0; padding:0; list-style:none; }
+    .primary-companion-item { display:grid; grid-template-columns:7px minmax(0,1fr) 28px 18px; align-items:center; gap:4px; min-height:20px; padding:0 2px; background:#f7e7ae; }
+    .primary-companion-provider { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    .primary-companion-age { color:#61708a; text-align:right; }
+    .primary-companion-dismiss { width:18px; height:18px; padding:0; border:0; border-radius:0; background:transparent; color:#17243b; font:normal 14px/16px "BrainPet Pixel", monospace; cursor:pointer; pointer-events:auto; -webkit-app-region:no-drag; }
+    .primary-companion-dismiss:hover { background:#e55f55; color:#fff; }
+    [data-pet-dragging="true"] .primary-companion-tray { display:none; }
+    @keyframes companion-tray-in { from { opacity:0; transform:translate(-50%,6px); } to { opacity:1; transform:translate(-50%,0); } }
     [data-brainpet-launching="true"] .pet-shell { animation: brainpet-ready 480ms steps(4,end); }
     [data-brainpet-launching="true"] .brainpet-trigger { pointer-events: none; }
     [data-brainpet-launching="true"] .brainpet-gem { animation: brainpet-gem-ready 480ms steps(4,end); }

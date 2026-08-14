@@ -6,6 +6,7 @@ import test from "node:test";
 
 const desktopRoot = process.env.OPENPETS_DESKTOP_ROOT ?? fileURLToPath(new URL("../..", import.meta.url));
 const petWindow = readFileSync(resolve(desktopRoot, "src/pet-window.ts"), "utf8");
+const primaryCompanionUi = readFileSync(resolve(desktopRoot, "src/primary-companion-ui.ts"), "utf8");
 const stageCss = readFileSync(resolve(desktopRoot, "src/renderer/src/brainpet/stage.css"), "utf8");
 const stageMain = readFileSync(resolve(desktopRoot, "src/renderer/src/brainpet/main.ts"), "utf8");
 const stageHtml = readFileSync(resolve(desktopRoot, "src/renderer/brainpet.html"), "utf8");
@@ -35,6 +36,18 @@ test("BrainPet embeds the licensed Simplified Chinese and Latin pixel font", () 
   assert.match(stageCss, /font-synthesis:none/);
   assert.match(stageCss, /\.tutorial-copy>span\{[^}]*font:400 10px/);
   assert.match(stageCss, /\.minimal-result strong\{[^}]*font:400 20px/);
+  assert.match(petWindow, /FusionPixel12ProportionalSC\.woff2/);
+  assert.match(petWindow, /@font-face \{ font-family: "BrainPet Pixel";[^\n]*format\("woff2"\)/);
+});
+
+test("primary companion controls stay compact, pixel-styled, and capability honest", () => {
+  assert.match(petWindow, /class="primary-companion-badge status-/);
+  assert.match(petWindow, /class="primary-companion-tray"/);
+  assert.match(primaryCompanionUi, /summary\.items\.slice\(0, limit\)/);
+  assert.match(petWindow, /data-companion-dismiss/);
+  assert.match(petPreload, /brainpet:companionTrayToggled/);
+  assert.match(petPreload, /brainpet:companionActivityDismissed/);
+  assert.doesNotMatch(petWindow, /data-companion-(allow|deny|stop|reply)/);
 });
 
 test("V1 visual and sound states have explicit production behavior", () => {

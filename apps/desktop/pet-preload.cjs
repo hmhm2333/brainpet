@@ -4,7 +4,7 @@ const allowedMotionStates = new Set(["idle", "run-left", "run-right"]);
 const allowedReactionStates = new Set(["idle", "running-right", "running-left", "waving", "jumping", "failed", "waiting", "running", "review"]);
 let lastInteractiveHit = null;
 let dragging = false;
-const interactiveTargetSelector = ".pet-hitbox, .pet-shell, .bubble, [data-brainpet-trigger]";
+const interactiveTargetSelector = ".pet-hitbox, .pet-shell, .bubble, [data-brainpet-trigger], [data-companion-toggle], .primary-companion-tray, [data-companion-dismiss]";
 
 const dismissBubble = (event) => {
   if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
@@ -192,6 +192,22 @@ const installPetSenses = () => {
     if (event.button !== 0) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
+    const dismiss = target.closest("[data-companion-dismiss]");
+    if (dismiss) {
+      event.preventDefault();
+      event.stopPropagation();
+      const provider = dismiss.dataset.provider;
+      const sessionId = dismiss.dataset.session;
+      if (provider && sessionId) sendPetEvent("brainpet:companionActivityDismissed", { provider, sessionId });
+      return;
+    }
+    const companionToggle = target.closest("[data-companion-toggle]");
+    if (companionToggle) {
+      event.preventDefault();
+      event.stopPropagation();
+      sendPetEvent("brainpet:companionTrayToggled", { open: companionToggle.getAttribute("aria-expanded") !== "true" });
+      return;
+    }
     if (target.closest("[data-brainpet-trigger]")) {
       event.preventDefault();
       event.stopPropagation();
@@ -208,7 +224,7 @@ const installPetSenses = () => {
   });
   document.addEventListener("dblclick", (event) => {
     const target = event.target;
-    if (target instanceof Element && target.closest("[data-brainpet-trigger]")) return;
+    if (target instanceof Element && target.closest("[data-brainpet-trigger], [data-companion-toggle], .primary-companion-tray")) return;
     if (!(target instanceof Element) || !target.closest(".pet-hitbox, .pet-shell")) return;
     sendPetEvent("pet:doubleClicked", {});
   });
@@ -412,11 +428,12 @@ const installMouseInterop = () => {
   document.addEventListener("mousedown", (event) => {
     const target = getInteractiveTarget(event);
     setInteractiveHit(Boolean(target));
-    if (target?.closest("[data-brainpet-trigger]")) return;
+    if (target?.closest("[data-brainpet-trigger], [data-companion-toggle], .primary-companion-tray")) return;
     if (event.button !== 0 || !target?.closest(".pet-hitbox, .pet-shell")) return;
     if (usesNativePetDrag()) return;
     event.preventDefault();
     dragging = true;
+    document.documentElement.dataset.petDragging = "true";
     dragStartPoint = { screenX: event.screenX, screenY: event.screenY };
     setInteractiveHit(true);
     ipcRenderer.send("openpets:pet-drag-start", { screenX: event.screenX, screenY: event.screenY });
@@ -425,6 +442,7 @@ const installMouseInterop = () => {
   document.addEventListener("mouseup", (event) => {
     if (!dragging) return;
     dragging = false;
+    delete document.documentElement.dataset.petDragging;
     if (dragStartPoint && Math.hypot(event.screenX - dragStartPoint.screenX, event.screenY - dragStartPoint.screenY) > 4) {
       suppressClickUntil = Date.now() + 300;
     }

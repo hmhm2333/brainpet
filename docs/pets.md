@@ -58,6 +58,16 @@ In the BrainPet distribution, the default pet's context menu exposes persistent
 sprite, native Windows hit shape, and training hotspot; the game stage retains
 its separate compact-surface sizing contract.
 
+BrainPet also renders Agent lifecycle state inside this same pet window. A
+small pixel badge beside the pet shows the highest-priority state and combined
+activity count; clicking it opens a tightly attached, five-row activity tray.
+The tray contains only provider, state, relative age, and a local dismiss
+control—never prompts, paths, commands, tool payloads, or transcripts. Its hit
+targets are isolated from both pet dragging and the body-mounted training gem.
+The BrainPet context menu adds start training, five scale choices, pause Agent
+follow, and hide-until-next-activity. Host-side task actions are not rendered
+unless a future provider adapter declares and implements the matching capability.
+
 Experimental multi-pet LAN mode adds a third, isolated controller for visiting
 pets. Windows are keyed by LAN owner host rather than pet ID, so they do not
 collide with lease-managed agent pets or with another visitor using the same

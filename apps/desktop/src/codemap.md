@@ -102,8 +102,10 @@ windows.ts (IPC handlers)
 Codex plugin hooks → local IPC `agent.activity` → agent-lifecycle-controller.ts
 ├── agent-lifecycle.ts aggregates by agent/session and rejects stale turn events
 ├── agent-companion-activity.ts maps concurrent lifecycle entries into the privacy-minimal main-pet activity model
+├── primary-companion-ui.ts derives the bounded five-row badge/tray view model and compact provider/age labels
 ├── agent-companion-capabilities.ts gates host action prompts on provider-declared support
-├── default-pet-controller.ts applies sticky work/wait and transient completion
+├── default-pet-controller.ts owns follow/pause/wake plus activity-tray state
+├── pet-window.ts renders the pixel status badge/tray in the existing shaped pet window
 └── plugin-events-source.ts publishes the existing `agent:activity` bus event
 ```
 
@@ -211,6 +213,8 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `logger.ts`: Structured logging with scopes (including agent.lifecycle and BrainPet scopes), log rotation, redaction
 - `agent-lifecycle.ts`: Pure multi-session lifecycle aggregation, priority, stale-event, and timeout policy
 - `agent-lifecycle-controller.ts`: Applies aggregated lifecycle presentation to the default pet and existing plugin activity bus
+- `agent-companion-activity.ts`: Privacy-minimal concurrent activity summary, unread identity, ordering, and bounded storage view
+- `primary-companion-ui.ts`: Pure compact Primary Companion view-model derivation (five visible rows, capped badge, provider and relative-age labels)
 
 **UI**:
 - `tray.ts`: Tray icon (nativeImage), context menu builder, update status integration, route-targeted Control Center entries, logs folder

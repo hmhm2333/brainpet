@@ -12,7 +12,7 @@ Contains BCP-47 locale dictionaries loaded by the main i18n catalog. English (`e
 
 ## Data & Control Flow
 
-- Dictionaries export key-value mapping sets containing static user-interface strings (tray items, setting titles, actions, badges).
+- Dictionaries export key-value mapping sets containing static user-interface strings (tray items, setting titles, actions, badges), including Primary Companion status, activity-tray, follow, and training controls.
 - Dictionaries are statically imported into the parent catalog (`../catalog.ts`) and checked during string lookup.
 
 ## Integration Points

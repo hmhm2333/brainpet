@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { deriveAgentCompanionActivitySummary, mapAgentLifecycleToCompanionStatus } from "../src/agent-companion-activity.js";
+import { agentCompanionActivityKey, deriveAgentCompanionActivitySummary, mapAgentLifecycleToCompanionStatus } from "../src/agent-companion-activity.js";
 import type { AgentLifecycleEntry } from "../src/agent-lifecycle.js";
 
 function entry(overrides: Partial<AgentLifecycleEntry> = {}): AgentLifecycleEntry {
@@ -55,4 +55,14 @@ test("activity storage is bounded while counters still cover every current sessi
   assert.equal(summary.totalCount, 60);
   assert.equal(summary.activeCount, 60);
   assert.equal(summary.items[0]?.sessionId, "session-59");
+});
+
+test("review and failure items stop counting as unread after the exact activity version is seen", () => {
+  const ready = entry({ state: "ready", occurredAt: 200 });
+  const entries = new Map([["codex-a", ready]]);
+  const identity = { provider: ready.agent, sessionId: ready.sessionId, occurredAt: ready.occurredAt };
+
+  assert.equal(deriveAgentCompanionActivitySummary(entries).unreadCount, 1);
+  assert.equal(deriveAgentCompanionActivitySummary(entries, 50, new Set([agentCompanionActivityKey(identity)])).unreadCount, 0);
+  assert.equal(deriveAgentCompanionActivitySummary(new Map([["codex-a", { ...ready, occurredAt: 201 }]]), 50, new Set([agentCompanionActivityKey(identity)])).unreadCount, 1);
 });
