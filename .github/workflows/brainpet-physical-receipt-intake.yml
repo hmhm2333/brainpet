@@ -1,0 +1,27 @@
+name: BrainPet physical receipt intake
+
+on:
+  workflow_dispatch:
+    inputs:
+      receipts_json:
+        description: Minified JSON array from the Windows x64 and macOS arm64 physical acceptance receipts
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-seal:
+    runs-on: ubuntu-latest
+    env:
+      BRAINPET_PHYSICAL_RECEIPTS_JSON: ${{ inputs.receipts_json }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/intake-brainpet-physical-receipts.mjs --payload-env BRAINPET_PHYSICAL_RECEIPTS_JSON --output output/physical --require-trusted-ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brainpet-physical-receipts
+          path: output/physical/
+          if-no-files-found: error
+          retention-days: 90

@@ -1,0 +1,40 @@
+name: BrainPet public release finalize
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful BrainPet public release gate run for this exact commit
+        required: true
+        type: string
+      physical_receipt_run_id:
+        description: Successful BrainPet physical receipt intake run for this exact commit and candidate artifacts
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+  attestations: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/download-brainpet-public-candidate.mjs --run-id "${{ inputs.candidate_run_id }}" --output output/candidate
+      - run: node scripts/download-brainpet-physical-receipts.mjs --run-id "${{ inputs.physical_receipt_run_id }}" --output output/physical
+      - run: mkdir -p output/final
+      - run: node scripts/aggregate-brainpet-release-receipt.mjs --packages output/candidate/packages --lifecycle output/candidate/lifecycle --bridge output/candidate/bridge --physical output/physical --output output/final/brainpet-release-receipt.json --mode public-release --expect-public-ready
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: output/final/brainpet-release-receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brainpet-public-release-receipt
+          path: output/final/brainpet-release-receipt.json
+          if-no-files-found: error
+          retention-days: 90

@@ -9,7 +9,7 @@ on:
       - "config/**"
       - "native/brainpet-hook/**"
       - "scripts/brainpet-**"
-      - ".github/workflows/brainpet-portability-gate.yml"
+      - ".github/workflows/brainpet-*.yml"
 
 permissions:
   contents: read

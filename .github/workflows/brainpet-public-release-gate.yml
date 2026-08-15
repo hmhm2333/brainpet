@@ -2,11 +2,6 @@ name: BrainPet public release gate
 
 on:
   workflow_dispatch:
-    inputs:
-      physical_receipt_run_id:
-        description: Workflow run containing the brainpet-physical-receipts artifact for this commit
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -142,14 +137,9 @@ jobs:
         with:
           subject-path: output/lifecycle/brainpet-install-lifecycle-receipt-${{ matrix.id }}-${{ matrix.kind }}.json
       - name: Collect lifecycle provenance bundle
-        shell: bash
-        working-directory: output/lifecycle
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh attestation download brainpet-install-lifecycle-receipt-${{ matrix.id }}-${{ matrix.kind }}.json --repo "$GITHUB_REPOSITORY"
-          cat sha256-*.jsonl > brainpet-github-attestations.jsonl
-          rm sha256-*.jsonl
+        run: node scripts/collect-brainpet-subject-provenance.mjs output/lifecycle/brainpet-install-lifecycle-receipt-${{ matrix.id }}-${{ matrix.kind }}.json output/lifecycle/brainpet-github-attestations.jsonl
       - uses: actions/upload-artifact@v4
         with:
           name: brainpet-public-lifecycle-${{ matrix.id }}-${{ matrix.kind }}
@@ -177,21 +167,16 @@ jobs:
         with:
           subject-path: output/bridge/brainpet-release.json
       - name: Collect Bridge provenance bundle
-        shell: bash
-        working-directory: output/bridge
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh attestation download brainpet-release.json --repo "$GITHUB_REPOSITORY"
-          cat sha256-*.jsonl > brainpet-github-attestations.jsonl
-          rm sha256-*.jsonl
+        run: node scripts/collect-brainpet-subject-provenance.mjs output/bridge/brainpet-release.json output/bridge/brainpet-github-attestations.jsonl
       - uses: actions/upload-artifact@v4
         with:
           name: brainpet-public-bridge
           path: output/bridge
           if-no-files-found: error
 
-  aggregate-public-receipt:
+  aggregate-public-candidate-receipt:
     needs: [runtime-package, installer-lifecycle, assemble-bridge]
     runs-on: ubuntu-latest
     env:
@@ -210,11 +195,12 @@ jobs:
         with:
           name: brainpet-public-bridge
           path: output/bridge
-      - run: gh run download "${{ inputs.physical_receipt_run_id }}" --repo "$GITHUB_REPOSITORY" --name brainpet-physical-receipts --dir output/physical
       - run: mkdir -p output/aggregate
-      - run: node scripts/aggregate-brainpet-release-receipt.mjs --packages output/packages --lifecycle output/lifecycle --bridge output/bridge --physical output/physical --output output/aggregate/brainpet-release-receipt.json --mode public-release --expect-public-ready
+      - run: node scripts/aggregate-brainpet-release-receipt.mjs --packages output/packages --lifecycle output/lifecycle --bridge output/bridge --output output/aggregate/brainpet-release-receipt.json --mode public-release
+      - run: node -e "const r=require('./output/aggregate/brainpet-release-receipt.json'); if(!r.rc6GatePassed||r.publicReleaseReady||!r.missingEvidence.every(value=>value.endsWith(':physical-acceptance'))) process.exit(1)"
       - uses: actions/upload-artifact@v4
         with:
-          name: brainpet-public-release-receipt
+          name: brainpet-public-candidate-receipt
           path: output/aggregate/brainpet-release-receipt.json
           if-no-files-found: error
+          retention-days: 90

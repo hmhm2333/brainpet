@@ -6,21 +6,25 @@ param(
   [Parameter(Mandatory = $true, ParameterSetName = "Interactive")]
   [switch]$RunInteractive,
 
-  [string]$PortablePath = "",
+  [Alias("PortablePath")]
+  [string]$ArtifactPath = "",
   [string]$OutputDirectory = "",
-  [ValidateSet("windows-x64", "windows-arm64")]
-  [string]$TargetId = "windows-x64"
+  [ValidateSet("windows-x64")]
+  [string]$TargetId = "windows-x64",
+  [string]$SourceCommit = ""
 )
 
 $ErrorActionPreference = "Stop"
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-if ([string]::IsNullOrWhiteSpace($PortablePath)) { $PortablePath = Join-Path $scriptDirectory "..\dist-electron\BrainPet-3.4.0-win-x64.exe" }
+if ([string]::IsNullOrWhiteSpace($ArtifactPath)) { $ArtifactPath = Join-Path $scriptDirectory "..\dist-brainpet\public-release\BrainPet-3.4.0-win-x64-setup.exe" }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path $scriptDirectory "..\..\..\output\physical-acceptance" }
-$scriptVersion = "brainpet-release-v2.0"
+$scriptVersion = "brainpet-release-v3.0"
 $startedAt = Get-Date
-$runId = $startedAt.ToString("yyyyMMdd-HHmmss")
-$receiptDirectory = Join-Path ([System.IO.Path]::GetFullPath($OutputDirectory)) $runId
-New-Item -ItemType Directory -Path $receiptDirectory -Force | Out-Null
+$runId = "$($startedAt.ToString('yyyyMMdd-HHmmss-fff'))-$PID"
+$outputRoot = [System.IO.Path]::GetFullPath($OutputDirectory)
+New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
+$receiptDirectory = Join-Path $outputRoot $runId
+New-Item -ItemType Directory -Path $receiptDirectory -ErrorAction Stop | Out-Null
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -TypeDefinition @"
@@ -78,11 +82,11 @@ function Get-DisplayInventory {
   })
 }
 
-function Get-PortableEvidence {
+function Get-ArtifactEvidence {
   param([string]$Path)
   $resolved = [System.IO.Path]::GetFullPath($Path)
   if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
-    return [pscustomobject]@{ path = $resolved; exists = $false }
+    return [pscustomobject]@{ name = [System.IO.Path]::GetFileName($resolved); exists = $false }
   }
   $item = Get-Item -LiteralPath $resolved
   $signatureStatus = "Unavailable"
@@ -102,12 +106,13 @@ function Get-PortableEvidence {
     $stream.Dispose()
   }
   return [pscustomobject]@{
-    path = $resolved
+    kind = "nsis"
+    name = $item.Name
     exists = $true
     sizeBytes = $item.Length
     sha256 = $sha256
-    signatureStatus = $signatureStatus
-    signatureProbeError = $signatureError
+    authenticodeStatus = $signatureStatus
+    signatureProbeFailed = $null -ne $signatureError
   }
 }
 
@@ -119,7 +124,7 @@ function Read-Check {
   Write-Host ""
   Write-Host $Prompt -ForegroundColor Cyan
   do { $status = (Read-Host "Enter PASS, FAIL, or NA").Trim().ToUpperInvariant() } while ($status -notin @("PASS", "FAIL", "NA"))
-  $note = Read-Host "Optional note or evidence path"
+  $note = Read-Host "Optional local-only note (do not enter paths, task content, or secrets)"
   return [pscustomobject]@{ id = $Id; status = $status.ToLowerInvariant(); note = $note }
 }
 
@@ -138,7 +143,7 @@ function Write-Receipt {
     "- Status: $($Receipt.overallStatus)"
     "- Script: $($Receipt.scriptVersion)"
     "- OS: $($Receipt.environment.os.caption) $($Receipt.environment.os.version)"
-    "- Portable SHA256: $($Receipt.portable.sha256)"
+    "- Artifact SHA256: $($Receipt.artifact.sha256)"
     ""
     "## Displays"
     ""
@@ -153,24 +158,34 @@ function Write-Receipt {
 
 $displays = @(Get-DisplayInventory)
 $os = Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, OSArchitecture
-$portable = Get-PortableEvidence -Path $PortablePath
+$artifact = Get-ArtifactEvidence -Path $ArtifactPath
 $checks = @()
 $mode = if ($RunInteractive) { "interactive" } else { "inventory" }
 $overallStatus = "inventory-only"
 
 if ($RunInteractive) {
-  if (-not $portable.exists) { throw "Portable build not found: $($portable.path)" }
-  Write-Host "BrainPet physical acceptance launches the portable build but never locks Windows, changes display settings, or stops processes." -ForegroundColor Yellow
+  if (-not $artifact.exists) { throw "Release installer not found: $([System.IO.Path]::GetFullPath($ArtifactPath))" }
+  if ($artifact.authenticodeStatus -ne "Valid") { throw "Release installer Authenticode status is $($artifact.authenticodeStatus), expected Valid." }
+  if ($SourceCommit -notmatch '^[a-fA-F0-9]{40}$') { throw "RunInteractive requires -SourceCommit with the exact 40-character release commit." }
+  Write-Host "BrainPet physical acceptance opens the signed installer but never locks Windows, changes display settings, or stops processes." -ForegroundColor Yellow
   $reviewer = Read-Host "Reviewer identifier (name, initials, or team code)"
-  Start-Process -FilePath $portable.path | Out-Null
-  Write-Host "First startup can take about 90 seconds while the portable package extracts. Open the training stage before continuing."
+  if ([string]::IsNullOrWhiteSpace($reviewer) -or $reviewer.Length -gt 128) { throw "Reviewer identifier must contain 1-128 characters." }
+  Start-Process -FilePath ([System.IO.Path]::GetFullPath($ArtifactPath)) | Out-Null
+  Write-Host "Complete the normal per-user install, first-run Agent connection, and the requested checks before recording each answer."
+  $checks += Read-Check -Id "clean-install" -Prompt "Confirm a new user can install the signed NSIS package and reach BrainPet without opening a terminal."
+  $checks += Read-Check -Id "default-install-path" -Prompt "Confirm BrainPet runs from the default per-user Programs\brainpet path."
+  $checks += Read-Check -Id "no-development-toolchain" -Prompt "Confirm lifecycle and training work with Node, npm, pnpm, Cargo, and Rust removed from PATH."
+  $checks += Read-Check -Id "default-discovery" -Prompt "Confirm the packaged Adapter discovers BrainPet without OPENPETS_DISCOVERY_FILE or another override."
+  $checks += Read-Check -Id "adapter-first-lifecycle" -Prompt "Run a real Agent task and confirm the first lifecycle event wakes and updates exactly one BrainPet instance."
+  $checks += Read-Check -Id "upgrade-state-preserved" -Prompt "Upgrade from the prior signed candidate and confirm progress plus Adapter trust are preserved or refreshed once."
+  $checks += Read-Check -Id "uninstall-agent-fail-open" -Prompt "Uninstall BrainPet and confirm the Agent continues normally without Hook errors or a stale wakeup."
+  $checks += Read-Check -Id "native-pet-recovery" -Prompt "Confirm uninstall does not remove or modify the Agent's native pet resources."
   $checks += Read-Check -Id "primary-display-edges" -Prompt "Move the pet to all four primary-display edges and open the stage each time. It must remain inside the work area and follow the pet."
   $checks += Read-Check -Id "secondary-display-edges" -Prompt "Move the pet to all four secondary-display edges and open the stage each time. It must remain inside that work area and follow the pet." -Available ($displays.Count -ge 2)
   $distinctScales = @($displays | Where-Object { $null -ne $_.scalePercent } | Select-Object -ExpandProperty scalePercent -Unique)
   $checks += Read-Check -Id "mixed-dpi" -Prompt "Confirm that the physical displays use different scaling and that stage size, pixel edges, and hit targets remain correct." -Available ($displays.Count -ge 2 -and $distinctScales.Count -ge 2)
-  $checks += Read-Check -Id "lock-unlock" -Prompt "During a task, press Win+L yourself. After unlock, the task must remain paused and resume from the same progress without counting lock time."
+  $checks += Read-Check -Id "sleep-wake" -Prompt "During a task, put Windows to sleep yourself. After wake, the task must safely pause/resume without creating another runtime instance."
   $checks += Read-Check -Id "agent-completion" -Prompt "Have a real Agent finish during a task. The current trial/session must not close or reset; the result page must show the Agent completion notice."
-  $checks += Read-Check -Id "parameter-owner-approval" -Prompt "Have the cognitive-task owner review docs/brainpet-v1-parameter-freeze.md and confirm the V1 parameter boundaries and contamination constraints."
   $checks += Read-Check -Id "novice-rule-comprehension" -Prompt "Ask a first-time player to start without reading external instructions. By the end of level 1, they must correctly explain and perform each task rule without a separate tutorial page."
   $checks += Read-Check -Id "dynamic-visual" -Prompt "Play one full round of each task. Check overflow, pixel clarity, stimulus distinction, feedback flicker, pause/end actions, and accidental default HTML controls."
   $requiredPassed = @($checks | Where-Object { $_.status -ne "pass" }).Count -eq 0
@@ -181,10 +196,11 @@ if ($RunInteractive) {
 }
 
 $receipt = [pscustomobject]@{
-  schemaVersion = 2
+  schemaVersion = 3
   scriptVersion = $scriptVersion
+  product = "brainpet"
   target = $TargetId
-  sourceCommit = if ($env:GITHUB_SHA -match '^[a-fA-F0-9]{40}$') { $env:GITHUB_SHA } else { $null }
+  sourceCommit = if ($SourceCommit -match '^[a-fA-F0-9]{40}$') { $SourceCommit.ToLowerInvariant() } elseif ($env:GITHUB_SHA -match '^[a-fA-F0-9]{40}$') { $env:GITHUB_SHA.ToLowerInvariant() } else { $null }
   runId = $runId
   startedAt = $startedAt.ToUniversalTime().ToString("o")
   completedAt = (Get-Date).ToUniversalTime().ToString("o")
@@ -192,13 +208,15 @@ $receipt = [pscustomobject]@{
   reviewer = $reviewer
   overallStatus = $overallStatus
   environment = [pscustomobject]@{
+    platform = "win32"
+    arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x64" }
     os = [pscustomobject]@{ caption = $os.Caption; version = $os.Version; buildNumber = $os.BuildNumber; architecture = $os.OSArchitecture }
     powershell = $PSVersionTable.PSVersion.ToString()
     displayCount = $displays.Count
     displays = $displays
   }
-  portable = $portable
-  artifactSha256 = $portable.sha256
+  artifact = $artifact
+  artifactSha256 = $artifact.sha256
   checks = $checks
 }
 

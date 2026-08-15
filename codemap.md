@@ -33,6 +33,7 @@ BrainPet additionally carries a privacy-minimized Codex desktop lifecycle plugin
 | `apps/desktop/src/renderer/` | Vite renderer workspace for the sandboxed React/Tailwind Control Center bundle. | [View Map](apps/desktop/src/renderer/codemap.md) |
 | `apps/desktop/src/renderer/src/` | React/Tailwind Control Center UI for Dashboard, Pets, Integrations, Plugins, and Settings via narrow preload APIs. | [View Map](apps/desktop/src/renderer/src/codemap.md) |
 | `apps/desktop/scripts/` | Desktop packaging, automatic package validation, real BrainPet installer lifecycle, physical acceptance, and local release automation. | [View Map](apps/desktop/scripts/codemap.md) |
+| `scripts/` | Repository-wide BrainPet contracts, six-target release assembly/aggregation, trusted candidate and physical-evidence intake/download, source validation, and workspace release checks. | `scripts/brainpet-*.mjs` |
 | `integrations/codex/` | BrainPet's local Codex lifecycle bridge plugin and installation notes; `integrations/brainpet-provider-support.json` is generated from the AdapterRegistry and receipts. | `integrations/codex/README.md` |
 | `native/brainpet-hook/` | Cross-platform, privacy-minimized native hook helper source shared by Codex, Claude Code, and compatible Claude-derived hosts. | `native/brainpet-hook/README.md` |
 | `packages/` | Publishable npm package workspace for shared protocol, CLI, MCP, and coding-agent integrations. | [View Map](packages/codemap.md) |

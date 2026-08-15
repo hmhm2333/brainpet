@@ -12,7 +12,7 @@
 | RC-1～RC-2 | 已通过 | `80dc0a3`、`36083ce`；Audit A 整改与独立复审在 `a23270e`、`6cf53bd` 通过 |
 | RC-3～RC-4 | 已通过 | `6464fe3`、`b8d87fa`；Audit B 整改与独立复审在 `73ffb47`、`9e6a691` 通过 |
 | RC-5 | 已通过 | `f9802a9`；Windows x64 native-only 包、一次点击 Codex、single-instance、冷唤醒恢复与真实 packaged UI smoke 通过 |
-| RC-6 | 进行中 | 默认 package 自动 validator、真实 installer lifecycle、可信 provenance 和聚合回执代码已完成本地门；远端六目标/四格式回执未通过前不标完成 |
+| RC-6 | 进行中 | 默认 package 自动 validator、真实 installer lifecycle、可信 provenance、候选→物理 intake→finalize 三段聚合回执已完成本地门；远端六目标/四格式/Stable 实机回执未通过前不标完成 |
 | RC-7 | 待实施 | 未满足对应退出门前不得标记完成 |
 
 ## 1. 最终目标

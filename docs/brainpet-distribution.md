@@ -99,6 +99,43 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
   lifecycle、六 helper Bridge、Adapter 和人工物理回执。Stable 目标仍缺任何签名、
   公证、安装或物理证据时，只列出 `missingEvidence`，绝不写公开就绪。
 
+### 不可循环的候选与物理回执流程
+
+公开发行严格分成三次、同 commit 的可信运行，不能在验收后重新构建安装包：
+
+1. 手动运行 `BrainPet public release gate`。它构建并验证六目标签名/公证候选、四条
+   installer lifecycle、Bridge 和 provenance，只生成
+   `brainpet-public-candidate-receipt`；由于尚无物理回执，此时必须保持
+   `publicReleaseReady=false`。
+2. 从该候选 run 下载 Windows x64 NSIS 和 macOS arm64 DMG 原件，在两台 Stable
+   物理机上运行对应验收脚本。intake 后的公开回执只保存平台、显示器摘要、安装包
+   文件名/大小/hash、trust 结果、人工检查结果和 reviewer；本地 note 会被清空，不保存
+   本机绝对路径、Agent 内容或配置正文。
+3. 将两份 JSON 通过 `intake-brainpet-physical-receipts.mjs` 合并为最小 JSON 数组，
+   在同 commit 上手动运行 `BrainPet physical receipt intake`。最后运行
+   `BrainPet public release finalize`，传入候选 run id 与 intake run id。finalize 会
+   核对两个来源 workflow、成功状态、精确 commit 和候选 artifact hash，再写唯一可为
+   `publicReleaseReady=true` 的聚合回执。
+
+Windows x64：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/brainpet-physical-acceptance.ps1 -RunInteractive -ArtifactPath <signed-setup.exe> -SourceCommit <40-char-sha> -OutputDirectory <new-output-dir>
+```
+
+macOS arm64：
+
+```bash
+node apps/desktop/scripts/brainpet-macos-physical-acceptance.mjs --artifact <notarized.dmg> --source-commit <40-char-sha> --output <new-output-dir>
+```
+
+在任一维护环境合并两份回执；stdout 是可粘贴到 intake workflow 的 JSON。人工 note
+不得填写用户目录、任务内容、token 或其他敏感材料。
+
+```bash
+node scripts/intake-brainpet-physical-receipts.mjs --receipt <windows-receipt.json> --receipt <macos-receipt.json> --source-commit <40-char-sha>
+```
+
 当前机器事实：`hmhm2333/brainpet` 尚未配置 BrainPet Windows/macOS 签名凭据；因此
 公开 workflow 现在应 fail closed。这是外部发行凭据缺口，不得以 self-signed、ad-hoc
 签名或伪造 receipt 替代。

@@ -56,7 +56,7 @@
 ## 已知环境边界
 
 - 验收机只有一个物理显示器，无法诚实声称完成双显示器物理复核；已覆盖副屏负坐标和四边几何，并保留外部双屏私测项。
-- 最新只读盘点回执由 `test:brainpet-physical-inventory` 生成；Windows 11 build 26200、DISPLAY1 2560×1600、150% DPI、物理显示器数 1。回执位于本地 `output/physical-acceptance`（不进入 Git）。
+- 历史只读盘点回执由 `test:brainpet-physical-inventory` 生成；Windows 11 build 26200、DISPLAY1 2560×1600、150% DPI、物理显示器数 1。回执位于本地 `output/physical-acceptance`（不进入 Git），不满足当前 schema-v3 Stable 发行门。
 - 当前私测包未做商业代码签名，Windows 会显示未知发布者；本地 Electron dist 可同时构建 unsigned `win-unpacked` 回退目录。
 - Codex 桥接代码、协议合同和并发状态测试已通过；真实 Codex 绑定仍以“个人插件已安装 + 新任务加载 + hook trust + 宠物状态实机变化”为最终验收，不用代码存在代替实机回执。
 - OpenPets 上游部分测试依赖 Windows symlink 权限或已有断言，BrainPet 专项测试、构建、打包合同与 Electron 实机测试单独列证据，不把上游环境失败算成 BrainPet 通过。
@@ -71,7 +71,7 @@
 4. 首次用户规则理解：请未看过产品说明的用户直接开始；不经过独立教程页，在第一关结束前能正确说明并执行两款任务规则。
 5. 独立动态视觉评审：查看一轮 Go/No-Go 和一轮持续更新的实机录屏，逐项确认文字不溢出、像素不糊、红/蓝刺激可区分、正误反馈不闪烁、暂停/结束动作清楚，且画面没有默认 HTML 控件或诊断占位。
 
-复核人运行 `powershell -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/brainpet-physical-acceptance.ps1 -RunInteractive`。脚本会在 `output/physical-acceptance/<时间戳>` 生成 JSON 与 Markdown 回执，记录机器环境、显示器、DPI、便携包哈希、逐项结论和证据路径；它不会自动锁屏、修改显示设置或关闭进程。以上项目没有一份 `overallStatus: passed` 的外部回执前，状态只能是“开发验收完成，V1 物理/内容放行待复核”，不能写“全部验收通过”。
+复核人对公开候选中的签名 NSIS 运行 `powershell -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/brainpet-physical-acceptance.ps1 -RunInteractive -ArtifactPath <signed-setup.exe> -SourceCommit <sha>`。当前 schema-v3 脚本还会覆盖真实安装、默认 discovery、真实 Agent lifecycle、升级/卸载与睡眠恢复，并在 `output/physical-acceptance/<时间戳>` 生成不含本机绝对路径的 JSON/Markdown 回执；它不会自动睡眠、修改显示设置或关闭进程。参数负责人批准仍按本节第 3 项单独留证，不伪装成安装包自动证据。以上项目没有 `overallStatus: passed` 的外部回执前，状态只能是“开发验收完成，V1 物理/内容放行待复核”，不能写“全部验收通过”。
 
 ## 回退
 
