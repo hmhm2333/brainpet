@@ -213,8 +213,9 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `composition/desktop-composition.ts`: Pure capability/layer plan for OpenPets, enabled BrainPet, and BrainPet rollback
 - `composition/managed-service.ts`: Start/dispose/diagnostics lifecycle shared by every composition service; disposal requested during an async start stops later factories and drains each created service exactly once
 - `composition/async-operation-gate.ts`: Pure guard that blocks post-dispose lazy work and drains in-flight optional-service operations before cleanup
+- `composition/resource-transaction.ts`: Reverse-order rollback helper that preserves the original startup error while reporting cleanup failures
 - `composition/host-core.ts`: Minimal state, tray, pet, local IPC, and Agent lifecycle host
-- `composition/openpets-runtime.ts`: Lazy Control Center, plugin, LAN, remote, and voice service factory with shutdown guards around every awaited load/start boundary
+- `composition/openpets-runtime.ts`: Lazy Control Center, plugin, LAN, remote, and voice service factory with shutdown guards around every awaited load/start boundary; plugin startup commits only after its service, watcher, listeners, tray integration, capabilities, and event sources are all ready
 - `composition/brainpet-feature.ts`: Built-in training, install marker, setup, and onboarding feature factory
 - `brainpet/host.ts`: Thin Electron composition and IPC aggregate for the four BrainPet controllers
 - `brainpet/training-entry.ts`: Direct built-in training registration and toggle lifecycle

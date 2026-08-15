@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import { OPENPETS_PLUGIN_MANIFEST_FILENAME, type OpenPetsDeclarativePluginManifest } from "../src/plugin-manifest.js";
-import { PluginService, executeDefaultPetPluginCommand, formatPermissionDialogDetail, getDefaultPetPluginCommands, setPluginServiceForTests, stopPluginService } from "../src/plugin-service.js";
+import { PluginService, executeDefaultPetPluginCommand, formatPermissionDialogDetail, getDefaultPetPluginCommands, getPluginService, setPluginServiceForTests, stopPluginService } from "../src/plugin-service.js";
 import { PluginStateStore, type PluginStateRecord } from "../src/plugin-state.js";
 
 let lastRoot = "";
@@ -654,6 +654,7 @@ await scenario("disabled catalog returns no discover plugins", async ({ userData
 });
 
 await scenario("right-click command helper groups caps and ignores stale commands", async ({ runtime }) => {
+  let stopCount = 0;
   setPluginServiceForTests({
     getSnapshot: async () => ({ plugins: [
       { id: "zeta", name: "Zeta", version: "1.0.0", source: "catalog", enabled: true, approvedPermissions: [], commands: [{ id: "b", title: "Beta" }, { id: "a", title: "Alpha" }, { id: "c", title: "Gamma" }] },
@@ -666,11 +667,13 @@ await scenario("right-click command helper groups caps and ignores stale command
   } as unknown as PluginService);
   const commands = await getDefaultPetPluginCommands(2, 2);
   assert.deepEqual(commands.map((command) => `${command.pluginId}:${command.commandId}`), ["alpha:run", "zeta:b", "zeta:a"]);
-  setPluginServiceForTests({ getSnapshot: async () => ({ plugins: [{ id: "alpha", name: "Alpha", version: "1.0.0", source: "catalog", enabled: true, approvedPermissions: [], commands: [{ id: "run", title: "Run" }] }, { id: "zeta", name: "Zeta", version: "1.0.0", source: "catalog", enabled: true, approvedPermissions: [], commands: [] }] }), executeCommand: async (pluginId: string, commandId: string) => { runtime.executed.push({ pluginId, commandId }); }, stop() {} } as unknown as PluginService);
+  setPluginServiceForTests({ getSnapshot: async () => ({ plugins: [{ id: "alpha", name: "Alpha", version: "1.0.0", source: "catalog", enabled: true, approvedPermissions: [], commands: [{ id: "run", title: "Run" }] }, { id: "zeta", name: "Zeta", version: "1.0.0", source: "catalog", enabled: true, approvedPermissions: [], commands: [] }] }), executeCommand: async (pluginId: string, commandId: string) => { runtime.executed.push({ pluginId, commandId }); }, stop() { stopCount += 1; } } as unknown as PluginService);
   assert.deepEqual((await getDefaultPetPluginCommands()).map((command) => command.pluginId), ["alpha"]);
   await executeDefaultPetPluginCommand("alpha", "run");
   assert.deepEqual(runtime.executed, [{ pluginId: "alpha", commandId: "run" }]);
-  stopPluginService();
+  await stopPluginService();
+  assert.equal(stopCount, 1);
+  assert.throws(() => getPluginService(), /not initialized/);
 });
 
 await scenario("executeCommand returns plugin command validation errors", async ({ service, store, runtime }) => {

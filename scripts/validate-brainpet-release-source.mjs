@@ -71,6 +71,7 @@ assert.match(mainSource, /if \(distribution\.profile === "brainpet"\) app\.disab
 assert.doesNotMatch(lifecycleSource, /plugin-service|brainpet\/host|remote-control-service|lan-controller|local-ipc|windows\.js/, "App lifecycle must only call the composition disposer.");
 assert.match(managedServiceSource, /#disposeRequested/, "Composition lifecycle must stop factory creation once disposal begins.");
 assert.match(optionalServicesSource, /AsyncOperationGate/, "Optional OpenPets services must drain lazy work before disposal completes.");
+assert.match(optionalServicesSource, /runResourceTransaction/, "Optional OpenPets plugin startup must roll back partially acquired resources before retry.");
 assert.doesNotMatch(defaultPetControllerSource, /^import .*lan-pet-controller/m, "HostCore must not statically load the LAN pet implementation.");
 assert.doesNotMatch(brainPetHostSource, /brainpet\.training|plugin-service|plugin-runtime|plugin-events-source/, "BrainPet TrainingEntry must not use the removed plugin facade.");
 for (const [name, source] of Object.entries(brainPetControllerSources)) {

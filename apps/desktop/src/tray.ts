@@ -145,18 +145,34 @@ export function refreshTrayMenu(): void {
 
 export async function installTrayVoiceMenu(): Promise<() => void> {
   if (!capabilities.voice || voiceOperationSubscriptionInstalled) return () => undefined;
-  voiceOperationSubscriptionInstalled = true;
   const [voice, menu] = await Promise.all([import("./plugin-voice.js"), import("./tray-voice-menu.js")]);
-  createConfiguredVoiceMenuItems = () => menu.createVoiceMenuItems(voice.getPluginVoiceOperation());
-  disposeVoiceOperationSubscription = voice.subscribePluginVoiceOperation(() => refreshTrayMenu());
-  refreshTrayMenu();
-  return () => {
+  const createItems = () => menu.createVoiceMenuItems(voice.getPluginVoiceOperation());
+  const disposeSubscription = voice.subscribePluginVoiceOperation(() => refreshTrayMenu());
+  let installed = false;
+  const remove = () => {
+    if (!installed) return;
+    installed = false;
     disposeVoiceOperationSubscription?.();
     disposeVoiceOperationSubscription = null;
     createConfiguredVoiceMenuItems = null;
     voiceOperationSubscriptionInstalled = false;
     refreshTrayMenu();
   };
+  try {
+    createConfiguredVoiceMenuItems = createItems;
+    disposeVoiceOperationSubscription = disposeSubscription;
+    voiceOperationSubscriptionInstalled = true;
+    installed = true;
+    refreshTrayMenu();
+    return remove;
+  } catch (error) {
+    installed = false;
+    disposeSubscription();
+    disposeVoiceOperationSubscription = null;
+    createConfiguredVoiceMenuItems = null;
+    voiceOperationSubscriptionInstalled = false;
+    throw error;
+  }
 }
 
 function openControlCenter(section?: "pets" | "integrations" | "plugins" | "settings"): void {

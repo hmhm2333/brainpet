@@ -23,6 +23,8 @@ test("BrainPet HostCore has no reverse dependency on product or optional service
   assert.doesNotMatch(brainPetHost, /plugin-service|plugin-runtime|plugin-events-source|brainpet\.training/);
   assert.doesNotMatch(defaultPetController, /^import .*lan-pet-controller/m);
   assert.match(optionalRuntime, /AsyncOperationGate/);
+  assert.match(optionalRuntime, /runResourceTransaction/);
+  assert.match(optionalRuntime, /stopPluginService\(service\)/);
   assert.match(main, /import\("\.\/composition\/openpets-runtime\.js"\)/);
   assert.match(main, /import\("\.\/composition\/brainpet-feature\.js"\)/);
   assert.doesNotMatch(main, /^import .*composition\/(?:openpets-runtime|brainpet-feature)\.js/m);

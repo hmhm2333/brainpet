@@ -608,8 +608,13 @@ export async function executeDefaultPetPluginMenuSelect(pluginId: string, itemId
   await appPluginService.runtime.executeMenuSelect(pluginId, itemId);
 }
 
-export async function stopPluginService(): Promise<void> {
-  await appPluginService?.stop();
+export async function stopPluginService(service: PluginService | null = appPluginService): Promise<void> {
+  if (!service) return;
+  try {
+    await service.stop();
+  } finally {
+    if (appPluginService === service) appPluginService = null;
+  }
 }
 
 export function getPluginService(): PluginService {

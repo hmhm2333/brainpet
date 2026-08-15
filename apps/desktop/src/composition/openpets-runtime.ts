@@ -12,6 +12,7 @@ import { configurePetPluginPort } from "../pet-plugin-port.js";
 import type { RemoteStatusSnapshot } from "../remote-control-protocol.js";
 import { AsyncOperationDisposedError, AsyncOperationGate } from "./async-operation-gate.js";
 import type { DesktopManagedService, DesktopServiceState } from "./managed-service.js";
+import { runResourceTransaction } from "./resource-transaction.js";
 
 export function createOptionalOpenPetsServices(distribution: DesktopDistributionSettings): DesktopManagedService {
   let state: DesktopServiceState = "created";
@@ -19,6 +20,7 @@ export function createOptionalOpenPetsServices(distribution: DesktopDistribution
   let lanModule: typeof import("../lan-controller.js") | null = null;
   let remoteModule: typeof import("../remote-control-service.js") | null = null;
   let pluginServiceModule: typeof import("../plugin-service.js") | null = null;
+  let pluginService: import("../plugin-service.js").PluginService | null = null;
   let pluginEventsModule: typeof import("../plugin-events-source.js") | null = null;
   let pluginCapabilities: import("../plugin-host-capabilities.js").ElectronPluginHostCapabilities | null = null;
   let pluginWatcher: import("../plugin-dev-watcher.js").DevPluginWatcher | null = null;
@@ -37,17 +39,21 @@ export function createOptionalOpenPetsServices(distribution: DesktopDistribution
     configurePetPluginPort(null);
     configureOptionalLanPetPort(null);
     await drained;
-    controlCenterModule?.disposeInternalUi();
-    pluginWatcher?.stop();
-    pluginWatcher = null;
-    removePowerResume?.();
-    removePowerResume = null;
-    removeTrayVoiceMenu?.();
+    try { controlCenterModule?.disposeInternalUi(); } catch (error) { logError("app", "control center cleanup failed", error); }
+    controlCenterModule = null;
+    try { removeTrayVoiceMenu?.(); } catch (error) { logError("app", "tray voice cleanup failed", error); }
     removeTrayVoiceMenu = null;
-    await pluginServiceModule?.stopPluginService().catch(() => undefined);
-    pluginCapabilities?.shutdown();
+    try { removePowerResume?.(); } catch (error) { logError("app", "power resume cleanup failed", error); }
+    removePowerResume = null;
+    try { pluginWatcher?.stop(); } catch (error) { logError("app", "plugin watcher cleanup failed", error); }
+    pluginWatcher = null;
+    if (pluginServiceModule && pluginService) await pluginServiceModule.stopPluginService(pluginService).catch((error) => logError("app", "plugin service cleanup failed", error));
+    pluginService = null;
+    pluginServiceModule = null;
+    try { pluginCapabilities?.shutdown(); } catch (error) { logError("app", "plugin capabilities cleanup failed", error); }
     pluginCapabilities = null;
-    pluginEventsModule?.stopPluginEventSources();
+    try { pluginEventsModule?.stopPluginEventSources(); } catch (error) { logError("app", "plugin event source cleanup failed", error); }
+    pluginEventsModule = null;
     await remoteModule?.stopRemoteControlService().catch(() => undefined);
     await lanModule?.stopLanController().catch(() => undefined);
     state = "disposed";
@@ -100,67 +106,83 @@ export function createOptionalOpenPetsServices(distribution: DesktopDistribution
   const ensurePluginPlatform = (): Promise<void> => {
     if (pluginPromise) return pluginPromise;
     pluginPromise = operations.run(async (assertActive) => {
-      const [serviceModule, watcherModule, capabilitiesModule, hostModule, petApiModule, settingsModule, eventsModule, trayModule] = await Promise.all([
-        import("../plugin-service.js"),
-        import("../plugin-dev-watcher.js"),
-        import("../plugin-host-capabilities.js"),
-        import("../plugin-js-host.js"),
-        import("../plugin-pet-api.js"),
-        import("../plugin-platform-settings.js"),
-        import("../plugin-events-source.js"),
-        import("../tray.js"),
-      ]);
-      assertActive();
-      pluginServiceModule = serviceModule;
-      pluginEventsModule = eventsModule;
-      const roots = parseDevPluginEnv(process.env.OPENPETS_DEV_PLUGIN_ROOTS);
-      const paths = parseDevPluginEnv(process.env.OPENPETS_DEV_PLUGIN_PATHS);
-      const devPluginMode = roots.length > 0 || paths.length > 0;
-      settingsModule.initializePluginPlatformSettings(app.getPath("userData"));
-      pluginCapabilities = capabilitiesModule.createElectronPluginHostCapabilities(app.getPath("userData"));
-      const service = serviceModule.initializePluginService(
-        app.getPath("userData"),
-        petApiModule.defaultPluginPetApi,
-        app.getVersion(),
-        new hostModule.ElectronPluginJsHost(),
-        writePluginRuntimeLog,
-        process.env.OPENPETS_DISABLE_PLUGIN_CATALOG === "1" || devPluginMode,
-        resolveBundledOfficialPluginRoots(),
-        !devPluginMode && distribution.seedBundledPlugins,
-        pluginCapabilities,
-        undefined,
-        (sourcePath) => pluginWatcher?.addPaths([sourcePath]),
-        (sourcePath) => pluginWatcher?.removePath(sourcePath),
-        distribution.bundledPluginIds,
-        distribution.bundledEnabledPluginIds,
-      );
-      await service.start();
-      assertActive();
-      const persistedPaths = service.getLocalSourcePaths();
-      for (const path of paths) {
-        const result = await service.loadLocalPath(path, { autoApprove: true });
+      await runResourceTransaction(async (defer) => {
+        const [serviceModule, watcherModule, capabilitiesModule, hostModule, petApiModule, settingsModule, eventsModule, trayModule] = await Promise.all([
+          import("../plugin-service.js"),
+          import("../plugin-dev-watcher.js"),
+          import("../plugin-host-capabilities.js"),
+          import("../plugin-js-host.js"),
+          import("../plugin-pet-api.js"),
+          import("../plugin-platform-settings.js"),
+          import("../plugin-events-source.js"),
+          import("../tray.js"),
+        ]);
         assertActive();
-        if (!result.ok) logError("app", "dev plugin path load failed", new Error(result.error));
-      }
-      for (const path of persistedPaths.filter((path) => !paths.includes(path))) {
-        const result = await service.loadLocalPath(path, { autoApprove: true });
+        const roots = parseDevPluginEnv(process.env.OPENPETS_DEV_PLUGIN_ROOTS);
+        const paths = parseDevPluginEnv(process.env.OPENPETS_DEV_PLUGIN_PATHS);
+        const devPluginMode = roots.length > 0 || paths.length > 0;
+        settingsModule.initializePluginPlatformSettings(app.getPath("userData"));
+        const capabilities = capabilitiesModule.createElectronPluginHostCapabilities(app.getPath("userData"));
+        defer(() => {
+          try { capabilities.shutdown(); }
+          finally { eventsModule.stopPluginEventSources(); }
+        });
+        const service = serviceModule.initializePluginService(
+          app.getPath("userData"),
+          petApiModule.defaultPluginPetApi,
+          app.getVersion(),
+          new hostModule.ElectronPluginJsHost(),
+          writePluginRuntimeLog,
+          process.env.OPENPETS_DISABLE_PLUGIN_CATALOG === "1" || devPluginMode,
+          resolveBundledOfficialPluginRoots(),
+          !devPluginMode && distribution.seedBundledPlugins,
+          capabilities,
+          undefined,
+          (sourcePath) => pluginWatcher?.addPaths([sourcePath]),
+          (sourcePath) => pluginWatcher?.removePath(sourcePath),
+          distribution.bundledPluginIds,
+          distribution.bundledEnabledPluginIds,
+        );
+        defer(() => serviceModule.stopPluginService(service));
+        await service.start();
         assertActive();
-        if (!result.ok) logError("app", "persisted local plugin load failed", new Error(result.error));
-      }
-      if (roots.length > 0) {
-        const results = await service.loadLocalRoots(roots, { autoApprove: true, pruneStale: true });
+        const persistedPaths = service.getLocalSourcePaths();
+        for (const path of paths) {
+          const result = await service.loadLocalPath(path, { autoApprove: true });
+          assertActive();
+          if (!result.ok) logError("app", "dev plugin path load failed", new Error(result.error));
+        }
+        for (const path of persistedPaths.filter((path) => !paths.includes(path))) {
+          const result = await service.loadLocalPath(path, { autoApprove: true });
+          assertActive();
+          if (!result.ok) logError("app", "persisted local plugin load failed", new Error(result.error));
+        }
+        if (roots.length > 0) {
+          const results = await service.loadLocalRoots(roots, { autoApprove: true, pruneStale: true });
+          assertActive();
+          for (const result of results) if (!result.ok) logError("app", "dev plugin root load failed", new Error(`${result.path}: ${result.error}`));
+        }
         assertActive();
-        for (const result of results) if (!result.ok) logError("app", "dev plugin root load failed", new Error(`${result.path}: ${result.error}`));
-      }
-      assertActive();
-      const watchPaths = Array.from(new Set([...paths, ...service.getLocalSourcePaths()]));
-      if (devPluginMode || watchPaths.length > 0) pluginWatcher = watcherModule.startDevPluginWatcher(service, roots, watchPaths);
-      const handleResume = () => service.runtime.resyncSchedules();
-      powerMonitor.on("resume", handleResume);
-      removePowerResume = () => powerMonitor.off("resume", handleResume);
-      removeTrayVoiceMenu = await trayModule.installTrayVoiceMenu();
-      assertActive();
-      info("app", "optional service started", { service: "pluginPlatform" });
+        const watchPaths = Array.from(new Set([...paths, ...service.getLocalSourcePaths()]));
+        const watcher = devPluginMode || watchPaths.length > 0 ? watcherModule.startDevPluginWatcher(service, roots, watchPaths) : null;
+        if (watcher) defer(() => watcher.stop());
+        const handleResume = () => service.runtime.resyncSchedules();
+        powerMonitor.on("resume", handleResume);
+        const removeResume = () => { powerMonitor.off("resume", handleResume); };
+        defer(removeResume);
+        const removeTray = await trayModule.installTrayVoiceMenu();
+        defer(removeTray);
+        assertActive();
+
+        info("app", "optional service started", { service: "pluginPlatform" });
+        pluginServiceModule = serviceModule;
+        pluginService = service;
+        pluginEventsModule = eventsModule;
+        pluginCapabilities = capabilities;
+        pluginWatcher = watcher;
+        removePowerResume = removeResume;
+        removeTrayVoiceMenu = removeTray;
+      }, (cleanupError) => logError("app", "optional plugin startup rollback cleanup failed", cleanupError));
     }).catch((error) => {
       pluginPromise = null;
       throw error;
