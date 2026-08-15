@@ -8,6 +8,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract, brainPetReleaseTargets } from "./brainpet-release-contract.mjs";
+import { assertBrainPetBinary, inspectExecutableBinary } from "./brainpet-binary-format.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const lifecycleRequirements = Object.freeze([
@@ -30,7 +31,10 @@ export function aggregateBrainPetReleaseReceipt(options) {
     : [];
 
   const packages = brainPetReleaseTargets.map((target) => validatePackageReceipt(packageReceipts, packagesRoot, target, releaseMode));
-  const lifecycle = lifecycleRequirements.map((requirement) => validateLifecycleReceipt(lifecycleReceipts, requirement, packages));
+  const appVersions = new Set(packages.map((entry) => entry.appVersion));
+  assert.equal(appVersions.size, 1, "All runtime packages must use one exact app version.");
+  const appVersion = [...appVersions][0];
+  const lifecycle = lifecycleRequirements.map((requirement) => validateLifecycleReceipt(lifecycleReceipts, requirement, packages, releaseMode));
   const bridge = validateBridgeReceipt(bridgeRoot);
   if (releaseMode === "public-release") validateBridgeProvenance(bridgeRoot, bridge);
   const physical = physicalReceipts.map((path) => validatePhysicalReceipt(path));
@@ -65,6 +69,7 @@ export function aggregateBrainPetReleaseReceipt(options) {
     schemaVersion: 1,
     product: "brainpet",
     appId: brainPetDistributionContract.identity.appId,
+    appVersion,
     releaseMode,
     sourceCommit,
     packages,
@@ -102,11 +107,17 @@ function validatePackageReceipt(paths, packagesRoot, target, releaseMode) {
   assert.equal(receipt.publicReleaseReady, false, "A target package receipt must never claim aggregate public readiness.");
   assert.equal(receipt.nativeBridgeHelpersBundled, true);
   assert.equal(receipt.bridgeMarketplaceBundled, true);
+  assert.match(receipt.appVersion, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/, `Package receipt ${target.id} has an invalid app version.`);
+  assert.equal(typeof receipt.runtimeReleaseReady, "boolean", `Package receipt ${target.id} lacks a runtime trust result.`);
+  if (releaseMode === "public-release") assert.equal(receipt.runtimeReleaseReady, true, `Public package ${target.id} did not pass its platform trust gate.`);
   assert.ok(Array.isArray(receipt.artifacts) && receipt.artifacts.length > 0);
   const receiptRoot = dirname(path);
-  for (const artifact of receipt.artifacts) validateArtifactRecord(receiptRoot, artifact);
+  const requiredKinds = target.platform === "windows" ? ["nsis"] : target.platform === "macos" ? ["dmg"] : ["appimage", "deb"];
+  assert.deepEqual(receipt.artifacts.map((artifact) => artifact.kind).sort(), requiredKinds.sort(), `Package receipt ${target.id} has an invalid installer artifact set.`);
+  for (const artifact of receipt.artifacts) validateArtifactRecord(receiptRoot, artifact, target);
   const executablePath = resolveSafeRelative(receiptRoot, receipt.executable);
   assert.equal(sha256(executablePath), receipt.sha256, `Runtime executable hash mismatch for ${target.id}.`);
+  assertBrainPetBinary(readFileSync(executablePath), target, `Aggregate runtime ${target.id}`);
   assert.ok(isRecord(receipt.source) && /^[a-f0-9]{40}$/i.test(receipt.source.commit), `Package receipt ${target.id} lacks an exact source commit.`);
   if (releaseMode === "public-release") validateGitHubProvenance(receiptRoot, receipt, target);
   assertUnderRoot(path, packagesRoot, "package receipt");
@@ -130,7 +141,7 @@ function validateGitHubProvenance(receiptRoot, receipt, target) {
   }
 }
 
-function validateLifecycleReceipt(paths, requirement, packages) {
+function validateLifecycleReceipt(paths, requirement, packages, releaseMode) {
   const expectedName = `brainpet-install-lifecycle-receipt-${requirement.target}-${requirement.kind}.json`;
   const candidates = paths.filter((path) => basename(path) === expectedName);
   assert.equal(candidates.length, 1, `Expected exactly one lifecycle receipt for ${requirement.target}/${requirement.kind}.`);
@@ -163,8 +174,22 @@ function validateLifecycleReceipt(paths, requirement, packages) {
   assert.ok(packageReceipt, `Lifecycle target has no package receipt: ${requirement.target}`);
   const artifact = packageReceipt.artifacts.find((entry) => entry.kind === requirement.kind);
   assert.ok(artifact, `Lifecycle target has no ${requirement.kind} package artifact.`);
+  assert.equal(receipt.currentArtifact.version, packageReceipt.appVersion, `Lifecycle version mismatch for ${requirement.target}/${requirement.kind}.`);
   assert.equal(receipt.currentArtifact.sha256, artifact.sha256, `Lifecycle artifact hash mismatch for ${requirement.target}/${requirement.kind}.`);
+  if (releaseMode === "public-release") validateLifecycleProvenance(candidates[0], receipt);
   return receipt;
+}
+
+function validateLifecycleProvenance(receiptPath, receipt) {
+  assert.equal(receipt.source.workflow, "BrainPet public release gate");
+  const bundle = join(dirname(receiptPath), "brainpet-github-attestations.jsonl");
+  assert.ok(existsSync(bundle), `Public lifecycle ${receipt.target}/${receipt.artifactKind} is missing its GitHub provenance bundle.`);
+  const repository = brainPetDistributionContract.identity.repository;
+  const signerWorkflow = `github.com/${repository}/.github/workflows/brainpet-public-release-gate.yml`;
+  const verification = spawnSync("gh", ["attestation", "verify", receiptPath, "--bundle", bundle, "--repo", repository, "--signer-workflow", signerWorkflow, "--source-digest", receipt.source.commit, "--deny-self-hosted-runners", "--format", "json"], { encoding: "utf8" });
+  assert.equal(verification.status, 0, verification.stderr || `GitHub provenance failed for lifecycle ${receipt.target}/${receipt.artifactKind}.`);
+  const result = JSON.parse(verification.stdout);
+  assert.ok(Array.isArray(result) && result.length > 0, `GitHub provenance returned no lifecycle statement for ${receipt.target}/${receipt.artifactKind}.`);
 }
 
 function validateBridgeReceipt(bridgeRoot) {
@@ -177,6 +202,7 @@ function validateBridgeReceipt(bridgeRoot) {
     assert.ok(record, `Bridge receipt is missing ${target.id}.`);
     const helper = join(bridgeRoot, "bin", target.id, target.helperName);
     assert.equal(sha256(helper), record.sha256, `Bridge helper receipt mismatch for ${target.id}.`);
+    assertBrainPetBinary(readFileSync(helper), target, `Aggregate Bridge helper ${target.id}`);
   }
   assert.ok(isRecord(receipt.source) && /^[a-f0-9]{40}$/i.test(receipt.source.commit), "Bridge receipt lacks an exact source commit.");
   return { bridgeVersion: receipt.bridgeVersion, targetCount: receipt.files.length, sha256: sha256(join(bridgeRoot, "brainpet-release.json")), source: receipt.source, releaseReady: true };
@@ -207,13 +233,20 @@ function validatePhysicalReceipt(path) {
   return { target: receipt.target, overallStatus: receipt.overallStatus, artifactSha256: receipt.artifactSha256, receiptSha256: sha256(path), sourceCommit: receipt.sourceCommit, recordedAt: receipt.completedAt };
 }
 
-function validateArtifactRecord(receiptRoot, artifact) {
+function validateArtifactRecord(receiptRoot, artifact, target) {
   assert.ok(isRecord(artifact) && typeof artifact.path === "string" && typeof artifact.kind === "string");
   const path = resolveSafeRelative(receiptRoot, artifact.path);
   const stat = lstatSync(path);
   assert.ok(stat.isFile() && !stat.isSymbolicLink(), `Release artifact must be a regular file: ${artifact.path}`);
   assert.equal(stat.size, artifact.bytes, `Release artifact size mismatch: ${artifact.path}`);
   assert.equal(sha256(path), artifact.sha256, `Release artifact hash mismatch: ${artifact.path}`);
+  assert.ok(stat.size >= 16 * 1024, `Release artifact is implausibly small: ${artifact.path}`);
+  const bytes = readFileSync(path);
+  if (artifact.kind === "nsis" || artifact.kind === "portable") assert.equal(inspectExecutableBinary(bytes).format, "pe", `${artifact.kind} must be a PE executable.`);
+  else if (artifact.kind === "dmg") assert.equal(bytes.toString("ascii", bytes.length - 512, bytes.length - 508), "koly", "DMG must contain a UDIF trailer.");
+  else if (artifact.kind === "appimage") assert.equal(inspectExecutableBinary(bytes).format, "elf", "AppImage must be an ELF executable.");
+  else if (artifact.kind === "deb") assert.equal(bytes.toString("ascii", 0, 8), "!<arch>\n", "deb must be an ar archive.");
+  else assert.fail(`Unsupported release artifact kind for ${target.id}: ${artifact.kind}`);
 }
 
 function findFiles(directory, pattern) {

@@ -138,6 +138,18 @@ jobs:
       - if: runner.os == 'Linux'
         run: which xvfb-run
       - run: node apps/desktop/scripts/brainpet-package-lifecycle.mjs --target ${{ matrix.id }} --artifact-kind ${{ matrix.kind }} --current-output output/current --previous-output output/previous --receipt output/lifecycle/brainpet-install-lifecycle-receipt-${{ matrix.id }}-${{ matrix.kind }}.json
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: output/lifecycle/brainpet-install-lifecycle-receipt-${{ matrix.id }}-${{ matrix.kind }}.json
+      - name: Collect lifecycle provenance bundle
+        shell: bash
+        working-directory: output/lifecycle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation download brainpet-install-lifecycle-receipt-${{ matrix.id }}-${{ matrix.kind }}.json --repo "$GITHUB_REPOSITORY"
+          cat sha256-*.jsonl > brainpet-github-attestations.jsonl
+          rm sha256-*.jsonl
       - uses: actions/upload-artifact@v4
         with:
           name: brainpet-public-lifecycle-${{ matrix.id }}-${{ matrix.kind }}
