@@ -167,10 +167,12 @@ export async function installTrayVoiceMenu(): Promise<() => void> {
     return remove;
   } catch (error) {
     installed = false;
-    disposeSubscription();
-    disposeVoiceOperationSubscription = null;
-    createConfiguredVoiceMenuItems = null;
-    voiceOperationSubscriptionInstalled = false;
+    try { disposeSubscription(); } catch { /* preserve the startup error */ }
+    finally {
+      disposeVoiceOperationSubscription = null;
+      createConfiguredVoiceMenuItems = null;
+      voiceOperationSubscriptionInstalled = false;
+    }
     throw error;
   }
 }

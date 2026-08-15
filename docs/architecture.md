@@ -67,7 +67,9 @@ created services are released exactly once. HostCore reaches LAN pet reclamping
 through a no-op port, so the LAN implementation is not evaluated on the cold
 path. Optional plugin startup is also transactional: a failed local-source,
 watcher, power-listener, or tray initialization rolls back the exact service
-instance and all earlier resources in reverse order before a retry is allowed.
+instance and all earlier resources in reverse order before a retry is allowed;
+the event-source layer likewise unregisters every power/display listener and
+timer after partial startup or shutdown.
 The machine-readable current snapshot is
 `config/brainpet-release-capabilities.json`; the generated provider matrix is
 `integrations/brainpet-provider-support.json`.

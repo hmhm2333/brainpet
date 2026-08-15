@@ -4,6 +4,7 @@ import { net, powerMonitor, screen } from "electron";
 
 import { debug } from "./logger.js";
 import { subscribeHostAgentActivity } from "./host-agent-activity.js";
+import { registerPluginSystemEventListeners } from "./plugin-event-listeners.js";
 
 /**
  * The senses bus host source (§3): a curated, read-only event stream fed by
@@ -24,6 +25,7 @@ let userIsIdle = false;
 let lastOnline: boolean | null = null;
 let lastDayPart: string | null = null;
 let unsubscribeHostAgentActivity: (() => void) | null = null;
+let removeSystemEventListeners: (() => void) | null = null;
 
 const idleThresholdSeconds = 120;
 const idlePollMs = 15_000;
@@ -92,53 +94,72 @@ function currentDayPart(date = new Date()): "morning" | "afternoon" | "evening" 
 /** Start the host-side event producers. Idempotent; call once from main. */
 export function startPluginEventSources(): void {
   if (started) return;
-  started = true;
-  unsubscribeHostAgentActivity = subscribeHostAgentActivity((payload) => emitPluginEvent("agent:activity", payload as unknown as Record<string, unknown>));
   debug("plugin", "event sources starting");
+  let localUnsubscribe: (() => void) | null = null;
+  let localRemoveListeners: (() => void) | null = null;
+  let localIdleTimer: NodeJS.Timeout | null = null;
+  let localDayPartTimer: NodeJS.Timeout | null = null;
+  let localOnlineTimer: NodeJS.Timeout | null = null;
+  try {
+    localUnsubscribe = subscribeHostAgentActivity((payload) => emitPluginEvent("agent:activity", payload as unknown as Record<string, unknown>));
+    localRemoveListeners = registerPluginSystemEventListeners(powerMonitor, screen, {
+      lockScreen: () => emitPluginEvent("screen:locked", {}),
+      unlockScreen: () => emitPluginEvent("screen:unlocked", {}),
+      onBattery: () => emitPluginEvent("power:charging", { charging: false }),
+      onAc: () => emitPluginEvent("power:charging", { charging: true }),
+      suspend: () => { userIsIdle = true; },
+      resume: () => { userIsIdle = false; },
+      displayChanged: () => emitPluginEvent("display:changed", { displays: screen.getAllDisplays().length }),
+    });
+    localIdleTimer = setInterval(() => {
+      try {
+        const idleSeconds = powerMonitor.getSystemIdleTime();
+        if (!userIsIdle && idleSeconds >= idleThresholdSeconds) {
+          userIsIdle = true;
+          emitPluginEvent("idle:enter", { idleSeconds });
+        } else if (userIsIdle && idleSeconds < idleThresholdSeconds) {
+          userIsIdle = false;
+          emitPluginEvent("idle:exit", { idleSeconds });
+        }
+      } catch { /* idle probing is best-effort */ }
+    }, idlePollMs);
+    localIdleTimer.unref?.();
 
-  powerMonitor.on("lock-screen", () => emitPluginEvent("screen:locked", {}));
-  powerMonitor.on("unlock-screen", () => emitPluginEvent("screen:unlocked", {}));
-  powerMonitor.on("on-battery", () => emitPluginEvent("power:charging", { charging: false }));
-  powerMonitor.on("on-ac", () => emitPluginEvent("power:charging", { charging: true }));
-  powerMonitor.on("suspend", () => { userIsIdle = true; });
-  powerMonitor.on("resume", () => { userIsIdle = false; });
-
-  const displayChanged = () => emitPluginEvent("display:changed", { displays: screen.getAllDisplays().length });
-  screen.on("display-added", displayChanged);
-  screen.on("display-removed", displayChanged);
-  screen.on("display-metrics-changed", displayChanged);
-
-  idleTimer = setInterval(() => {
-    try {
-      const idleSeconds = powerMonitor.getSystemIdleTime();
-      if (!userIsIdle && idleSeconds >= idleThresholdSeconds) {
-        userIsIdle = true;
-        emitPluginEvent("idle:enter", { idleSeconds });
-      } else if (userIsIdle && idleSeconds < idleThresholdSeconds) {
-        userIsIdle = false;
-        emitPluginEvent("idle:exit", { idleSeconds });
+    lastDayPart = currentDayPart();
+    localDayPartTimer = setInterval(() => {
+      const part = currentDayPart();
+      if (part !== lastDayPart) {
+        lastDayPart = part;
+        emitPluginEvent("day:partChanged", { part });
       }
-    } catch { /* idle probing is best-effort */ }
-  }, idlePollMs);
-  idleTimer.unref?.();
+    }, 60_000);
+    localDayPartTimer.unref?.();
 
-  lastDayPart = currentDayPart();
-  dayPartTimer = setInterval(() => {
-    const part = currentDayPart();
-    if (part !== lastDayPart) {
-      lastDayPart = part;
-      emitPluginEvent("day:partChanged", { part });
-    }
-  }, 60_000);
-  dayPartTimer.unref?.();
+    lastOnline = net.online;
+    localOnlineTimer = setInterval(() => {
+      const online = net.online;
+      if (lastOnline !== null && online !== lastOnline) emitPluginEvent(online ? "online" : "offline", {});
+      lastOnline = online;
+    }, onlinePollMs);
+    localOnlineTimer.unref?.();
 
-  lastOnline = net.online;
-  onlineTimer = setInterval(() => {
-    const online = net.online;
-    if (lastOnline !== null && online !== lastOnline) emitPluginEvent(online ? "online" : "offline", {});
-    lastOnline = online;
-  }, onlinePollMs);
-  onlineTimer.unref?.();
+    unsubscribeHostAgentActivity = localUnsubscribe;
+    removeSystemEventListeners = localRemoveListeners;
+    idleTimer = localIdleTimer;
+    dayPartTimer = localDayPartTimer;
+    onlineTimer = localOnlineTimer;
+    started = true;
+  } catch (error) {
+    if (localIdleTimer) clearInterval(localIdleTimer);
+    if (localDayPartTimer) clearInterval(localDayPartTimer);
+    if (localOnlineTimer) clearInterval(localOnlineTimer);
+    try { localRemoveListeners?.(); } catch { /* preserve the startup error */ }
+    try { localUnsubscribe?.(); } catch { /* preserve the startup error */ }
+    userIsIdle = false;
+    lastOnline = null;
+    lastDayPart = null;
+    throw error;
+  }
 }
 
 export function stopPluginEventSources(): void {
@@ -146,7 +167,15 @@ export function stopPluginEventSources(): void {
   if (dayPartTimer) clearInterval(dayPartTimer);
   if (onlineTimer) clearInterval(onlineTimer);
   idleTimer = dayPartTimer = onlineTimer = null;
-  unsubscribeHostAgentActivity?.();
+  let firstError: unknown;
+  try { removeSystemEventListeners?.(); } catch (error) { firstError ??= error; }
+  removeSystemEventListeners = null;
+  try { unsubscribeHostAgentActivity?.(); } catch (error) { firstError ??= error; }
   unsubscribeHostAgentActivity = null;
+  userIsIdle = false;
+  lastOnline = null;
+  lastDayPart = null;
+  droppedFileTexts.clear();
   started = false;
+  if (firstError) throw firstError;
 }

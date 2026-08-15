@@ -214,6 +214,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `composition/managed-service.ts`: Start/dispose/diagnostics lifecycle shared by every composition service; disposal requested during an async start stops later factories and drains each created service exactly once
 - `composition/async-operation-gate.ts`: Pure guard that blocks post-dispose lazy work and drains in-flight optional-service operations before cleanup
 - `composition/resource-transaction.ts`: Reverse-order rollback helper that preserves the original startup error while reporting cleanup failures
+- `composition/plugin-platform-startup.ts`: Injectable plugin startup orchestration for service, source, watcher, power-listener, tray, capabilities, and event-source rollback/retry tests
 - `composition/host-core.ts`: Minimal state, tray, pet, local IPC, and Agent lifecycle host
 - `composition/openpets-runtime.ts`: Lazy Control Center, plugin, LAN, remote, and voice service factory with shutdown guards around every awaited load/start boundary; plugin startup commits only after its service, watcher, listeners, tray integration, capabilities, and event sources are all ready
 - `composition/brainpet-feature.ts`: Built-in training, install marker, setup, and onboarding feature factory
@@ -298,7 +299,8 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `plugin-assets.ts`: Declared asset resolution and validation for icon/image/svg/sprite/sound references used by plugin SDK calls and catalog cards.
 - `plugin-bubble-arbiter.ts`: Priority/coalescing arbiter for transient and pinned plugin bubble slots.
 - `plugin-diagnostics.ts`: Per-plugin error/quota/settings-block collector surfaced to inspector and plugin health views.
-- `plugin-events-source.ts`: Host event source adapter for pet/window/system events consumed by `plugin-sdk-events.ts`.
+- `plugin-events-source.ts`: Transactional host event source adapter for pet/window/system events consumed by `plugin-sdk-events.ts`; power/display listeners and timers are all removed before retry or shutdown.
+- `plugin-event-listeners.ts`: Pure exact-listener registration/disposal helper used to prove partial Electron listener startup leaves no residue.
 - `plugin-host-capabilities.ts`: Main-process capability bundle injected into the bridge for Electron side effects.
 - `plugin-i18n.ts`: Plugin locale catalog loader and `$t:`/`ctx.t()` resolver with English fallback.
 - `plugin-oauth.ts`: Host-mediated OAuth/PKCE flow and token session lifecycle for plugins.
