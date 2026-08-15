@@ -5,7 +5,7 @@ reads one hook JSON object from stdin, keeps only the normalized lifecycle
 fields, and sends one authenticated schema-v1 `agent.activity` request to the
 BrainPet desktop runtime. If an installed runtime is not running, it validates
 the per-user install marker, starts the BrainPet executable with no arguments,
-and waits at most 2.5 seconds for discovery. Invalid or missing markers remain
+and keeps all launch, discovery and send work inside a 2.6-second deadline. Invalid or missing markers remain
 silent no-ops.
 
 Supported targets for the first public package:

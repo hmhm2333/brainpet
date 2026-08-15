@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import net from "node:net";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
-import { parseIpcEndpoint, validateDiscovery } from "../src/discovery.js";
+import { getDiscoveryFilePaths, parseIpcEndpoint, readDiscoveryFileFromPaths, validateDiscovery } from "../src/discovery.js";
 import { createOpenPetsClient, parsePetInstallResult, parsePetListResult } from "../src/index.js";
 import { OpenPetsClientError, parseIpcResponse, validateAgentCompanionRequestOptions, validateReaction } from "../src/protocol.js";
 import { maxRemoteMessageBytes, parseRemoteEndpoint, validateRemoteMessage, validateRemoteToken } from "../src/remote-protocol.js";
@@ -22,6 +25,20 @@ validateDiscovery({
   endpoint: process.platform === "win32" ? "\\\\.\\pipe\\brainpet-abc-123" : "/tmp/brainpet-501/brainpet-123.sock",
 });
 validateDiscovery({ ...baseDiscovery, endpoint: "tcp://127.0.0.1:37645" });
+
+const discoveryRoot = mkdtempSync(join(tmpdir(), "openpets-discovery-fallback-"));
+try {
+  const candidates = getDiscoveryFilePaths("win32", { APPDATA: discoveryRoot }, "C:\\Users\\test");
+  assert.equal(candidates.length, 2);
+  assert.match(candidates[0]!, /openpets/i);
+  assert.match(candidates[1]!, /brainpet/i);
+  mkdirSync(dirname(candidates[1]!), { recursive: true });
+  writeFileSync(candidates[1]!, JSON.stringify(baseDiscovery), "utf8");
+  assert.deepEqual(readDiscoveryFileFromPaths(candidates), validateDiscovery(baseDiscovery), "default discovery must fall back to BrainPet when OpenPets is absent");
+  assert.deepEqual(getDiscoveryFilePaths("win32", { OPENPETS_DISCOVERY_FILE: candidates[1]! }, "C:\\Users\\test"), [candidates[1]!], "an explicit discovery path must disable fallback probing");
+} finally {
+  rmSync(discoveryRoot, { recursive: true, force: true });
+}
 assert.deepEqual(parseIpcEndpoint("tcp://127.0.0.1:37645"), { kind: "tcp", host: "127.0.0.1", port: 37645 });
 
 // Test private/local IPv4 addresses for WSL NAT mode

@@ -1,9 +1,9 @@
 const hookState = Object.freeze({
   UserPromptSubmit: "working",
-  PermissionRequest: "waiting",
+  PreToolUse: "working",
   PostToolUse: "working",
   Stop: "ready",
-  StopFailure: "blocked",
+  ErrorOccurred: "blocked",
   SessionEnd: "idle",
 });
 
@@ -20,7 +20,6 @@ export function selectLifecycleEvent(input, occurredAt = Date.now()) {
     state,
     occurredAt,
     capabilities: ["observeLifecycle"],
-    ...(input.hook_event_name === "PermissionRequest" ? { request: { kind: "permission" } } : {}),
   };
 }
 

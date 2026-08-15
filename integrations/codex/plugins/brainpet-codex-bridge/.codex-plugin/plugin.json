@@ -1,6 +1,6 @@
 {
   "name": "brainpet-codex-bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Mirrors privacy-minimized Codex lifecycle state to the local BrainPet runtime.",
   "homepage": "https://github.com/hmhm2333/brainpet",
   "repository": "https://github.com/hmhm2333/brainpet",

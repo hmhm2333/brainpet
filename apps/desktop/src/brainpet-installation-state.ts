@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-export const brainPetBridgeVersion = "0.2.0";
+export const brainPetBridgeVersion = "0.3.0";
 const schemaVersion = 2;
 
 export interface BrainPetInstallationState {

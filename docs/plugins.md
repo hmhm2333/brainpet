@@ -40,6 +40,11 @@ alert, a scheduled job, a stored value), and the host validates and renders it.
 This is the "companion-first" stance: plugins never inject UI into pet windows
 directly; they hand the host descriptors and the host owns layout and lifecycle.
 
+BrainPet Training follows the same boundary. Its first-party plugin publishes
+the namespaced `brainpet.training/open` event through the SDK bus; a trusted
+host subscription opens or closes the host-owned desktop overlay. The plugin
+never receives an Electron window handle or imports the game runtime.
+
 ```
 openpets.plugin.json ──validate──▶ plugin-service ──▶ plugin-runtime
                                                           │

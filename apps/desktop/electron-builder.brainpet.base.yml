@@ -5,9 +5,13 @@ copyright: Copyright © 2026 BrainPet contributors
 
 files:
   - dist/**
+  - control-center-preload.cjs
   - pet-preload.cjs
   - brainpet-preload.cjs
   - brainpet-setup-preload.cjs
+  - plugin-sdk-preload.cjs
+  - plugin-command-form-preload.cjs
+  - panel-preload.cjs
   - assets/**
   - package.json
 
@@ -17,6 +21,10 @@ extraMetadata:
     appId: dev.brainpet.app
 
 extraResources:
+  - from: ../../plugins/official/brainpet.training
+    to: plugins/official/brainpet.training
+    filter:
+      - "**/*"
   - from: ../../integrations/codex/plugins/brainpet-codex-bridge
     to: integrations/codex/brainpet-codex-bridge
     filter:

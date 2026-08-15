@@ -115,8 +115,8 @@ if (!gotSingleInstanceLock) {
     }
     // Resolve the UI language before any window or the tray is built.
     setLocaleFromPreference(getAppStateSnapshot().preferences.locale);
-    const openPetsRuntime = composition.id === "openpets"
-      ? (await import("./composition/openpets-runtime.js")).prepareOpenPetsRuntime(distribution)
+    const openPetsRuntime = composition.capabilities.controlCenter || composition.capabilities.pluginPlatform || composition.capabilities.lan || composition.capabilities.remoteControl
+      ? (await import("./composition/openpets-runtime.js")).prepareOpenPetsRuntime(distribution, composition.capabilities)
       : null;
     configureAppTray({ distribution, capabilities: composition.capabilities });
     createAppTray();

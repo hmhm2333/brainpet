@@ -15,7 +15,7 @@ try {
   const project = join(root, "project");
   mkdirSync(project);
   const paths = getProjectOpenCodeConfigPaths(project);
-  assert.deepEqual(paths.candidates.map((path) => path.slice(project.length + 1)), ["opencode.json", "opencode.jsonc", ".opencode/opencode.json", ".opencode/opencode.jsonc"]);
+  assert.deepEqual(paths.candidates.map((path) => path.slice(project.length + 1)), ["opencode.json", "opencode.jsonc", join(".opencode", "opencode.json"), join(".opencode", "opencode.jsonc")]);
   assert.equal(selectProjectOpenCodeConfigPath(project), join(project, ".opencode", "opencode.jsonc"));
   mkdirSync(join(project, ".opencode"));
   writeFileSync(join(project, ".opencode", "opencode.jsonc"), "{}\n");
@@ -117,16 +117,17 @@ try {
   assert.equal("ok" in outsidePlan ? outsidePlan.ok : true, false);
   const linkTarget = join(root, "link-target");
   mkdirSync(linkTarget);
-  symlinkSync(linkTarget, join(root, "link-parent"));
-  const linkParentPlan = planOpenCodeConfigWrite(root, join(root, "link-parent", "opencode.jsonc"), "{}\n");
-  assert.equal("ok" in linkParentPlan ? linkParentPlan.ok : true, false);
+  if (createTestSymlink(linkTarget, join(root, "link-parent"))) {
+    const linkParentPlan = planOpenCodeConfigWrite(root, join(root, "link-parent", "opencode.jsonc"), "{}\n");
+    assert.equal("ok" in linkParentPlan ? linkParentPlan.ok : true, false);
+  }
   const linkedFile = join(root, "linked-file.jsonc");
   writeFileSync(join(root, "real-file.jsonc"), "{}\n");
-  symlinkSync(join(root, "real-file.jsonc"), linkedFile);
-  const linkedFilePlan = planOpenCodeConfigWrite(root, linkedFile, "{}\n");
-  assert.equal("ok" in linkedFilePlan ? linkedFilePlan.ok : true, false);
-  symlinkSync(project, join(root, "project-link"));
-  assert.throws(() => getProjectOpenCodeConfigPaths(join(root, "project-link")));
+  if (createTestSymlink(join(root, "real-file.jsonc"), linkedFile)) {
+    const linkedFilePlan = planOpenCodeConfigWrite(root, linkedFile, "{}\n");
+    assert.equal("ok" in linkedFilePlan ? linkedFilePlan.ok : true, false);
+  }
+  if (createTestSymlink(project, join(root, "project-link"))) assert.throws(() => getProjectOpenCodeConfigPaths(join(root, "project-link")));
 
   const globalDir = join(root, "global-missing");
   const globalPrepared = prepareOpenCodeGlobalSetup({ configDir: globalDir, petId: "fixer", cliVersion: "0.0.0" });
@@ -267,8 +268,7 @@ try {
   const globalOutside = join(root, "global-outside");
   mkdirSync(globalOutside);
   writeFileSync(join(globalOutside, "opencode.jsonc"), "{}\n", "utf8");
-  symlinkSync(globalOutside, globalSymlink);
-  assert.equal(doctorOpenCodeGlobalSetup(globalSymlink).status, "error");
+  if (createTestSymlink(globalOutside, globalSymlink)) assert.equal(doctorOpenCodeGlobalSetup(globalSymlink).status, "error");
 
   for (const [category, messages] of Object.entries(hookSpeechPools) as Array<[string, readonly string[]]>) {
     for (const message of messages) {
@@ -278,6 +278,16 @@ try {
   }
 } finally {
   rmSync(root, { recursive: true, force: true });
+}
+
+function createTestSymlink(target: string, path: string): boolean {
+  try {
+    symlinkSync(target, path);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EPERM") return false;
+    throw error;
+  }
 }
 
 console.error("OpenCode foundation validation passed.");

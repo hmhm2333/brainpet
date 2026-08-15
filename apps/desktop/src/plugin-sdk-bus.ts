@@ -19,8 +19,7 @@ export function createPluginBusApi(options: {
     publish: async (topic: unknown, payload: unknown) => {
       requirePermission("bus");
       state.busWindow.tick(busPerMinute, "bus");
-      const topicName = String(topic);
-      check(busTopicPattern.test(topicName), "Invalid bus topic.");
+      const topicName = assertPluginBusTopic(topic);
       const normalized = normalizeJson(payload, busPayloadBytes, "bus payload");
       for (const subscriber of topics.get(topicName) ?? []) {
         if (subscriber.pluginId === pluginId) continue;
@@ -29,8 +28,7 @@ export function createPluginBusApi(options: {
     },
     subscribe: (topic: unknown, handler: (payload: unknown) => void) => {
       requirePermission("bus");
-      const topicName = String(topic);
-      check(busTopicPattern.test(topicName), "Invalid bus topic.");
+      const topicName = assertPluginBusTopic(topic);
       check(state.busSubscriptions.size < busSubscriptionsQuota, "Plugin bus subscription quota exceeded.");
       const entry = { pluginId, handler: guardCallback(handler) };
       let subscribers = topics.get(topicName);
@@ -46,5 +44,10 @@ export function createPluginBusApi(options: {
 }
 
 const busTopicPattern = /^[A-Za-z0-9._:/-]{1,128}$/;
+export function assertPluginBusTopic(value: unknown): string {
+  const topicName = String(value);
+  check(busTopicPattern.test(topicName), "Invalid bus topic.");
+  return topicName;
+}
 function opaqueId(prefix: string): string { return `${prefix}-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`; }
 function check(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }

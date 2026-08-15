@@ -55,12 +55,14 @@ router, or participates in LAN pet presence or leases. The v1 transport is raw
 unencrypted TCP and is intended only for a trusted private network or an
 encrypted overlay with its own ACLs; CGNAT addressing alone is not encryption.
 
-BrainPet selects a separate composition before service startup. Its production
-profile keeps the pet, local IPC, Agent lifecycle adapter, training Host,
-updates and logs, while omitting the OpenPets Control Center, plugin platform,
-LAN, remote control, voice and Agent configuration writers. The rollback
-composition selected by `BRAINPET_ENABLED=0` also rejects
-`agent.activity` and never refreshes the BrainPet install marker.
+BrainPet selects a separate product identity before service startup, but it no
+longer uses a reduced host. Its production profile keeps the full OpenPets
+platform (Control Center, plugin runtime, LAN, remote control, voice and Agent
+configuration) and layers BrainPet lifecycle, training and packaging on top.
+The BrainPet training entry is a first-party plugin command whose sandboxed bus
+message is consumed by the host-owned transparent stage. The rollback switch
+disables only BrainPet-specific lifecycle, training, onboarding and install
+marker behavior; the underlying OpenPets companion remains usable.
 
 ## The packages, and what each is for
 

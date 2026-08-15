@@ -56,12 +56,12 @@ IPC protocol constants, request/response types, `parseIpcResponse()`, `validateR
 
 ### discovery.ts
 
-Discovery file handling (226 lines). `getDiscoveryFilePath()`, `readDiscoveryFile()`, `validateDiscovery()`, `validateEndpoint()`, platform-specific path logic, XDG security checks.
+Discovery file handling. `getDiscoveryFilePaths()` preserves explicit-path selection, otherwise probes OpenPets first and BrainPet second; malformed first-party discovery never silently falls through. `readDiscoveryFile()`, `validateDiscovery()`, `validateEndpoint()`, platform-specific path logic, and XDG security checks share the same boundary.
 
 **Platform Paths:**
-- macOS: `~/Library/Application Support/OpenPets/runtime/ipc.json`
-- Windows: `%APPDATA%/OpenPets/runtime/ipc.json`
-- Linux: `$XDG_RUNTIME_DIR/openpets/ipc.json` (preferred) or `~/.config/OpenPets/runtime/ipc.json`
+- macOS: `~/Library/Application Support/{OpenPets,BrainPet}/runtime/ipc.json`
+- Windows: `%APPDATA%/{OpenPets,BrainPet}/runtime/ipc.json`
+- Linux: `$XDG_RUNTIME_DIR/{openpets,brainpet}/ipc.json` (preferred) or `~/.config/{OpenPets,BrainPet}/runtime/ipc.json`
 
 **Endpoint Types:**
 - Unix sockets: `/tmp/openpets-*/openpets-*.sock` or `$XDG_RUNTIME_DIR/openpets/*.sock`

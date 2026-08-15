@@ -20,14 +20,17 @@ test("Codex bridge forwards lifecycle fields without prompt or transcript conten
     capabilities: ["observeLifecycle"],
   });
   assert.equal(core.selectLifecycleEvent({ hook_event_name: "Unknown", session_id: "session-1" }, 123), null);
-  assert.deepEqual(core.selectLifecycleEvent({ hook_event_name: "PermissionRequest", session_id: "session-1" }, 124)?.request, { kind: "permission" });
+  assert.equal(core.selectLifecycleEvent({ hook_event_name: "PermissionRequest", session_id: "session-1" }, 124), null, "Claude-only PermissionRequest must not be advertised as a Codex hook.");
+  assert.equal(core.selectLifecycleEvent({ hook_event_name: "PreToolUse", session_id: "session-1" }, 124)?.state, "working");
+  assert.equal(core.selectLifecycleEvent({ hook_event_name: "ErrorOccurred", session_id: "session-1" }, 125)?.state, "blocked");
 });
 
 test("Codex bridge plugin owns the full local task lifecycle", () => {
   const desktopRoot = process.env.OPENPETS_DESKTOP_ROOT ?? resolve(process.cwd(), "apps/desktop");
   const pluginRoot = resolve(desktopRoot, "../..", "integrations/codex/plugins/brainpet-codex-bridge");
   const hooks = JSON.parse(readFileSync(resolve(pluginRoot, "hooks/hooks.json"), "utf8")) as { hooks: Record<string, unknown> };
-  assert.deepEqual(Object.keys(hooks.hooks).sort(), ["PermissionRequest", "PostToolUse", "SessionEnd", "Stop", "StopFailure", "UserPromptSubmit"]);
+  assert.deepEqual(Object.keys(hooks.hooks).sort(), ["ErrorOccurred", "PostToolUse", "PreToolUse", "SessionEnd", "Stop", "UserPromptSubmit"]);
+  assert.equal((hooks.hooks.PreToolUse as Array<{ matcher?: string }>)[0]?.matcher, "*", "Codex PreToolUse must use the supported catch-all matcher.");
   const hookDefinitions = Object.values(hooks.hooks).flatMap((entries) => entries as Array<{ hooks: Array<{ command: string; commandWindows: string; timeout: number }> }>).flatMap((entry) => entry.hooks);
   assert.ok(hookDefinitions.every((hook) => hook.command.includes("bridge.sh")), "Unix hooks must route through the platform-and-architecture-aware launcher.");
   assert.ok(hookDefinitions.every((hook) => hook.commandWindows.includes("bridge.cmd")), "Windows hooks must route through the architecture-aware launcher.");

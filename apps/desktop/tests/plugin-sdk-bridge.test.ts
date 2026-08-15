@@ -48,6 +48,21 @@ await scenario("config.onChange disposer removes listener", async ({ api, bridge
   assert.deepEqual(seen, ["first"]);
 });
 
+await scenario("trusted host services receive bounded plugin bus messages and can disconnect", async ({ bridge, store }) => {
+  const record = { ...store.getRecord("plug")!, approvedPermissions: ["bus" as const] };
+  store.upsertRecord(record);
+  const api = bridge.createApi(record, manifest({ permissions: ["bus"] }));
+  const seen: unknown[] = [];
+  const disconnect = bridge.subscribeHostBus("brainpet.training/open", (payload) => seen.push(payload));
+
+  await api.bus.publish("brainpet.training/open", { source: "test" });
+  disconnect();
+  await api.bus.publish("brainpet.training/open", { source: "ignored" });
+
+  assert.deepEqual(seen, [{ source: "test" }]);
+  assert.throws(() => bridge.subscribeHostBus("bad topic", () => undefined), /Invalid bus topic/);
+});
+
 await scenario("diagnostics sanitizer redacts paths tokens and URL queries", () => {
   const safe = sanitizePluginDiagnosticsFields({ reason: "failed /Users/alvin/secrets/token.txt https://example.com/path?token=abc123 sk-1234567890123456", host: "example.com", ignored: "secret" });
   assert.equal(safe.host, "example.com");

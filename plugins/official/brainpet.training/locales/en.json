@@ -1,0 +1,6 @@
+{
+  "plugin.name": "BrainPet Training",
+  "plugin.description": "Launch short cognitive training games from your desktop pet.",
+  "command.train.title": "Start training",
+  "command.train.description": "Open the BrainPet training stage beside the pet."
+}

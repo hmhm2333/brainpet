@@ -13,7 +13,7 @@ import type { OpenPetsJavascriptPluginManifest, PluginAssetKind, PluginPermissio
 import type { PluginPetApi } from "./plugin-pet-api.js";
 import type { PluginRuntimeScheduler } from "./plugin-runtime.js";
 import { createPluginAudioApi } from "./plugin-sdk-audio.js";
-import { createPluginBusApi, type PluginBusTopicEntry } from "./plugin-sdk-bus.js";
+import { assertPluginBusTopic, createPluginBusApi, type PluginBusTopicEntry } from "./plugin-sdk-bus.js";
 import { createPluginConfigApi } from "./plugin-sdk-config.js";
 import { createPluginEventsApi } from "./plugin-sdk-events.js";
 import { pluginSdkQuotas } from "./plugin-sdk-quotas.js";
@@ -801,6 +801,22 @@ export class PluginSdkBridge {
     const state = this.#pluginState(id);
     const config = { ...(this.#stateStore.getRecord(id)?.config ?? {}) } as PluginConfig;
     for (const listener of state.configListeners) { try { listener(config); } catch (error) { this.#onError(id, safeError(error)); } }
+  }
+
+  /** Subscribe a trusted host service to the same bounded bus used by plugins. */
+  subscribeHostBus(topic: string, handler: (payload: unknown) => void): () => void {
+    const topicName = assertPluginBusTopic(topic);
+    const entry: PluginBusTopicEntry = { pluginId: "@openpets/host", handler };
+    let subscribers = this.#busTopics.get(topicName);
+    if (!subscribers) {
+      subscribers = new Set();
+      this.#busTopics.set(topicName, subscribers);
+    }
+    subscribers.add(entry);
+    return () => {
+      subscribers?.delete(entry);
+      if (subscribers?.size === 0) this.#busTopics.delete(topicName);
+    };
   }
 
   /** Re-arm wall-clock schedules (daily/cron/at) after sleep/wake or clock changes. */

@@ -13,8 +13,9 @@
         ]
       }
     ],
-    "PermissionRequest": [
+    "PreToolUse": [
       {
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
@@ -51,7 +52,7 @@
         ]
       }
     ],
-    "StopFailure": [
+    "ErrorOccurred": [
       {
         "hooks": [
           {

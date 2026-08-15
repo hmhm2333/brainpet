@@ -54,8 +54,11 @@ in Control Center under Settings → Remote.
 BrainPet carries a local Codex plugin at
 `integrations/codex/plugins/brainpet-codex-bridge`. Codex hooks translate only
 the task lifecycle into `agent.activity` over authenticated local IPC:
-`UserPromptSubmit` and `PostToolUse` → working, `PermissionRequest` → waiting,
-`Stop` → ready, `StopFailure` → blocked, and `SessionEnd` → idle. Prompt text, tool input/output,
+`UserPromptSubmit`, `PreToolUse`, and `PostToolUse` → working,
+`Stop` → ready, `ErrorOccurred` → blocked, and `SessionEnd` → idle. Codex's
+current plugin parser does not register Claude's `PermissionRequest` or
+`StopFailure` names, so the Bridge does not claim permission-response support.
+Prompt text, tool input/output,
 transcripts, paths, and working directories are deliberately discarded.
 
 The schema-v1 payload declares provider capabilities and may include only a
@@ -137,11 +140,15 @@ The deepest integration, because Claude Code has a rich hook system.
   validated to stay within expected directories.
 - **Hooks** (`hook-settings.ts` + `hooks.ts`): installs command hooks into
   `~/.claude/settings.json` for the lifecycle events `UserPromptSubmit`,
-  `PreToolUse`, `PermissionRequest`, `Notification`, `Stop`, `StopFailure`. Each
+  `PreToolUse`, `PermissionRequest`, `Notification`, `Stop`, `StopFailure`,
+  `SessionEnd`. Each
   managed entry carries the `--openpets-managed` marker. `runClaudeHookFromStdin()`
   maps an event to a reaction: prompt submit → thinking, permission → waiting,
   stop → success, stop-failure → error, and `PreToolUse` is classified by tool
   (Edit/Write/MultiEdit → editing, Bash test commands → testing).
+  The same hooks also send the shared privacy-minimal lifecycle contract, so
+  BrainPet can aggregate Claude with Codex and OpenCode instead of showing only
+  transient reactions.
 - **Project-local awareness**: if a project defines its own OpenPets hook
   (`.claude/settings.local.json` with `--project-local`), the global hook stands
   down to avoid double-firing.

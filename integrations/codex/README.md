@@ -5,8 +5,9 @@ The canonical local Codex plugin source is
 BrainPet's authenticated local `agent.activity` IPC method.
 
 Privacy boundary: the bridge sends only schema version, agent id, Codex session
-id, optional turn id, lifecycle state, timestamp, declared capability names,
-and a category-only permission summary when applicable. It never sends prompt
+id, optional turn id, lifecycle state, timestamp, and declared capability names.
+Codex 0.3 uses the currently supported `UserPromptSubmit`, `PreToolUse`,
+`PostToolUse`, `Stop`, `ErrorOccurred`, and `SessionEnd` events. It never sends prompt
 text, tool input/output, transcript content, paths, commands, or the working
 directory.
 

@@ -52,7 +52,7 @@ impl AgentKind {
     fn id(self) -> &'static str {
         match self {
             Self::Codex => "codex",
-            Self::Claude => "claude-code",
+            Self::Claude => "claude",
             Self::WorkBuddy => "workbuddy",
         }
     }
@@ -89,12 +89,13 @@ fn read_hook_input() -> Option<Value> {
 fn map_hook_event(agent: AgentKind, input: &Value, occurred_at: u64) -> Option<Value> {
     let object = input.as_object()?;
     let hook_name = object.get("hook_event_name")?.as_str()?;
-    let state = match hook_name {
-        "UserPromptSubmit" | "PreToolUse" | "PostToolUse" => "working",
-        "PermissionRequest" => "waiting",
-        "Stop" => "ready",
-        "StopFailure" => "blocked",
-        "SessionEnd" => "idle",
+    let state = match (agent, hook_name) {
+        (_, "UserPromptSubmit" | "PreToolUse" | "PostToolUse") => "working",
+        (AgentKind::Claude | AgentKind::WorkBuddy, "PermissionRequest") => "waiting",
+        (_, "Stop") => "ready",
+        (AgentKind::Codex, "ErrorOccurred") => "blocked",
+        (AgentKind::Claude | AgentKind::WorkBuddy, "StopFailure" | "ErrorOccurred") => "blocked",
+        (_, "SessionEnd") => "idle",
         _ => return None,
     };
     let session_id = valid_identifier(object.get("session_id")?, 160)?;
@@ -552,6 +553,14 @@ mod tests {
     fn unsupported_events_are_ignored() {
         let input = json!({"hook_event_name": "Unknown", "session_id": "session-1"});
         assert_eq!(map_hook_event(AgentKind::Codex, &input, 123), None);
+        let claude_only = json!({"hook_event_name": "PermissionRequest", "session_id": "session-1"});
+        assert_eq!(map_hook_event(AgentKind::Codex, &claude_only, 123), None);
+        let codex_error = json!({"hook_event_name": "ErrorOccurred", "session_id": "session-1"});
+        assert_eq!(
+            map_hook_event(AgentKind::Codex, &codex_error, 123)
+                .and_then(|event| event.get("state").cloned()),
+            Some(json!("blocked"))
+        );
     }
 
     #[test]

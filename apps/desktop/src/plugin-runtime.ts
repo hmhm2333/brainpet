@@ -91,6 +91,7 @@ export class PluginRuntime {
   executeMenuSelect(id: string, itemId: string): Promise<void> { return this.#sdkBridge.executeMenuSelect(id, itemId); }
   notifyConfigChanged(id: string): void { this.#sdkBridge.notifyConfigChanged(id); }
   resyncSchedules(): void { this.#sdkBridge.resyncSchedules(); }
+  subscribeHostBus(topic: string, handler: (payload: unknown) => void): () => void { return this.#sdkBridge.subscribeHostBus(topic, handler); }
 
   async reloadAll(): Promise<void> {
     await Promise.all([...this.#slots.keys()].map((id) => this.#cancelPlugin(id)));

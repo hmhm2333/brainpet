@@ -16,32 +16,38 @@ import { initializePluginService } from "../plugin-service.js";
 import { initializeRemoteControlService } from "../remote-control-service.js";
 import { openPetsRemoteVersion, type RemoteStatusSnapshot } from "../remote-control-protocol.js";
 import { installInternalUiHandlers, installInternalUiProtocol } from "../windows.js";
+import type { DesktopCompositionCapabilities } from "./desktop-composition.js";
+import { connectBrainPetTrainingPluginRuntime } from "../brainpet/host.js";
 
 export interface PreparedOpenPetsRuntime {
   startAfterLocalIpc(): Promise<void>;
 }
 
-export function prepareOpenPetsRuntime(distribution: DesktopDistributionSettings): PreparedOpenPetsRuntime {
-  initializeLanController();
-  installInternalUiProtocol();
-  installInternalUiHandlers();
-  const remoteControlService = initializeRemoteControlService({
+export function prepareOpenPetsRuntime(distribution: DesktopDistributionSettings, capabilities: DesktopCompositionCapabilities): PreparedOpenPetsRuntime {
+  if (capabilities.lan) initializeLanController();
+  if (capabilities.controlCenter) {
+    installInternalUiProtocol();
+    installInternalUiHandlers();
+  }
+  const remoteControlService = capabilities.remoteControl ? initializeRemoteControlService({
     statePath: join(app.getPath("userData"), "openpets-remote-control.json"),
     getStatusSnapshot: getRemoteStatusSnapshot,
     isDefaultPetAway: isDefaultPetAwayForLan,
     applyReaction: (reaction) => ({ shown: applyExternalPetReaction(reaction).shown }),
     applySay: (message, reaction) => ({ shown: applyExternalPetSay(message, reaction).shown }),
     log: (message) => info("remote", message),
-  });
+  }) : null;
   return {
     async startAfterLocalIpc() {
-      startLanController();
-      try {
-        await remoteControlService.start();
-      } catch {
-        warn("remote", "remote control listener unavailable");
+      if (capabilities.lan) startLanController();
+      if (remoteControlService) {
+        try {
+          await remoteControlService.start();
+        } catch {
+          warn("remote", "remote control listener unavailable");
+        }
       }
-      startPluginPlatform(distribution);
+      if (capabilities.pluginPlatform) startPluginPlatform(distribution);
     },
   };
 }
@@ -53,7 +59,8 @@ function startPluginPlatform(distribution: DesktopDistributionSettings): void {
   initializePluginPlatformSettings(app.getPath("userData"));
   const pluginCapabilities = createElectronPluginHostCapabilities(app.getPath("userData"));
   let devPluginWatcher: ReturnType<typeof startDevPluginWatcher> | undefined;
-  const pluginService = initializePluginService(app.getPath("userData"), defaultPluginPetApi, app.getVersion(), new ElectronPluginJsHost(), writePluginRuntimeLog, process.env.OPENPETS_DISABLE_PLUGIN_CATALOG === "1" || devPluginMode, resolveBundledOfficialPluginRoots(), !devPluginMode && distribution.seedBundledPlugins, pluginCapabilities, undefined, (sourcePath) => devPluginWatcher?.addPaths([sourcePath]), (sourcePath) => devPluginWatcher?.removePath(sourcePath));
+  const pluginService = initializePluginService(app.getPath("userData"), defaultPluginPetApi, app.getVersion(), new ElectronPluginJsHost(), writePluginRuntimeLog, process.env.OPENPETS_DISABLE_PLUGIN_CATALOG === "1" || devPluginMode, resolveBundledOfficialPluginRoots(), !devPluginMode && distribution.seedBundledPlugins, pluginCapabilities, undefined, (sourcePath) => devPluginWatcher?.addPaths([sourcePath]), (sourcePath) => devPluginWatcher?.removePath(sourcePath), distribution.bundledPluginIds, distribution.bundledEnabledPluginIds);
+  if (distribution.profile === "brainpet") connectBrainPetTrainingPluginRuntime(pluginService.runtime);
   powerMonitor.on("resume", () => pluginService.runtime.resyncSchedules());
   void (async () => {
     await pluginService.start();

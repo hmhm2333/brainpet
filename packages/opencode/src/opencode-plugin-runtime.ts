@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
 import { createOpenPetsClient, type OpenPetsClient, type OpenPetsReaction } from "@open-pets/client";
-import { pickHookSpeech, type HookSpeechCategory, validateHookSpeech } from "@open-pets/agent-events";
+import { createNormalizedAgentLifecycleEvent, pickHookSpeech, type HookSpeechCategory, type NormalizedAgentLifecycleEvent, validateHookSpeech } from "@open-pets/agent-events";
 
 import { sanitizeOpenCodeExcludedReactions, validateOpenPetsPetArg } from "./opencode-previews.js";
 
@@ -31,7 +31,7 @@ export interface OpenCodePluginDecision {
 export type OpenCodeHooks = {
   readonly event: (input: { readonly event: unknown }) => void;
   readonly "chat.message": (input: unknown, output: unknown) => void;
-  readonly "tool.execute.before": (input: { readonly tool?: string }, output: { readonly args?: unknown }) => void;
+  readonly "tool.execute.before": (input: { readonly tool?: string; readonly sessionID?: string; readonly sessionId?: string }, output: { readonly args?: unknown }) => void;
   readonly "tool.execute.after": (input: { readonly tool?: string }, output: unknown) => void;
 };
 
@@ -52,28 +52,37 @@ export function createOpenPetsOpenCodeHooks(options: OpenCodePluginRuntimeOption
   const excludedReactions = buildExcludedReactionsSet(options.excludeReactions);
   let client: OpenPetsClient | undefined;
   let lease: { readonly leaseId: string; readonly expiresAt?: number } | undefined;
+  let scheduledTail: Promise<void> | undefined;
 
-  const run = (decision: OpenCodePluginDecision | undefined): void => {
-    if (!decision?.reaction) return;
-    if (isReactionExcluded(decision.reaction, excludedReactions)) return;
-    const reaction = decision.reaction;
+  const run = (decision: OpenCodePluginDecision | undefined, lifecycle?: NormalizedAgentLifecycleEvent | null): void => {
+    const reaction = decision?.reaction && !isReactionExcluded(decision.reaction, excludedReactions) ? decision.reaction : undefined;
+    if (!reaction && !lifecycle) return;
     try {
       schedule(async () => {
-        try {
-          const shouldSpeak = decision.speechCategory ? shouldSendSpeech(decision.speechCategory, options) : false;
-          const shouldReact = shouldSendReaction(reaction, options);
-          if (!shouldSpeak && !shouldReact) return;
-
-          client ??= clientFactory();
-          const leaseId = pet ? await getLeaseId(client, pet) : undefined;
-          if (decision.speechCategory && shouldSpeak) {
-            await client.say(validateHookSpeech(pickHookSpeech(decision.speechCategory, options.random)), { reaction, leaseId });
-            return;
+        const work = async () => {
+          try {
+            client ??= clientFactory();
+            if (lifecycle) {
+              try { await client.reportAgentActivity(lifecycle); }
+              catch (error) { debugLog(`OpenPets OpenCode lifecycle ignored error: ${sanitizeDebugError(error)}`); }
+            }
+            if (!reaction) return;
+            const shouldSpeak = decision?.speechCategory ? shouldSendSpeech(decision.speechCategory, options) : false;
+            const shouldReact = shouldSendReaction(reaction, options);
+            if (!shouldSpeak && !shouldReact) return;
+            const leaseId = pet ? await getLeaseId(client, pet) : undefined;
+            if (decision?.speechCategory && shouldSpeak) {
+              await client.say(validateHookSpeech(pickHookSpeech(decision.speechCategory, options.random)), { reaction, leaseId });
+              return;
+            }
+            await client.react(reaction, { leaseId });
+          } catch (error) {
+            debugLog(`OpenPets OpenCode plugin ignored error: ${sanitizeDebugError(error)}`);
           }
-          await client.react(reaction, { leaseId });
-        } catch (error) {
-          debugLog(`OpenPets OpenCode plugin ignored error: ${sanitizeDebugError(error)}`);
-        }
+        };
+        const current = scheduledTail ? scheduledTail.then(work) : work();
+        scheduledTail = current.then(() => undefined, () => undefined);
+        await current;
       });
     } catch (error) {
       debugLog(`OpenPets OpenCode plugin scheduling ignored error: ${sanitizeDebugError(error)}`);
@@ -95,18 +104,18 @@ export function createOpenPetsOpenCodeHooks(options: OpenCodePluginRuntimeOption
   return {
     event(input) {
       try {
-        run(classifyOpenCodeBusEvent(input.event));
+        run(classifyOpenCodeBusEvent(input.event), mapOpenCodeLifecycleEvent(input.event, options.now?.() ?? Date.now()));
       } catch (error) {
         debugLog(`OpenPets OpenCode event ignored error: ${sanitizeDebugError(error)}`);
       }
     },
-    "chat.message"() {
-      run({ reaction: "thinking" });
+    "chat.message"(input) {
+      run({ reaction: "thinking" }, mapOpenCodeSyntheticLifecycle(input, "working", options.now?.() ?? Date.now()));
     },
     "tool.execute.before"(input, output) {
       const tool = typeof input.tool === "string" ? input.tool : "";
       if (shouldIgnoreOpenPetsTool(tool)) return;
-      run({ reaction: classifyOpenCodeToolReaction(tool, output.args) });
+      run({ reaction: classifyOpenCodeToolReaction(tool, output.args) }, mapOpenCodeSyntheticLifecycle(input, "working", options.now?.() ?? Date.now()));
     },
     "tool.execute.after"() {
       // Intentionally quiet for now; session.error/session.status events provide less noisy completion signals.
@@ -127,6 +136,34 @@ export function classifyOpenCodeBusEvent(event: unknown): OpenCodePluginDecision
   if (type === "session.error") return { reaction: "error", speechCategory: "error" };
   if (type === "session.status" && getEventStatusType(event) === "idle") return { reaction: "success" };
   return undefined;
+}
+
+export function mapOpenCodeLifecycleEvent(event: unknown, occurredAt = Date.now()): NormalizedAgentLifecycleEvent | null {
+  const type = getEventType(event);
+  const sessionId = getEventSessionId(event);
+  if (!type || !sessionId) return null;
+  const status = getEventStatusType(event);
+  const state = type === "permission.asked" || type === "question.asked" ? "waiting"
+    : type === "permission.replied" || type === "permission.rejected" || type === "question.replied" || type === "question.rejected" ? "working"
+      : type === "session.error" ? "blocked"
+        : type === "session.deleted" ? "idle"
+          : type === "session.idle" || type === "session.status" && status === "idle" ? "ready"
+            : type === "session.status" && (status === "busy" || status === "active" || status === "retry") ? "working"
+              : undefined;
+  if (!state) return null;
+  return createNormalizedAgentLifecycleEvent({
+    agent: "opencode",
+    sessionId,
+    state,
+    occurredAt,
+    ...(type === "permission.asked" ? { requestKind: "permission" as const } : {}),
+    ...(type === "question.asked" ? { requestKind: "question" as const } : {}),
+  });
+}
+
+function mapOpenCodeSyntheticLifecycle(input: unknown, state: "working", occurredAt: number): NormalizedAgentLifecycleEvent | null {
+  const sessionId = getEventSessionId(input);
+  return sessionId ? createNormalizedAgentLifecycleEvent({ agent: "opencode", sessionId, state, occurredAt }) : null;
 }
 
 export function shouldIgnoreOpenPetsTool(toolName: string): boolean {
@@ -183,8 +220,16 @@ function getEventType(event: unknown): string | undefined {
 function getEventStatusType(event: unknown): string | undefined {
   if (!isRecord(event)) return undefined;
   const properties = isRecord(event.properties) ? event.properties : isRecord(event.payload) && isRecord(event.payload.properties) ? event.payload.properties : undefined;
+  if (typeof properties?.status === "string") return properties.status;
   const status = isRecord(properties?.status) ? properties.status : undefined;
   return typeof status?.type === "string" ? status.type : undefined;
+}
+
+function getEventSessionId(event: unknown): string | undefined {
+  if (!isRecord(event)) return undefined;
+  const properties = isRecord(event.properties) ? event.properties : isRecord(event.payload) && isRecord(event.payload.properties) ? event.payload.properties : undefined;
+  const value = properties?.sessionID ?? properties?.sessionId ?? event.sessionID ?? event.sessionId;
+  return typeof value === "string" && value.length > 0 && value.length <= 160 && !/[\x00-\x1F\x7F]/.test(value) ? value : undefined;
 }
 
 function getEventPermission(event: unknown): string | undefined {

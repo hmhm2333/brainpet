@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { mapAsarPathToUnpacked, validateOpenPetsPetArg, type OpenPetsCommandMode } from "./claude-code.js";
 
 export const openPetsHookMarker = "--openpets-managed";
-export const claudeHookEvents = ["UserPromptSubmit", "PreToolUse", "PermissionRequest", "Notification", "Stop", "StopFailure"] as const;
+export const claudeHookEvents = ["UserPromptSubmit", "PreToolUse", "PermissionRequest", "Notification", "Stop", "StopFailure", "SessionEnd"] as const;
 
 export type ClaudeHookInstallStatus = "not_installed" | "installed" | "needs_update" | "error";
 
@@ -286,7 +286,7 @@ function isClaudeHookAsyncSupported(): boolean {
 function shellQuote(value: string): string {
   if (/^[a-zA-Z0-9_@%+=:,./-]+$/.test(value)) return value;
   if (/[\r\n"]/.test(value) || value.includes("\0")) throw new Error("Claude hook path contains unsupported shell characters.");
-  return `"${value.replaceAll("\\", "\\\\").replaceAll("$", "\\$").replaceAll("`", "\\`")}"`;
+  return `"${value.replaceAll("$", "\\$").replaceAll("`", "\\`")}"`;
 }
 
 function writeClaudeSettings(path: string, settings: Record<string, unknown>): void {

@@ -73,6 +73,8 @@ export type PluginServiceOptions = {
   readonly onPluginRuntimeError?: PluginRuntimeOptions["onPluginRuntimeError"];
   readonly disableCatalog?: boolean;
   readonly seedBundledPlugins?: boolean;
+  readonly bundledPluginIds?: readonly string[];
+  readonly bundledEnabledPluginIds?: readonly string[];
   readonly bundledPluginSourceDirs?: readonly string[];
   readonly capabilities?: PluginHostCapabilities;
   readonly onLocalPluginSourceLoaded?: (sourcePath: string) => void;
@@ -97,6 +99,8 @@ export class PluginService {
   readonly #currentAppVersion: string;
   readonly #disableCatalog: boolean;
   readonly #seedBundledPlugins: boolean;
+  readonly #bundledPluginIds: readonly string[];
+  readonly #bundledEnabledPluginIds: ReadonlySet<string>;
   readonly #bundledPluginSourceDirs: readonly string[];
   readonly #capabilities?: PluginHostCapabilities;
   readonly #onLocalPluginSourceLoaded?: (sourcePath: string) => void;
@@ -115,6 +119,8 @@ export class PluginService {
     this.#currentAppVersion = options.currentAppVersion ?? "0.0.0";
     this.#disableCatalog = options.disableCatalog === true;
     this.#seedBundledPlugins = options.seedBundledPlugins !== false;
+    this.#bundledPluginIds = options.bundledPluginIds ?? bundledOfficialPluginIds;
+    this.#bundledEnabledPluginIds = new Set(options.bundledEnabledPluginIds ?? bundledEnabledByDefault);
     this.#bundledPluginSourceDirs = options.bundledPluginSourceDirs ?? [];
     this.#capabilities = options.capabilities;
     this.#onLocalPluginSourceLoaded = options.onLocalPluginSourceLoaded;
@@ -160,7 +166,7 @@ export class PluginService {
   async seedBundledPlugins(): Promise<void> {
     if (!this.#userDataPath) return;
     await this.#pruneStaleBundledPlugins();
-    for (const id of bundledOfficialPluginIds) {
+    for (const id of this.#bundledPluginIds) {
       const sourceFolder = this.#findBundledSourceFolder(id);
       if (!sourceFolder) continue;
       try { await this.#seedBundledPluginFromSource(sourceFolder, id); }
@@ -530,7 +536,7 @@ export class PluginService {
     await readSafePluginManifest({ installPath, manifestPath, allowedPluginRoots: [root], maxManifestBytes: this.#maxManifestBytes, expectedId: source.manifest.id, expectedVersion: source.manifest.version });
     const networkHosts = "network" in source.manifest ? source.manifest.network?.hosts : undefined;
     const existing = this.stateStore.getRecord(source.manifest.id);
-    this.stateStore.upsertRecord({ id: source.manifest.id, version: source.manifest.version, source: "catalog", bundled: true, installPath, manifestPath, manifestVersion: source.manifest.manifestVersion, runtime: source.manifest.runtime, sdkVersion: "sdkVersion" in source.manifest ? source.manifest.sdkVersion : undefined, enabled: existing?.enabled ?? bundledEnabledByDefault.has(source.manifest.id), approvedPermissions: source.manifest.permissions, approvedNetworkHosts: networkHosts, config: existing?.config ?? {} });
+    this.stateStore.upsertRecord({ id: source.manifest.id, version: source.manifest.version, source: "catalog", bundled: true, installPath, manifestPath, manifestVersion: source.manifest.manifestVersion, runtime: source.manifest.runtime, sdkVersion: "sdkVersion" in source.manifest ? source.manifest.sdkVersion : undefined, enabled: existing?.enabled ?? this.#bundledEnabledPluginIds.has(source.manifest.id), approvedPermissions: source.manifest.permissions, approvedNetworkHosts: networkHosts, config: existing?.config ?? {} });
   }
 
   #log(level: PluginLogLevel, message: string, fields?: Record<string, unknown>): void {
@@ -541,8 +547,8 @@ export class PluginService {
 
 let appPluginService: PluginService | null = null;
 
-export function initializePluginService(userDataPath: string, petApi: PluginPetApi, currentAppVersion = "0.0.0", jsHost?: PluginJsHost, runtimeLogger?: (level: PluginLogLevel, message: string, fields?: Record<string, unknown>) => void, disableCatalog?: boolean, bundledPluginSourceDirs: readonly string[] = [], seedBundledPlugins = true, capabilities?: PluginHostCapabilities, onPluginRuntimeError?: PluginRuntimeOptions["onPluginRuntimeError"], onLocalPluginSourceLoaded?: (sourcePath: string) => void, onLocalPluginSourceRemoved?: (sourcePath: string) => void): PluginService {
-  appPluginService = new PluginService({ userDataPath, petApi, currentAppVersion, jsHost, runtimeLogger, disableCatalog, bundledPluginSourceDirs, seedBundledPlugins, capabilities, onPluginRuntimeError, onLocalPluginSourceLoaded, onLocalPluginSourceRemoved });
+export function initializePluginService(userDataPath: string, petApi: PluginPetApi, currentAppVersion = "0.0.0", jsHost?: PluginJsHost, runtimeLogger?: (level: PluginLogLevel, message: string, fields?: Record<string, unknown>) => void, disableCatalog?: boolean, bundledPluginSourceDirs: readonly string[] = [], seedBundledPlugins = true, capabilities?: PluginHostCapabilities, onPluginRuntimeError?: PluginRuntimeOptions["onPluginRuntimeError"], onLocalPluginSourceLoaded?: (sourcePath: string) => void, onLocalPluginSourceRemoved?: (sourcePath: string) => void, bundledPluginIds?: readonly string[], bundledEnabledPluginIds?: readonly string[]): PluginService {
+  appPluginService = new PluginService({ userDataPath, petApi, currentAppVersion, jsHost, runtimeLogger, disableCatalog, bundledPluginSourceDirs, seedBundledPlugins, capabilities, onPluginRuntimeError, onLocalPluginSourceLoaded, onLocalPluginSourceRemoved, bundledPluginIds, bundledEnabledPluginIds });
   return appPluginService;
 }
 
@@ -592,9 +598,9 @@ export async function getDefaultPetPluginMenuItems(maxPlugins = 8, maxItemsPerPl
     });
 }
 
-export async function executeDefaultPetPluginCommand(pluginId: string, commandId: string, args?: Record<string, unknown>): Promise<void> {
-  if (!appPluginService) return;
-  await appPluginService.executeCommand(pluginId, commandId, args);
+export async function executeDefaultPetPluginCommand(pluginId: string, commandId: string, args?: Record<string, unknown>): Promise<PluginServiceResult | null> {
+  if (!appPluginService) return null;
+  return appPluginService.executeCommand(pluginId, commandId, args);
 }
 
 export async function executeDefaultPetPluginMenuSelect(pluginId: string, itemId: string): Promise<void> {

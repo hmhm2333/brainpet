@@ -5,8 +5,14 @@ export interface DesktopDistributionSettings {
   readonly displayName: "OpenPets" | "BrainPet";
   readonly appUserModelId: "dev.openpets.app" | "dev.brainpet.app";
   readonly seedBundledPlugins: boolean;
+  readonly bundledPluginIds: readonly string[];
+  readonly bundledEnabledPluginIds: readonly string[];
   readonly brainPetEnabled: boolean;
 }
+
+const openPetsBundledPluginIds = ["openpets.reminders", "openpets.focus-buddy", "openpets.launch-buddy", "openpets.virtual-pet"] as const;
+const openPetsBundledEnabledPluginIds = ["openpets.reminders", "openpets.focus-buddy", "openpets.launch-buddy"] as const;
+const brainPetBundledPluginIds = ["brainpet.training"] as const;
 
 export function resolveDesktopDistributionSettings(
   appName: string,
@@ -27,8 +33,8 @@ export function resolveDesktopDistributionSettings(
         : "openpets";
 
   return profile === "brainpet"
-    ? { profile, displayName: "BrainPet", appUserModelId: "dev.brainpet.app", seedBundledPlugins: false, brainPetEnabled: true }
-    : { profile, displayName: "OpenPets", appUserModelId: "dev.openpets.app", seedBundledPlugins: true, brainPetEnabled: false };
+    ? { profile, displayName: "BrainPet", appUserModelId: "dev.brainpet.app", seedBundledPlugins: true, bundledPluginIds: brainPetBundledPluginIds, bundledEnabledPluginIds: brainPetBundledPluginIds, brainPetEnabled: true }
+    : { profile, displayName: "OpenPets", appUserModelId: "dev.openpets.app", seedBundledPlugins: true, bundledPluginIds: openPetsBundledPluginIds, bundledEnabledPluginIds: openPetsBundledEnabledPluginIds, brainPetEnabled: false };
 }
 
 export function isBrainPetFeatureEnabled(settings: DesktopDistributionSettings, override?: string): boolean {

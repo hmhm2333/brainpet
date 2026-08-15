@@ -44,6 +44,9 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
   const appAsar = join(resources, "app.asar");
   assert.ok(existsSync(appAsar), "BrainPet app.asar is missing.");
   const appPackage = readAsarPackageJson(appAsar);
+  for (const preload of ["control-center-preload.cjs", "pet-preload.cjs", "brainpet-preload.cjs", "brainpet-setup-preload.cjs", "plugin-sdk-preload.cjs", "plugin-command-form-preload.cjs", "panel-preload.cjs"]) {
+    assertAsarFile(appAsar, preload, `BrainPet package is missing required host preload ${preload}.`);
+  }
   assert.deepEqual(appPackage.brainpetDistribution, { profile: "brainpet", appId: "dev.brainpet.app" }, "Packaged runtime identity must be embedded in app.asar.");
   assert.ok(!existsSync(join(appRoot, target.platform === "windows" ? "openpets.exe" : "openpets")), "BrainPet package must not retain the OpenPets executable identity.");
 
@@ -51,7 +54,13 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
   for (const path of [".codex-plugin/plugin.json", "brainpet.bridge.json", "hooks/hooks.json", "scripts/bridge.cmd", "scripts/bridge.sh"]) {
     assert.ok(existsSync(join(bridge, path)), `Bundled Codex Bridge source is missing: ${path}`);
   }
-  assert.ok(!existsSync(join(resources, "plugins", "official")), "BrainPet packages must not seed OpenPets official plugins.");
+  const officialPluginsRoot = join(resources, "plugins", "official");
+  assert.ok(existsSync(join(officialPluginsRoot, "brainpet.training", "openpets.plugin.json")), "BrainPet training plugin is missing from the package.");
+  const bundledOfficialPlugins = readdirSync(officialPluginsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  assert.deepEqual(bundledOfficialPlugins, ["brainpet.training"], "BrainPet packages may seed only the BrainPet training plugin.");
 
   const installerArtifacts = findInstallerArtifacts(resolvedOutput, target);
   const installerValidated = installerArtifacts.length > 0;
@@ -102,6 +111,13 @@ function readAsarPackageJson(appAsar) {
   const builderRequire = createRequire(require.resolve("electron-builder"));
   const asar = builderRequire("@electron/asar");
   return JSON.parse(asar.extractFile(appAsar, "package.json").toString("utf8"));
+}
+
+function assertAsarFile(appAsar, path, message) {
+  const require = createRequire(import.meta.url);
+  const builderRequire = createRequire(require.resolve("electron-builder"));
+  const asar = builderRequire("@electron/asar");
+  assert.doesNotThrow(() => asar.extractFile(appAsar, path), message);
 }
 
 function findInstallerArtifacts(outputRoot, target) {

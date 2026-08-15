@@ -3,11 +3,11 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import { homedir, tmpdir, userInfo } from "node:os";
 
 import { createOpenPetsClient, type OpenPetsClient, type OpenPetsReaction, OpenPetsClientError } from "@open-pets/client";
-import { validateHookSpeech as validateSharedHookSpeech } from "@open-pets/agent-events";
+import { createNormalizedAgentLifecycleEvent, validateHookSpeech as validateSharedHookSpeech, type NormalizedAgentLifecycleEvent } from "@open-pets/agent-events";
 
 import { pickHookSpeech, type HookSpeechCategory } from "./hook-messages.js";
 
-export type ClaudeHookEventName = "UserPromptSubmit" | "PreToolUse" | "PermissionRequest" | "Notification" | "Stop" | "StopFailure";
+export type ClaudeHookEventName = "UserPromptSubmit" | "PreToolUse" | "PermissionRequest" | "Notification" | "Stop" | "StopFailure" | "SessionEnd";
 
 export interface ClaudeHookDecision {
   readonly eventName?: string;
@@ -52,14 +52,26 @@ export async function handleClaudeHookPayload(raw: string, options: ClaudeHookOp
     return null;
   }
   const decision = mapClaudeHookEvent(parsed);
-  if (!decision?.reaction) return decision;
+  const lifecycle = mapClaudeLifecycleEvent(parsed, options.now?.() ?? Date.now());
+  if (!decision?.reaction && !lifecycle) return decision;
   if (!options.projectLocal && hasProjectLocalOpenPetsHook()) return decision;
+
+  let client: OpenPetsClient | undefined;
+  if (lifecycle) {
+    client = options.client ?? createOpenPetsClient({ connectTimeoutMs: 500, responseTimeoutMs: 500 });
+    try {
+      await client.reportAgentActivity(lifecycle);
+    } catch (error) {
+      if (options.debug) process.stderr.write(`OpenPets Claude lifecycle ignored error: ${sanitizeDebugError(error)}\n`);
+    }
+  }
+  if (!decision?.reaction) return decision;
 
   const shouldSpeak = decision.speechCategory ? shouldSendSpeech(decision.speechCategory, options) : false;
   const shouldReact = shouldSendReaction(decision.reaction, options);
   if (!shouldSpeak && !shouldReact) return decision;
 
-  const client = options.client ?? createOpenPetsClient({ connectTimeoutMs: 500, responseTimeoutMs: 500 });
+  client ??= options.client ?? createOpenPetsClient({ connectTimeoutMs: 500, responseTimeoutMs: 500 });
   const lease = options.configuredPetId ? await acquireHookLease(client, options.configuredPetId, options.debug) : undefined;
   try {
     if (decision.speechCategory && shouldSpeak) {
@@ -124,8 +136,31 @@ export function mapClaudeHookEvent(payload: Record<string, unknown>): ClaudeHook
   if (eventName === "Notification") return { eventName };
   if (eventName === "Stop") return { eventName, reaction: "success" };
   if (eventName === "StopFailure") return { eventName, reaction: "error", speechCategory: "error" };
+  if (eventName === "SessionEnd") return { eventName };
   if (eventName === "PreToolUse") return { eventName, reaction: classifyToolReaction(payload) };
   return eventName ? { eventName } : null;
+}
+
+export function mapClaudeLifecycleEvent(payload: Record<string, unknown>, occurredAt = Date.now()): NormalizedAgentLifecycleEvent | null {
+  const eventName = typeof payload.hook_event_name === "string" ? payload.hook_event_name : undefined;
+  const sessionId = typeof payload.session_id === "string" ? payload.session_id : undefined;
+  if (!sessionId) return null;
+  const state = eventName === "UserPromptSubmit" || eventName === "PreToolUse" ? "working"
+    : eventName === "PermissionRequest" ? "waiting"
+      : eventName === "Stop" ? "ready"
+        : eventName === "StopFailure" ? "blocked"
+          : eventName === "SessionEnd" ? "idle"
+            : undefined;
+  if (!state) return null;
+  const turnId = typeof payload.turn_id === "string" ? payload.turn_id : undefined;
+  return createNormalizedAgentLifecycleEvent({
+    agent: "claude",
+    sessionId,
+    ...(turnId ? { turnId } : {}),
+    state,
+    occurredAt,
+    ...(eventName === "PermissionRequest" ? { requestKind: "permission" as const } : {}),
+  });
 }
 
 export function validateHookSpeech(message: string): string {

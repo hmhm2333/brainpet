@@ -9,7 +9,7 @@
     "updateRepository": "hmhm2333/brainpet"
   },
   "bridge": {
-    "version": "0.2.0",
+    "version": "0.3.0",
     "minimumRuntimeIpcVersion": 1,
     "hookDeadlineMs": 2600,
     "connectAttemptMs": 350,

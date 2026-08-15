@@ -420,6 +420,29 @@ await localScenario("bundled defaults enable Focus Buddy and Launch Buddy but no
   assert.equal(store.getRecord("openpets.virtual-pet")?.enabled, false);
 });
 
+await localScenario("distribution bundle policy can seed only BrainPet Training", async ({ userData, root, store }) => {
+  const official = join(root, "official");
+  const trainingSource = join(official, "brainpet.training");
+  const remindersSource = join(official, "openpets.reminders");
+  writeManifest(trainingSource, { manifestVersion: 3, id: "brainpet.training", name: "BrainPet Training", version: "1.0.0", runtime: "javascript", sdkVersion: "3.3.0", entry: "index.js", permissions: ["commands", "bus"] });
+  writeManifest(remindersSource, { manifestVersion: 2, id: "openpets.reminders", name: "Quick Reminders", version: "1.0.0", runtime: "javascript", sdkVersion: "1.0.0", entry: "index.js", permissions: ["pet:speak"] });
+  writeFileSync(join(trainingSource, "index.js"), "OpenPetsPlugin.register({ start() {} });\n", "utf8");
+  writeFileSync(join(remindersSource, "index.js"), "OpenPetsPlugin.register({ start() {} });\n", "utf8");
+  const service = new PluginService({
+    userDataPath: userData,
+    stateStore: store,
+    runtime: new FakeRuntime() as never,
+    bundledPluginSourceDirs: [official],
+    bundledPluginIds: ["brainpet.training"],
+    bundledEnabledPluginIds: ["brainpet.training"],
+  });
+
+  await service.start();
+
+  assert.equal(store.getRecord("brainpet.training")?.enabled, true);
+  assert.equal(store.getRecord("openpets.reminders"), undefined);
+});
+
 await localScenario("bundled seeding prunes stale ids and blocks uninstall update", async ({ userData, root, store }) => {
   const oldInstall = join(userData, "plugins", "openpets.pomodoro");
   const oldManifest = writeManifest(oldInstall, manifest({ id: "openpets.pomodoro" }));

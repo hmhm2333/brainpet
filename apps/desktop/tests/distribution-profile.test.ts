@@ -3,18 +3,21 @@ import test from "node:test";
 
 import { isBrainPetFeatureEnabled, resolveDesktopDistributionSettings, resolveDistributionUpdateRepository, shouldUseIsolatedBrainPetUserData } from "../src/distribution-profile.js";
 
-test("BrainPet distribution keeps its identity and starts without bundled plugin hosts", () => {
+test("BrainPet distribution keeps its identity and seeds only the training plugin", () => {
   assert.deepEqual(resolveDesktopDistributionSettings("BrainPet"), {
     profile: "brainpet",
     displayName: "BrainPet",
     appUserModelId: "dev.brainpet.app",
-    seedBundledPlugins: false,
+    seedBundledPlugins: true,
+    bundledPluginIds: ["brainpet.training"],
+    bundledEnabledPluginIds: ["brainpet.training"],
     brainPetEnabled: true,
   });
 });
 
 test("OpenPets remains unchanged and explicit test overrides are bounded", () => {
   assert.equal(resolveDesktopDistributionSettings("OpenPets").seedBundledPlugins, true);
+  assert.deepEqual(resolveDesktopDistributionSettings("OpenPets").bundledPluginIds, ["openpets.reminders", "openpets.focus-buddy", "openpets.launch-buddy", "openpets.virtual-pet"]);
   assert.equal(resolveDesktopDistributionSettings("OpenPets").brainPetEnabled, false);
   assert.equal(resolveDesktopDistributionSettings("OpenPets", "brainpet").profile, "brainpet");
   assert.equal(resolveDesktopDistributionSettings("OpenPets", "brainpet", "openpets.exe", { packaged: true }).profile, "openpets");

@@ -21,27 +21,49 @@ export type ParsedIpcEndpoint =
 const supportedLocalIpcNamespaces = ["openpets", "brainpet"] as const;
 
 export function getDiscoveryFilePath(): string {
-  if (process.env.OPENPETS_DISCOVERY_FILE) {
-    return process.env.OPENPETS_DISCOVERY_FILE;
-  }
-
-  if (process.platform === "darwin") {
-    return join(homedir(), "Library", "Application Support", "OpenPets", "runtime", "ipc.json");
-  }
-
-  if (process.platform === "win32") {
-    return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "OpenPets", "runtime", "ipc.json");
-  }
-
-  const xdg = getSecureXdgRuntimeDir();
-  if (xdg) {
-    return join(xdg, "openpets", "ipc.json");
-  }
-
-  return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "OpenPets", "runtime", "ipc.json");
+  return getDiscoveryFilePaths()[0]!;
 }
 
-export function readDiscoveryFile(path = getDiscoveryFilePath()): OpenPetsDiscoveryFile {
+export function getDiscoveryFilePaths(platform: NodeJS.Platform = process.platform, environment: NodeJS.ProcessEnv = process.env, homeDirectory = homedir()): readonly string[] {
+  if (environment.OPENPETS_DISCOVERY_FILE) return [environment.OPENPETS_DISCOVERY_FILE];
+
+  if (platform === "darwin") {
+    const root = join(homeDirectory, "Library", "Application Support");
+    return [join(root, "OpenPets", "runtime", "ipc.json"), join(root, "BrainPet", "runtime", "ipc.json")];
+  }
+
+  if (platform === "win32") {
+    const root = environment.APPDATA ?? join(homeDirectory, "AppData", "Roaming");
+    return [join(root, "OpenPets", "runtime", "ipc.json"), join(root, "BrainPet", "runtime", "ipc.json")];
+  }
+
+  const xdg = getSecureXdgRuntimeDir(environment.XDG_RUNTIME_DIR);
+  if (xdg) {
+    return [join(xdg, "openpets", "ipc.json"), join(xdg, "brainpet", "ipc.json")];
+  }
+
+  const root = environment.XDG_CONFIG_HOME ?? join(homeDirectory, ".config");
+  return [join(root, "OpenPets", "runtime", "ipc.json"), join(root, "BrainPet", "runtime", "ipc.json")];
+}
+
+export function readDiscoveryFile(path?: string): OpenPetsDiscoveryFile {
+  return readDiscoveryFileFromPaths(path ? [path] : getDiscoveryFilePaths());
+}
+
+export function readDiscoveryFileFromPaths(candidates: readonly string[]): OpenPetsDiscoveryFile {
+  let unavailable: OpenPetsClientError | undefined;
+  for (const candidate of candidates) {
+    try {
+      return readDiscoveryFileAt(candidate);
+    } catch (error) {
+      if (!(error instanceof OpenPetsClientError) || error.code !== "unavailable") throw error;
+      unavailable = error;
+    }
+  }
+  throw unavailable ?? new OpenPetsClientError("unavailable", "No local companion discovery file is available.");
+}
+
+function readDiscoveryFileAt(path: string): OpenPetsDiscoveryFile {
   let raw: string;
   try {
     const stat = statSync(path);
@@ -216,8 +238,7 @@ function allowsCrossPlatformDiscovery(platform: NodeJS.Platform, endpoint: Parse
   return isPrivateOrLocalIpv4(endpoint.host);
 }
 
-function getSecureXdgRuntimeDir(): string | null {
-  const dir = process.env.XDG_RUNTIME_DIR;
+function getSecureXdgRuntimeDir(dir = process.env.XDG_RUNTIME_DIR): string | null {
   if (!dir || !existsSync(dir)) return null;
   try {
     const stat = lstatSync(dir);

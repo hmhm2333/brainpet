@@ -401,7 +401,10 @@ try {
   const soak = await runSoak(stageTarget, soakMs);
   if (soakMs >= 60_000) assert.equal(soak.heapGrowthBytes <= 32 * 1024 * 1024, true, `renderer heap grew by ${soak.heapGrowthBytes} bytes during soak`);
   const activeProcessMetrics = process.platform === "win32" ? await measureProcessesForUserDataDir(userDataDir) : null;
-  if (enforceResourceBudget && activeProcessMetrics) assertProcessBudget("active", activeProcessMetrics, { processCount: (idleProcessMetrics?.processCount ?? 4) + 2, workingSetBytes: 850 * 1024 * 1024, privateBytes: 600 * 1024 * 1024 });
+  if (enforceResourceBudget && activeProcessMetrics) {
+    assertProcessBudget("active", activeProcessMetrics, { processCount: (idleProcessMetrics?.processCount ?? 4) + 2, workingSetBytes: 900 * 1024 * 1024, privateBytes: 600 * 1024 * 1024 });
+    if (idleProcessMetrics) assert.equal(activeProcessMetrics.workingSetBytes - idleProcessMetrics.workingSetBytes <= 300 * 1024 * 1024, true, "opening the stage must add no more than 300 MiB working set");
+  }
   assert.doesNotMatch(logs.join(""), /invalid stage event rejected|stage event transition rejected/, "host must accept every validated session event during smoke and soak");
 
   if (!petToggleCloseVerified) {
@@ -434,9 +437,15 @@ try {
   await waitForEvaluation(recoveredStageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
   await evaluate(recoveredStageTarget, closeStageExpression);
   await waitForTargetToDisappear(port, recoveredStageTarget.id, 10_000);
-  await delay(800);
-  const recoveredIdleProcessMetrics = process.platform === "win32" ? await measureProcessesForUserDataDir(userDataDir) : null;
-  if (enforceResourceBudget && recoveredIdleProcessMetrics) assertProcessBudget("recovered idle", recoveredIdleProcessMetrics, { processCount: (idleProcessMetrics?.processCount ?? 4) + 1, workingSetBytes: 700 * 1024 * 1024, privateBytes: 500 * 1024 * 1024 });
+  const recoveredIdleProcessMetrics = process.platform === "win32"
+    ? await waitForProcessCount(userDataDir, (idleProcessMetrics?.processCount ?? 5) + 1, 5_000)
+    : null;
+  if (enforceResourceBudget && recoveredIdleProcessMetrics) {
+    // Chromium retains one warmed utility service after the first audio-enabled stage.
+    // The renderer must still disappear and the aggregate memory delta stays bounded.
+    assertProcessBudget("warmed idle", recoveredIdleProcessMetrics, { processCount: (idleProcessMetrics?.processCount ?? 5) + 1, workingSetBytes: 750 * 1024 * 1024, privateBytes: 500 * 1024 * 1024 });
+    if (idleProcessMetrics) assert.equal(recoveredIdleProcessMetrics.workingSetBytes - idleProcessMetrics.workingSetBytes <= 175 * 1024 * 1024, true, "stage crash recovery must retain no more than 175 MiB working set above cold idle");
+  }
   assert.doesNotMatch(logs.join(""), /invalid stage event rejected|stage event transition rejected/, "crash recovery must leave the Host lifecycle valid");
 
   process.stdout.write(`${JSON.stringify({ ok: true, outputPath, introOutputPath, companionOutputPath, pixelUiOutputPath, resultOutputPath, videoPath, petReadyMs, idleProcessMetrics, activeProcessMetrics, recoveredIdleProcessMetrics, companionVerified: true, pixelUiVerified: true, trigger, stage: { width: welcome.width, height: welcome.height, desktopOverlay: true }, prompt: welcome.prompt, introBufferMs, openingMs, petIndependentMove, rigIndependentDrag, trialVisualHiddenDuringDrag, restartedTrialProgress, rigAutoResume, focusPause, nativeReactionClickVerified, petThrowVerified, petToggleCloseVerified, completionVerified: Boolean(completion), completionQuality: completion?.quality ?? null, foundationInputVerified, lifecycleCycles, soak, crashIsolated: true, crashRecovered: true })}\n`);
@@ -637,19 +646,34 @@ do {
 $selected = @($all | Where-Object { $ids.Contains([uint32]$_.ProcessId) })
 $workingSet = ($selected | Measure-Object WorkingSetSize -Sum).Sum
 $privateBytes = ($selected | Measure-Object PrivatePageCount -Sum).Sum
+$processes = @($selected | ForEach-Object {
+  $role = if ($_.CommandLine -match '--type=([^\s"]+)') { $Matches[1] } else { 'browser' }
+  [pscustomobject]@{ pid = [uint32]$_.ProcessId; parentPid = [uint32]$_.ParentProcessId; role = $role; workingSetBytes = [int64]$_.WorkingSetSize }
+})
 [pscustomobject]@{
   processCount = $selected.Count
   workingSetBytes = [int64]$workingSet
   privateBytes = [int64]$privateBytes
   names = @($selected | Group-Object Name | ForEach-Object { $_.Name + ':' + $_.Count })
+  processes = $processes
 } | ConvertTo-Json -Compress
 `;
   const output = await runPowerShell(script, { BRAINPET_METRICS_USER_DATA: directory });
   return JSON.parse(output.trim());
 }
 
+async function waitForProcessCount(directory, maximum, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let metrics = await measureProcessesForUserDataDir(directory);
+  while (metrics.processCount > maximum && Date.now() < deadline) {
+    await delay(250);
+    metrics = await measureProcessesForUserDataDir(directory);
+  }
+  return metrics;
+}
+
 function assertProcessBudget(label, metrics, budget) {
-  assert.equal(metrics.processCount <= budget.processCount, true, `${label} process count ${metrics.processCount} exceeds ${budget.processCount}: ${metrics.names.join(", ")}`);
+  assert.equal(metrics.processCount <= budget.processCount, true, `${label} process count ${metrics.processCount} exceeds ${budget.processCount}: ${metrics.names.join(", ")} ${JSON.stringify(metrics.processes)}`);
   assert.equal(metrics.workingSetBytes <= budget.workingSetBytes, true, `${label} working set ${formatMiB(metrics.workingSetBytes)} exceeds ${formatMiB(budget.workingSetBytes)}`);
   assert.equal(metrics.privateBytes <= budget.privateBytes, true, `${label} private bytes ${formatMiB(metrics.privateBytes)} exceeds ${formatMiB(budget.privateBytes)}`);
 }

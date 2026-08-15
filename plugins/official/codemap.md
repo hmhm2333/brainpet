@@ -23,6 +23,7 @@ First-party SDK v3 plugin product source. These plugins are the reviewed default
 
 | Plugin | Primary responsibility | Main SDK surfaces |
 |--------|------------------------|-------------------|
+| `brainpet.training` | BrainPet's featured training command; emits one namespaced event that the trusted desktop host maps to the transparent training stage. | `commands`, `bus` |
 | `openpets.reminders` | Quick reminders with due/missed alert delivery, snooze/done actions, status text, optional notification/sound, and localized reminder messages. | `schedule`, `storage`, `status`, `ui.alert`, `commands`, `assets`, `config`, `notify` |
 | `openpets.launch-buddy` | Launch/checklist companion for shipping moments, using scheduled prompts and command-driven progress feedback. | `schedule`, `storage`, `commands`, `pet`, `audio`, `assets`, `config` |
 | `openpets.water-reminder` | Hydration reminder loop with configurable cadence and localized alerts. | `schedule`, `storage`, `commands`, `ui.alert`, `assets`, `config` |

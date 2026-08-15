@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import type { OpenPetsClient, OpenPetsReaction } from "@open-pets/client";
 
 import plugin, { openPetsOpenCodePluginId } from "./plugin.js";
-import { classifyOpenCodeBusEvent, classifyOpenCodeToolReaction, createOpenPetsOpenCodeHooks, getDefaultOpenCodeThrottlePath, isReactionExcluded, shouldIgnoreOpenPetsTool } from "./opencode-plugin-runtime.js";
+import { classifyOpenCodeBusEvent, classifyOpenCodeToolReaction, createOpenPetsOpenCodeHooks, getDefaultOpenCodeThrottlePath, isReactionExcluded, mapOpenCodeLifecycleEvent, shouldIgnoreOpenPetsTool } from "./opencode-plugin-runtime.js";
 
 assert.equal(plugin.id, openPetsOpenCodePluginId);
 assert.equal(typeof plugin.server, "function");
@@ -28,6 +28,10 @@ assert.equal(classifyOpenCodeBusEvent({ type: "permission.asked", properties: { 
 assert.equal(classifyOpenCodeBusEvent({ payload: { type: "permission.asked", properties: { patterns: ["openpets_openpets_react"] } } }), undefined);
 assert.deepEqual(classifyOpenCodeBusEvent({ type: "session.error" }), { reaction: "error", speechCategory: "error" });
 assert.deepEqual(classifyOpenCodeBusEvent({ type: "session.status", properties: { status: { type: "idle" } } }), { reaction: "success" });
+assert.equal(mapOpenCodeLifecycleEvent({ type: "permission.asked", properties: { sessionID: "session-1", prompt: "private" } }, 123)?.state, "waiting");
+assert.deepEqual(mapOpenCodeLifecycleEvent({ type: "question.asked", properties: { sessionID: "session-1", questions: ["private"] } }, 124)?.request, { kind: "question" });
+assert.equal(mapOpenCodeLifecycleEvent({ type: "session.status", properties: { sessionID: "session-1", status: { type: "busy" } } }, 125)?.state, "working");
+assert.equal(mapOpenCodeLifecycleEvent({ type: "session.deleted", properties: { sessionID: "session-1" } }, 126)?.state, "idle");
 assert.ok(getDefaultOpenCodeThrottlePath().includes("opencode-hook-throttle.json"));
 
 assert.throws(() => createOpenPetsOpenCodeHooks({ pet: "bad/pet" }));
@@ -35,6 +39,7 @@ assert.throws(() => createOpenPetsOpenCodeHooks({ pet: "bad/pet" }));
 const dir = mkdtempSync(join(tmpdir(), "openpets-opencode-plugin-"));
 try {
   const calls: Array<{ readonly kind: string; readonly value: string; readonly leaseId?: string; readonly requestedPetId?: string }> = [];
+  const lifecycleCalls: unknown[] = [];
   let releaseBlockedReact: (() => void) | undefined;
   const blocked = new Promise<void>((resolve) => { releaseBlockedReact = resolve; });
   const client: OpenPetsClient = {
@@ -49,7 +54,7 @@ try {
     },
     heartbeatLease: async () => ({ leaseId: "lease-fixer", expiresAt: Date.now() + 15_000 }),
     releaseLease: async () => ({ released: true }),
-    reportAgentActivity: async () => ({ ok: true }),
+    reportAgentActivity: async (event: unknown) => { lifecycleCalls.push(event); return { ok: true }; },
     react: async (reaction: OpenPetsReaction, options?: { readonly leaseId?: string }) => {
       calls.push({ kind: "react", value: reaction, leaseId: options?.leaseId });
       await blocked;
@@ -100,6 +105,11 @@ try {
   await scheduled.shift()?.();
   assert.deepEqual(calls.at(-1), { kind: "say", value: "Approval needed", leaseId: "lease-fixer" });
 
+  hooks.event({ event: { type: "permission.asked", properties: { sessionID: "opencode-session", prompt: "never forward this" } } });
+  assert.equal(scheduled.length, 1);
+  await scheduled.shift()?.();
+  assert.deepEqual(lifecycleCalls.at(-1), { schemaVersion: 1, agent: "opencode", sessionId: "opencode-session", state: "waiting", occurredAt: 100_000, capabilities: ["observeLifecycle"], request: { kind: "permission" } });
+
   hooks.event({ event: { type: "session.status", properties: { status: { type: "idle" } } } });
   assert.equal(scheduled.length, 1);
   await scheduled.shift()?.();
@@ -113,6 +123,32 @@ try {
 
   const throwingSchedule = createOpenPetsOpenCodeHooks({ schedule: () => { throw new Error("schedule failed"); }, debug: true, debugLog: (message) => errors.push(message) });
   assert.doesNotThrow(() => throwingSchedule.event({ event: { type: "session.error" } }));
+
+  const orderedStates: string[] = [];
+  let releaseWorking: (() => void) | undefined;
+  const workingBlocked = new Promise<void>((resolve) => { releaseWorking = resolve; });
+  const orderedClient = {
+    ...client,
+    reportAgentActivity: async (event: { readonly state: string }) => {
+      if (event.state === "working") await workingBlocked;
+      orderedStates.push(event.state);
+      return { ok: true };
+    },
+  } satisfies OpenPetsClient;
+  const orderedWork: Promise<void>[] = [];
+  const orderedHooks = createOpenPetsOpenCodeHooks({
+    clientFactory: () => orderedClient,
+    excludeReactions: ["waiting"],
+    schedule: (work) => { orderedWork.push(work()); },
+  });
+  orderedHooks.event({ event: { type: "session.status", properties: { sessionID: "ordered", status: { type: "busy" } } } });
+  orderedHooks.event({ event: { type: "permission.asked", properties: { sessionID: "ordered", permission: "shell" } } });
+  orderedHooks.event({ event: { type: "session.deleted", properties: { sessionID: "ordered" } } });
+  await Promise.resolve();
+  assert.deepEqual(orderedStates, [], "later lifecycle events must wait for the first IPC write");
+  releaseWorking?.();
+  await Promise.all(orderedWork);
+  assert.deepEqual(orderedStates, ["working", "waiting", "idle"], "OpenCode lifecycle IPC must preserve provider event order");
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

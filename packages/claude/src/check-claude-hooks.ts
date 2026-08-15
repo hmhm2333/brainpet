@@ -3,10 +3,11 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 import { addOpenPetsHooks, assertInstalledClaudeCliPath, claudeHookEvents, createOpenPetsHookCommand, createOpenPetsHookSettingsPreview, doctorClaudeHooks, findInstalledOpenPetsClaudeCli, getBundledClaudeCliPath, getLocalClaudeCliPath, installClaudeHooks, openPetsHookMarker, removeOpenPetsHooks, uninstallClaudeHooks } from "./hook-settings.js";
 import { hookSpeechPools } from "./hook-messages.js";
-import { handleClaudeHookPayload, hasProjectLocalOpenPetsHook, mapClaudeHookEvent, validateHookSpeech } from "./hooks.js";
+import { handleClaudeHookPayload, hasProjectLocalOpenPetsHook, mapClaudeHookEvent, mapClaudeLifecycleEvent, validateHookSpeech } from "./hooks.js";
 
 assert.equal(mapClaudeHookEvent({ hook_event_name: "UserPromptSubmit" })?.reaction, "thinking");
 assert.equal(mapClaudeHookEvent({ hook_event_name: "UserPromptSubmit" })?.speechCategory, undefined);
@@ -20,6 +21,10 @@ assert.equal(mapClaudeHookEvent({ hook_event_name: "Stop" })?.reaction, "success
 assert.equal(mapClaudeHookEvent({ hook_event_name: "Stop" })?.speechCategory, undefined);
 assert.equal(mapClaudeHookEvent({ hook_event_name: "StopFailure" })?.reaction, "error");
 assert.equal(mapClaudeHookEvent({ hook_event_name: "Unknown" })?.reaction, undefined);
+assert.equal(mapClaudeLifecycleEvent({ hook_event_name: "PermissionRequest", session_id: "session-1" }, 123)?.state, "waiting");
+assert.deepEqual(mapClaudeLifecycleEvent({ hook_event_name: "PermissionRequest", session_id: "session-1", prompt: "private" }, 123)?.request, { kind: "permission" });
+assert.equal(mapClaudeLifecycleEvent({ hook_event_name: "SessionEnd", session_id: "session-1" }, 124)?.state, "idle");
+assert.equal(mapClaudeLifecycleEvent({ hook_event_name: "Stop", prompt: "missing session" }, 124), null);
 
 validateHookSpeech("Thinking it through");
 for (const [category, messages] of Object.entries(hookSpeechPools) as Array<[string, readonly string[]]>) {
@@ -33,6 +38,7 @@ for (const unsafe of ["", "a".repeat(141), "line\nbreak", "const x = 1", "https:
 }
 
 const calls: Array<{ readonly kind: string; readonly value: string; readonly leaseId?: string; readonly requestedPetId?: string }> = [];
+const lifecycleCalls: unknown[] = [];
 const client = {
   hello: async () => ({}),
   status: async () => ({ ok: true, appRunning: true }),
@@ -45,14 +51,15 @@ const client = {
   },
   heartbeatLease: async () => { throw new Error("unused"); },
   releaseLease: async () => { throw new Error("unused"); },
-  reportAgentActivity: async () => ({ ok: true }),
+  reportAgentActivity: async (event: unknown) => { lifecycleCalls.push(event); return { ok: true }; },
   react: async (reaction: string, options?: { readonly leaseId?: string }) => { calls.push({ kind: "react", value: reaction, leaseId: options?.leaseId }); },
   say: async (message: string, options?: { readonly leaseId?: string }) => { calls.push({ kind: "say", value: message, leaseId: options?.leaseId }); },
   showMedia: async () => ({ ok: true, shown: true }),
 };
 const dir = mkdtempSync(join(tmpdir(), "openpets-hooks-"));
 try {
-await handleClaudeHookPayload(JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "never shown" }), { client, configuredPetId: "fixer", throttlePath: join(dir, "throttle.json"), now: () => 100_000, random: () => 0 });
+await handleClaudeHookPayload(JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: "claude-session", prompt: "never shown" }), { client, configuredPetId: "fixer", throttlePath: join(dir, "throttle.json"), now: () => 100_000, random: () => 0 });
+assert.deepEqual(lifecycleCalls[0], { schemaVersion: 1, agent: "claude", sessionId: "claude-session", state: "working", occurredAt: 100_000, capabilities: ["observeLifecycle"] });
 assert.deepEqual(calls[0], { kind: "lease", value: "acquire", requestedPetId: "fixer" });
 assert.deepEqual(calls[1], { kind: "react", value: "thinking", leaseId: "lease-fixer" });
 await handleClaudeHookPayload(JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "npm test -- --secret" } }), { client, throttlePath: join(dir, "throttle.json"), now: () => 101_000 });
@@ -141,28 +148,28 @@ assert.equal(doctorClaudeHooks(settingsPath).status, "error");
 writeFileSync(settingsPath, JSON.stringify({ hooks: { Stop: { bad: true } } }), "utf8");
 assert.equal(doctorClaudeHooks(settingsPath).status, "error");
 const symlinkPath = join(dir, "settings-link.json");
-symlinkSync(settingsPath, symlinkPath);
-assert.equal(doctorClaudeHooks(symlinkPath).status, "error");
+if (createTestSymlink(settingsPath, symlinkPath)) assert.equal(doctorClaudeHooks(symlinkPath).status, "error");
 
 process.env.OPENPETS_DISABLE_CLAUDE_ASYNC_HOOKS = "1";
 assert.throws(() => installClaudeHooks(join(dir, "async-disabled.json")));
 delete process.env.OPENPETS_DISABLE_CLAUDE_ASYNC_HOOKS;
 
 const isolatedEnv = { ...process.env, OPENPETS_DISCOVERY_FILE: join(dir, "missing-ipc.json") };
-const normalHook = spawnSync(process.execPath, [new URL("./cli.js", import.meta.url).pathname, "hook", "--openpets-managed"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
+const hookCliPath = fileURLToPath(new URL("./cli.js", import.meta.url));
+const normalHook = spawnSync(process.execPath, [hookCliPath, "hook", "--openpets-managed"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
 assert.equal(normalHook.status, 0);
 assert.equal(normalHook.stdout, "");
 
-const petHookRun = spawnSync(process.execPath, [new URL("./cli.js", import.meta.url).pathname, "hook", "--openpets-managed", "--pet", "fixer"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
+const petHookRun = spawnSync(process.execPath, [hookCliPath, "hook", "--openpets-managed", "--pet", "fixer"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
 assert.equal(petHookRun.status, 0);
 assert.equal(petHookRun.stdout, "");
 
-const invalidPetHook = spawnSync(process.execPath, [new URL("./cli.js", import.meta.url).pathname, "hook", "--openpets-managed", "--pet", "bad/pet"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
+const invalidPetHook = spawnSync(process.execPath, [hookCliPath, "hook", "--openpets-managed", "--pet", "bad/pet"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
 assert.equal(invalidPetHook.status, 1);
-const missingPetHook = spawnSync(process.execPath, [new URL("./cli.js", import.meta.url).pathname, "hook", "--openpets-managed", "--pet"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
+const missingPetHook = spawnSync(process.execPath, [hookCliPath, "hook", "--openpets-managed", "--pet"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
 assert.equal(missingPetHook.status, 1);
 
-const malformedHook = spawnSync(process.execPath, [new URL("./cli.js", import.meta.url).pathname, "hook", "--openpets-managed"], { input: "not json", encoding: "utf8", env: isolatedEnv });
+const malformedHook = spawnSync(process.execPath, [hookCliPath, "hook", "--openpets-managed"], { input: "not json", encoding: "utf8", env: isolatedEnv });
 assert.equal(malformedHook.status, 0);
 assert.equal(malformedHook.stdout, "");
 
@@ -175,7 +182,7 @@ const fakeAppCliPath = join(fakeAppCliDir, "cli.js");
 writeFileSync(fakeAppCliPath, "// bundled cli", "utf8");
 assertInstalledClaudeCliPath(fakeAppCliPath);
 const installedCliCommand = createOpenPetsHookCommand("published", undefined, "node", fakeAppCliPath);
-assert.ok(installedCliCommand.startsWith(`node ${fakeAppCliPath} hook ${openPetsHookMarker}`), "explicit installed CLI path must produce a node + absolute-path hook command");
+assert.ok(installedCliCommand.startsWith("node ") && installedCliCommand.includes(fakeAppCliPath) && installedCliCommand.endsWith(`hook ${openPetsHookMarker}`), "explicit installed CLI path must produce a node + absolute-path hook command");
 assert.ok(!installedCliCommand.includes("npx"), "explicit installed CLI path must not fall back to npx");
 const installedCliPreview = createOpenPetsHookSettingsPreview("published", undefined, "node", fakeAppCliPath);
 const installedCliHook = (((installedCliPreview.hooks as Record<string, unknown>).Stop as Array<{ hooks: Array<{ command: string }> }>)[0]?.hooks[0]);
@@ -198,8 +205,7 @@ assert.throws(() => assertInstalledClaudeCliPath(join(dir, "OpenPets.app", "Cont
 assert.throws(() => assertInstalledClaudeCliPath(join(fakeAppCliDir, "index.js")));
 const symlinkedCliPath = join(dir, "linked-cli.js-target", "@open-pets", "claude", "dist", "cli.js");
 mkdirSync(join(dir, "linked-cli.js-target", "@open-pets", "claude", "dist"), { recursive: true });
-symlinkSync(fakeAppCliPath, symlinkedCliPath);
-assert.throws(() => assertInstalledClaudeCliPath(symlinkedCliPath));
+if (createTestSymlink(fakeAppCliPath, symlinkedCliPath)) assert.throws(() => assertInstalledClaudeCliPath(symlinkedCliPath));
 
 } finally {
   rmSync(dir, { recursive: true, force: true });
@@ -215,4 +221,14 @@ function doctorStatusPath(value: Record<string, unknown>) {
   const path = join(dir, `settings-${Math.random()}.json`);
   writeFileSync(path, JSON.stringify(value), "utf8");
   return path;
+}
+
+function createTestSymlink(target: string, path: string): boolean {
+  try {
+    symlinkSync(target, path);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EPERM") return false;
+    throw error;
+  }
 }

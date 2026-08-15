@@ -45,7 +45,11 @@ for (const rejectedField of lifecycleContract.privacyRejectedFields) assert.matc
 const ipcProtocolSource = readFileSync(join(desktop, "src", "local-ipc-protocol.ts"), "utf8");
 assert.ok(ipcProtocolSource.replaceAll(/\s/g, "").includes(`exportconstallowedAgentLifecycleStates=${JSON.stringify(lifecycleContract.states)}asconst;`), "Desktop lifecycle states drifted from the release contract.");
 const bridgeCoreSource = readFileSync(join(bridgeRoot, "scripts", "bridge-core.mjs"), "utf8");
-for (const state of lifecycleContract.states) assert.match(bridgeCoreSource, new RegExp(`\\b${state}\\b`), `Bridge lifecycle mapping is missing ${state}.`);
+assert.ok(Array.isArray(bridgeContract.emittedStates) && bridgeContract.emittedStates.length > 0, "Bridge must declare the lifecycle states it can actually emit.");
+for (const state of bridgeContract.emittedStates) {
+  assert.ok(lifecycleContract.states.includes(state), `Bridge declares unsupported lifecycle state ${state}.`);
+  assert.match(bridgeCoreSource, new RegExp(`\\b${state}\\b`), `Bridge lifecycle mapping is missing ${state}.`);
+}
 const nativeHookSource = readFileSync(join(root, "native", "brainpet-hook", "src", "main.rs"), "utf8");
 for (const state of lifecycleContract.states) assert.match(nativeHookSource, new RegExp(`"${state}"`), `Native lifecycle mapping is missing ${state}.`);
 const cargo = readFileSync(join(root, "native", "brainpet-hook", "Cargo.toml"), "utf8");

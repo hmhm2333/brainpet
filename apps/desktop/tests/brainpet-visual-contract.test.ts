@@ -120,7 +120,7 @@ test("cargo signal is rendered as a real overlay scene rather than a symbol card
   assert.match(stageMain, /点击 \/ SPACE 开始/);
   assert.match(stageMain, /setTimeout\(\(\) => \{ void startTask\(currentSession\); \}, 650\)/);
   assert.doesNotMatch(stageMain, /session\.level === 1/);
-  assert.match(stageHost, /closeBrainPetStage\("pet-toggle"\)/);
+  assert.match(stageHost, /toggleBrainPetStage\(anchor[\s\S]*"plugin-command"\)/);
   assert.match(stageHost, /openpets:brainpet-stage-state/);
   assert.match(petPreload, /brainpetStageOpen/);
   assert.match(stageCss, /\.stage-input-surface\{[^}]*background:transparent/);
