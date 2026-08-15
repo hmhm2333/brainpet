@@ -3,6 +3,7 @@ const hookState = Object.freeze({
   PermissionRequest: "waiting",
   PostToolUse: "working",
   Stop: "ready",
+  StopFailure: "blocked",
   SessionEnd: "idle",
 });
 

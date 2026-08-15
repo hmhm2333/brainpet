@@ -5,22 +5,29 @@ use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MAX_HOOK_INPUT_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_IPC_MESSAGE_BYTES: usize = 16 * 1024;
-const CONNECT_TIMEOUT: Duration = Duration::from_millis(400);
-const RUNTIME_WAKE_TIMEOUT: Duration = Duration::from_millis(2_500);
+const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(350);
+const HOOK_DEADLINE: Duration = Duration::from_millis(2_600);
+const RUNTIME_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 fn main() {
+    if env::args().any(|argument| argument == "--self-test") {
+        let _ = io::stdout().write_all(concat!("brainpet-hook ", env!("CARGO_PKG_VERSION"), " ok\n").as_bytes());
+        return;
+    }
+    let deadline = Instant::now() + HOOK_DEADLINE;
     let mut hook_input = None;
     let result = (|| -> Result<(), ()> {
         let agent = parse_agent_arg().ok_or(())?;
         let input = read_hook_input().ok_or(())?;
         hook_input = Some(input.clone());
         let event = map_hook_event(agent, &input, now_ms()).ok_or(())?;
-        send_event(&event).map_err(|_| ())
+        send_event(&event, deadline).map_err(|_| ())
     })();
 
     let _ = result;
@@ -121,17 +128,17 @@ fn valid_identifier(value: &Value, max_len: usize) -> Option<&str> {
     Some(value)
 }
 
-fn send_event(event: &Value) -> io::Result<()> {
+fn send_event(event: &Value, deadline: Instant) -> io::Result<()> {
     let paths = runtime_paths().ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
     if let Some(explicit) = paths.explicit_discovery.as_deref() {
         let discovery = read_discovery_at(explicit)
             .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
-        return send_event_to_discovery(event, &discovery);
+        return send_event_to_discovery(event, &discovery, deadline);
     }
 
     if let Some(path) = paths.brainpet_discovery.as_deref() {
         if let Some(discovery) = read_discovery_at(path) {
-            if send_event_to_discovery(event, &discovery).is_ok() {
+            if send_event_to_discovery(event, &discovery, deadline).is_ok() {
                 return Ok(());
             }
         }
@@ -143,20 +150,19 @@ fn send_event(event: &Value) -> io::Result<()> {
             .as_deref()
             .and_then(read_discovery_at)
             .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
-        return send_event_to_discovery(event, &discovery);
+        return send_event_to_discovery(event, &discovery, deadline);
     }
 
     match paths.install_marker.as_deref().map(launch_installed_runtime) {
         Some(LaunchStatus::Launched) => {
-            let deadline = Instant::now() + RUNTIME_WAKE_TIMEOUT;
             while Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(50));
+                thread::sleep(remaining_timeout(deadline)?.min(RUNTIME_POLL_INTERVAL));
                 if let Some(discovery) = paths
                     .brainpet_discovery
                     .as_deref()
                     .and_then(read_discovery_at)
                 {
-                    if send_event_to_discovery(event, &discovery).is_ok() {
+                    if send_event_to_discovery(event, &discovery, deadline).is_ok() {
                         return Ok(());
                     }
                 }
@@ -174,10 +180,10 @@ fn send_event(event: &Value) -> io::Result<()> {
         .as_deref()
         .and_then(read_discovery_at)
         .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
-    send_event_to_discovery(event, &discovery)
+    send_event_to_discovery(event, &discovery, deadline)
 }
 
-fn send_event_to_discovery(event: &Value, discovery: &Discovery) -> io::Result<()> {
+fn send_event_to_discovery(event: &Value, discovery: &Discovery, deadline: Instant) -> io::Result<()> {
     let request = json!({
         "id": request_id(),
         "version": 1,
@@ -191,7 +197,11 @@ fn send_event_to_discovery(event: &Value, discovery: &Discovery) -> io::Result<(
     if line.len() > MAX_IPC_MESSAGE_BYTES {
         return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
-    write_endpoint(&discovery.endpoint, &line)
+    write_endpoint(&discovery.endpoint, &line, remaining_timeout(deadline)?.min(CONNECT_ATTEMPT_TIMEOUT))
+}
+
+fn remaining_timeout(deadline: Instant) -> io::Result<Duration> {
+    deadline.checked_duration_since(Instant::now()).filter(|duration| !duration.is_zero()).ok_or_else(|| io::Error::from(io::ErrorKind::TimedOut))
 }
 
 struct Discovery {
@@ -310,6 +320,10 @@ fn launch_installed_runtime(marker_path: &Path) -> LaunchStatus {
     };
     let executable_metadata = match fs::symlink_metadata(&executable) {
         Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let _ = fs::remove_file(marker_path);
+            return LaunchStatus::Missing;
+        }
         Err(_) => return LaunchStatus::Invalid,
     };
     if !executable_metadata.is_file() || executable_metadata.file_type().is_symlink() {
@@ -346,7 +360,7 @@ fn validate_install_marker(value: &Value) -> Option<PathBuf> {
     let valid_name = if cfg!(target_os = "windows") {
         executable_name == "brainpet.exe"
     } else if cfg!(target_os = "linux") {
-        executable_name == "brainpet" || executable_name == "brainpet.appimage"
+        executable_name == "brainpet" || valid_linux_appimage_name(&executable_name)
     } else {
         executable_name == "brainpet"
     };
@@ -368,6 +382,16 @@ fn validate_install_marker(value: &Value) -> Option<PathBuf> {
         return None;
     }
     Some(executable)
+}
+
+fn valid_linux_appimage_name(name: &str) -> bool {
+    if !name.starts_with("brainpet") || !name.ends_with(".appimage") {
+        return false;
+    }
+    let middle = &name["brainpet".len()..name.len() - ".appimage".len()];
+    middle.is_empty()
+        || matches!(middle.as_bytes().first().copied(), Some(b'-' | b'_' | b'.'))
+            && middle.chars().all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
 }
 
 fn current_platform_id() -> &'static str {
@@ -404,24 +428,42 @@ fn valid_endpoint(endpoint: &str) -> bool {
     }
 }
 
-fn write_endpoint(endpoint: &str, line: &[u8]) -> io::Result<()> {
+fn write_endpoint(endpoint: &str, line: &[u8], timeout: Duration) -> io::Result<()> {
     if let Some(address) = parse_tcp_endpoint(endpoint) {
-        let mut stream = TcpStream::connect_timeout(&address.into(), CONNECT_TIMEOUT)?;
-        stream.set_write_timeout(Some(CONNECT_TIMEOUT))?;
+        let mut stream = TcpStream::connect_timeout(&address.into(), timeout)?;
+        stream.set_write_timeout(Some(timeout))?;
         return stream.write_all(line);
     }
-    #[cfg(target_os = "windows")]
-    {
-        let mut pipe = OpenOptions::new().write(true).open(endpoint)?;
-        return pipe.write_all(line);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::net::UnixStream;
-        let mut stream = UnixStream::connect(endpoint)?;
-        stream.set_write_timeout(Some(CONNECT_TIMEOUT))?;
-        stream.write_all(line)
-    }
+    write_path_endpoint(endpoint, line, timeout)
+}
+
+fn write_path_endpoint(endpoint: &str, line: &[u8], timeout: Duration) -> io::Result<()> {
+    let endpoint = endpoint.to_owned();
+    let line = line.to_vec();
+    run_io_with_timeout(timeout, move || {
+        #[cfg(target_os = "windows")]
+        return OpenOptions::new().write(true).open(endpoint).and_then(|mut pipe| pipe.write_all(&line));
+        #[cfg(unix)]
+        {
+            use std::os::unix::net::UnixStream;
+            UnixStream::connect(endpoint).and_then(|mut stream| {
+                stream.set_write_timeout(Some(timeout))?;
+                stream.write_all(&line)
+            })
+        }
+    })
+}
+
+fn run_io_with_timeout<F>(timeout: Duration, operation: F) -> io::Result<()>
+where
+    F: FnOnce() -> io::Result<()> + Send + 'static,
+{
+    let (sender, receiver) = mpsc::sync_channel(1);
+    thread::spawn(move || { let _ = sender.send(operation()); });
+    receiver.recv_timeout(timeout).map_err(|error| match error {
+        mpsc::RecvTimeoutError::Timeout => io::Error::from(io::ErrorKind::TimedOut),
+        mpsc::RecvTimeoutError::Disconnected => io::Error::from(io::ErrorKind::BrokenPipe),
+    })?
 }
 
 fn parse_tcp_endpoint(endpoint: &str) -> Option<SocketAddrV4> {
@@ -453,6 +495,17 @@ fn request_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blocking_path_io_respects_the_deadline() {
+        let started = Instant::now();
+        let result = run_io_with_timeout(Duration::from_millis(20), || {
+            thread::sleep(Duration::from_millis(200));
+            Ok(())
+        });
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_millis(150));
+    }
 
     #[test]
     fn codex_mapping_keeps_only_lifecycle_fields() {
@@ -519,5 +572,13 @@ mod tests {
         let mut invalid = marker;
         invalid["executablePath"] = json!(PathBuf::from(root).join(if cfg!(target_os = "windows") { "cmd.exe" } else { "sh" }));
         assert_eq!(validate_install_marker(&invalid), None);
+    }
+
+    #[test]
+    fn linux_appimage_names_allow_versions_but_reject_unrelated_launchers() {
+        assert!(valid_linux_appimage_name("brainpet-3.4.0-x86_64.appimage"));
+        assert!(valid_linux_appimage_name("brainpet.appimage"));
+        assert!(!valid_linux_appimage_name("not-brainpet.appimage"));
+        assert!(!valid_linux_appimage_name("brainpet setup.appimage"));
     }
 }

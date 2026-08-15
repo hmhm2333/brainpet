@@ -1,20 +1,29 @@
-import { app, BrowserWindow, shell } from "electron";
-import { existsSync } from "node:fs";
+import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { basename, join } from "node:path";
 
-import { getBrainPetInstallMarkerPath } from "./brainpet-install-marker.js";
+import { readValidBrainPetInstallMarker } from "./brainpet-install-marker.js";
 import { info } from "./logger.js";
 import { createBrainPetSetupReceipt } from "./brainpet-setup-receipt.js";
+import { confirmBrainPetBridge, getBrainPetInstallationState } from "./brainpet-installation-state.js";
 
 let setupWindow: BrowserWindow | null = null;
+let setupHandlersInstalled = false;
+let setupEnabled = false;
+
+export function configureBrainPetSetupGuide(options: { readonly enabled: boolean }): void {
+  setupEnabled = options.enabled;
+  if (!setupEnabled && setupWindow && !setupWindow.isDestroyed()) setupWindow.close();
+}
 
 export function openBrainPetSetupGuide(): void {
+  if (!setupEnabled) return;
   if (setupWindow && !setupWindow.isDestroyed()) {
     setupWindow.show();
     setupWindow.focus();
     return;
   }
-  const receipt = createBrainPetSetupReceipt({ packaged: app.isPackaged, markerExists: existsSync(getBrainPetInstallMarkerPath()) });
+  installSetupHandlers();
+  const receipt = getSetupReceipt();
   setupWindow = new BrowserWindow({
     width: 548,
     height: 486,
@@ -24,7 +33,7 @@ export function openBrainPetSetupGuide(): void {
     title: "BrainPet · Setup & Recovery",
     backgroundColor: "#d9edf0",
     autoHideMenuBar: true,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, preload: join(app.getAppPath(), "brainpet-setup-preload.cjs") },
   });
   setupWindow.setMenu(null);
   setupWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -39,4 +48,19 @@ export function openBrainPetSetupGuide(): void {
     info("ui", "BrainPet setup guide failed to load", { guide: basename(guidePath), error: error instanceof Error ? error.message : String(error) });
     setupWindow?.close();
   });
+}
+
+function installSetupHandlers(): void {
+  if (setupHandlersInstalled) return;
+  setupHandlersInstalled = true;
+  ipcMain.handle("brainpet:setup-confirm-bridge", (event) => {
+    if (!setupEnabled || !setupWindow || setupWindow.isDestroyed() || event.sender !== setupWindow.webContents) throw new Error("BrainPet setup window is unavailable.");
+    confirmBrainPetBridge();
+    info("ui", "BrainPet Bridge confirmation recorded");
+    return getSetupReceipt();
+  });
+}
+
+function getSetupReceipt() {
+  return createBrainPetSetupReceipt({ packaged: app.isPackaged, markerValid: readValidBrainPetInstallMarker() !== null, state: getBrainPetInstallationState() });
 }

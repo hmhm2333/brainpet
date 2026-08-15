@@ -83,12 +83,21 @@ generic scene contract, clicks both generic input targets, crashes the renderer,
 then proves a fresh stage can open and close without an invalid Host transition.
 
 BrainPet's Agent bridge has a separate native release gate. Run the Rust unit
-tests from `native/brainpet-hook/`, build all four Windows/macOS target binaries,
+tests from `native/brainpet-hook/`, build all six Windows/macOS/Linux target binaries,
 copy them into the Codex plugin's `bin/<platform>/` folders, then run
 `pnpm brainpet:bridge:validate-release`. The validator rejects missing,
-symlinked, implausibly sized, or non-executable helpers and hook definitions
+symlinked, implausibly sized, wrong-format, wrong-architecture, or non-executable helpers and hook definitions
 that directly depend on Node. A passing JavaScript fallback test is development
 evidence only and is not sufficient for a public bridge release.
+
+`pnpm brainpet:release:test` validates both machine-readable contracts, all six
+private/public package invocations, Bridge assembly and PE/Mach-O/ELF headers.
+For a real Windows private runtime, build `package:brainpet`, then run
+`validate-brainpet-package.mjs --target windows-x64 --mode private-test`. The
+validator checks the executable header, embedded `app.asar` product identity,
+absence of OpenPets official plugins and bundled Bridge source. Public mode also
+requires a valid platform signature. The rollback Electron smoke sends a real
+`agent.activity` event and must observe an IPC rejection plus no lifecycle UI.
 
 M4 host-action coverage lives in
 `agent-companion-action-broker.test.ts` and

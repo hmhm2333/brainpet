@@ -1,33 +1,32 @@
-import { app, powerMonitor } from "electron";
-import { existsSync } from "node:fs";
-import { basename, delimiter, join, resolve } from "node:path";
+import { app } from "electron";
+import { basename, join } from "node:path";
 
 import { completeOnboarding, getAppStateSnapshot, initializeAppState, isOnboardingCompleted, releaseStartupInstallLock } from "./app-state.js";
 import { createAppIcon } from "./assets.js";
 import { setLocaleFromPreference, t } from "./i18n/index.js";
-import { applyExternalPetReaction, applyExternalPetSay, getDefaultPetPaused, installDefaultPetDisplayHandlers, isDefaultPetVisible, shouldOpenDefaultPetOnLaunch, showDefaultPet } from "./default-pet-controller.js";
+import { applyExternalPetSay, installDefaultPetDisplayHandlers, shouldOpenDefaultPetOnLaunch, showDefaultPet } from "./default-pet-controller.js";
 import { installAppLifecycle } from "./lifecycle.js";
-import { initializeLanController, isDefaultPetAwayForLan, startLanController } from "./lan-controller.js";
-import { debug, error as logError, getLogFilePath, info, initializeLogger, warn } from "./logger.js";
-import { startLocalIpcServer } from "./local-ipc.js";
-import { initializeRemoteControlService } from "./remote-control-service.js";
-import { openPetsRemoteVersion, type RemoteStatusSnapshot } from "./remote-control-protocol.js";
-import { startDevPluginWatcher } from "./plugin-dev-watcher.js";
-import { createElectronPluginHostCapabilities } from "./plugin-host-capabilities.js";
-import { defaultPluginPetApi } from "./plugin-pet-api.js";
-import { initializePluginPlatformSettings } from "./plugin-platform-settings.js";
-import { ElectronPluginJsHost } from "./plugin-js-host.js";
-import { initializePluginService } from "./plugin-service.js";
-import { createAppTray, refreshTrayMenu } from "./tray.js";
+import { error as logError, getLogFilePath, info, initializeLogger, warn } from "./logger.js";
+import { configureLocalIpcCapabilities, startLocalIpcServer } from "./local-ipc.js";
+import { configureAppTray, createAppTray, refreshTrayMenu } from "./tray.js";
 import { checkForGitHubReleaseUpdate } from "./update-checker.js";
-import { installInternalUiHandlers, installInternalUiProtocol } from "./windows.js";
 import { initializeBrainPetHost } from "./brainpet/host.js";
 import { initializeAgentLifecycleController } from "./agent-lifecycle-controller.js";
 import { isBrainPetFeatureEnabled, resolveDesktopDistributionSettings, shouldUseIsolatedBrainPetUserData } from "./distribution-profile.js";
-import { createBrainPetInstallMarker, writeBrainPetInstallMarker } from "./brainpet-install-marker.js";
+import { createBrainPetInstallMarker, resolveBrainPetMarkerExecutablePath, writeBrainPetInstallMarker } from "./brainpet-install-marker.js";
 import { shouldShowBrainPetFirstRunGuide } from "./brainpet-first-run.js";
+import { resolveDesktopComposition } from "./composition/desktop-composition.js";
+import { initializeBrainPetInstallationState, recordBrainPetRuntimeReady } from "./brainpet-installation-state.js";
+import { configurePetWindowCapabilities } from "./pet-window.js";
+import { configureLocalIpcDistributionProfile } from "./local-ipc-paths.js";
+import { configureBrainPetSetupGuide } from "./brainpet-setup-guide.js";
 
-const distribution = resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath));
+const distribution = resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath), { packaged: app.isPackaged });
+const brainPetFeatureEnabled = isBrainPetFeatureEnabled(distribution, process.env.BRAINPET_ENABLED);
+const composition = resolveDesktopComposition(distribution, brainPetFeatureEnabled);
+configurePetWindowCapabilities({ brainPetSurface: composition.capabilities.brainPetHost, productName: distribution.displayName });
+configureLocalIpcDistributionProfile(distribution.profile);
+configureBrainPetSetupGuide({ enabled: composition.capabilities.brainPetHost });
 if (shouldUseIsolatedBrainPetUserData(distribution.profile, process.argv)) {
   app.setPath("userData", join(app.getPath("appData"), "BrainPet"));
 }
@@ -108,117 +107,45 @@ if (!gotSingleInstanceLock) {
     }
 
     initializeAppState();
-    if (distribution.profile === "brainpet" && app.isPackaged) {
-      const markerPath = writeBrainPetInstallMarker(createBrainPetInstallMarker({ executablePath: process.execPath, appVersion: app.getVersion(), channel: process.env.BRAINPET_RELEASE_CHANNEL }));
+    if (composition.capabilities.brainPetHost) initializeBrainPetInstallationState(app.getPath("userData"));
+    if (composition.capabilities.brainPetInstallMarker && app.isPackaged) {
+      const markerPath = writeBrainPetInstallMarker(createBrainPetInstallMarker({ executablePath: resolveBrainPetMarkerExecutablePath(process.execPath), appVersion: app.getVersion(), channel: process.env.BRAINPET_RELEASE_CHANNEL }));
       info("app", "BrainPet install marker refreshed", { markerPath, channel: process.env.BRAINPET_RELEASE_CHANNEL ?? "stable" });
+      recordBrainPetRuntimeReady(app.getVersion());
     }
     // Resolve the UI language before any window or the tray is built.
     setLocaleFromPreference(getAppStateSnapshot().preferences.locale);
-    initializeLanController();
-    const remoteControlService = initializeRemoteControlService({
-      statePath: join(app.getPath("userData"), "openpets-remote-control.json"),
-      getStatusSnapshot: getRemoteStatusSnapshot,
-      isDefaultPetAway: isDefaultPetAwayForLan,
-      applyReaction: (reaction) => ({ shown: applyExternalPetReaction(reaction).shown }),
-      applySay: (message, reaction) => ({ shown: applyExternalPetSay(message, reaction).shown }),
-      log: (message) => info("remote", message),
-    });
-    installInternalUiProtocol();
-    installInternalUiHandlers();
+    const openPetsRuntime = composition.id === "openpets"
+      ? (await import("./composition/openpets-runtime.js")).prepareOpenPetsRuntime(distribution)
+      : null;
+    configureAppTray({ distribution, capabilities: composition.capabilities });
     createAppTray();
     installDefaultPetDisplayHandlers();
-    initializeAgentLifecycleController();
-    const brainPetFeatureEnabled = isBrainPetFeatureEnabled(distribution, process.env.OPENPETS_BRAINPET_ENABLED);
-    if (brainPetFeatureEnabled) initializeBrainPetHost();
+    configureLocalIpcCapabilities({ agentLifecycle: composition.capabilities.agentLifecycle });
+    if (composition.capabilities.agentLifecycle) initializeAgentLifecycleController();
+    if (composition.capabilities.brainPetHost) initializeBrainPetHost();
     await startLocalIpcServer();
     releaseStartupInstallLock();
-    const roots = parseDevPluginEnv(process.env.OPENPETS_DEV_PLUGIN_ROOTS);
-    const paths = parseDevPluginEnv(process.env.OPENPETS_DEV_PLUGIN_PATHS);
-    const devPluginMode = roots.length > 0 || paths.length > 0;
-    initializePluginPlatformSettings(app.getPath("userData"));
-    const pluginCapabilities = createElectronPluginHostCapabilities(app.getPath("userData"));
-    let devPluginWatcher: ReturnType<typeof startDevPluginWatcher> | undefined;
-    const pluginService = initializePluginService(app.getPath("userData"), defaultPluginPetApi, app.getVersion(), new ElectronPluginJsHost(), writePluginRuntimeLog, process.env.OPENPETS_DISABLE_PLUGIN_CATALOG === "1" || devPluginMode, resolveBundledOfficialPluginRoots(), !devPluginMode && distribution.seedBundledPlugins, pluginCapabilities, undefined, (sourcePath) => devPluginWatcher?.addPaths([sourcePath]), (sourcePath) => devPluginWatcher?.removePath(sourcePath));
-    // Wall-clock schedules (daily/cron/at) re-arm deterministically after sleep.
-    powerMonitor.on("resume", () => pluginService.runtime.resyncSchedules());
-    const showBrainPetFirstRunGuide = shouldShowBrainPetFirstRunGuide({ profile: distribution.profile, packaged: app.isPackaged, featureEnabled: brainPetFeatureEnabled, onboardingCompleted: isOnboardingCompleted() });
+    const showBrainPetFirstRunGuide = composition.capabilities.brainPetOnboarding
+      && shouldShowBrainPetFirstRunGuide({ profile: distribution.profile, packaged: app.isPackaged, featureEnabled: brainPetFeatureEnabled, onboardingCompleted: isOnboardingCompleted() });
     if (shouldOpenDefaultPetOnLaunch() || showBrainPetFirstRunGuide) {
       showDefaultPet();
     }
     if (showBrainPetFirstRunGuide) {
-      completeOnboarding();
-      setTimeout(() => applyExternalPetSay(t("brainpet.firstRun.guide"), "waving"), 650);
+      setTimeout(() => {
+        const result = applyExternalPetSay(t("brainpet.firstRun.guide"), "waving");
+        if (result.shown) completeOnboarding();
+      }, 650);
     }
-    startLanController();
-    try {
-      await remoteControlService.start();
-    } catch {
-      warn("remote", "remote control listener unavailable");
-    }
+    await openPetsRuntime?.startAfterLocalIpc();
     refreshTrayMenu();
-    void (async () => {
-      const service = pluginService;
-      await service.start();
-      const persistedPaths = service.getLocalSourcePaths();
-      for (const path of paths) {
-        const result = await service.loadLocalPath(path, { autoApprove: true });
-        if (!result.ok) logError("app", "dev plugin path load failed", new Error(result.error));
-      }
-      for (const path of persistedPaths.filter((path) => !paths.includes(path))) {
-        const result = await service.loadLocalPath(path, { autoApprove: true });
-        if (!result.ok) logError("app", "persisted local plugin load failed", new Error(result.error));
-      }
-      if (roots.length > 0) {
-        const results = await service.loadLocalRoots(roots, { autoApprove: true, pruneStale: true });
-        for (const result of results) if (!result.ok) logError("app", "dev plugin root load failed", new Error(`${result.path}: ${result.error}`));
-      }
-      const watchPaths = Array.from(new Set([...paths, ...service.getLocalSourcePaths()]));
-      if (devPluginMode || watchPaths.length > 0) devPluginWatcher = startDevPluginWatcher(service, roots, watchPaths);
-    })().catch((error) => logError("app", "plugin service startup failed", error));
     void checkForGitHubReleaseUpdate().then(() => refreshTrayMenu());
-    info("app", "startup complete", { logFile: getLogFilePath(), openDefaultPetOnLaunch: shouldOpenDefaultPetOnLaunch() });
-    console.log("OpenPets desktop shell ready.");
+    info("app", "startup complete", { composition: composition.id, capabilities: composition.capabilities, logFile: getLogFilePath(), openDefaultPetOnLaunch: shouldOpenDefaultPetOnLaunch() });
+    console.log(`${distribution.displayName} desktop shell ready.`);
   }).catch((error: unknown) => {
     releaseStartupInstallLock();
     logError("app", "startup failed", error);
     console.error("Failed to start OpenPets desktop shell.", error);
     app.quit();
   });
-}
-
-function parseDevPluginEnv(value: string | undefined): string[] {
-  if (!value) return [];
-  return value.split(delimiter).map((item) => item.trim()).filter(Boolean).map((item) => resolve(item));
-}
-
-function resolveBundledOfficialPluginRoots(): string[] {
-  const candidates = [join(process.resourcesPath, "plugins", "official"), resolve(process.cwd(), "plugins", "official"), resolve(app.getAppPath(), "..", "..", "plugins", "official")];
-  return Array.from(new Set(candidates.filter((candidate) => existsSync(candidate))));
-}
-
-function writePluginRuntimeLog(level: "debug" | "info" | "warn" | "error", message: string, fields?: Record<string, unknown>): void {
-  if (level === "error") logError("plugin", message, fields);
-  else if (level === "info") info("plugin", message, fields);
-  else if (level === "warn") warn("plugin", message, fields);
-  else debug("plugin", message, fields);
-}
-
-function getRemoteStatusSnapshot(): RemoteStatusSnapshot {
-  const state = getAppStateSnapshot();
-  const configuredDefault = state.pets.installed.find((pet) => pet.id === state.preferences.defaultPetId);
-  const defaultPet = configuredDefault && !configuredDefault.broken ? configuredDefault : state.pets.installed.find((pet) => pet.builtIn) ?? state.pets.installed[0];
-  return {
-    ok: true,
-    appRunning: true,
-    protocolVersion: openPetsRemoteVersion,
-    defaultPet: {
-      id: defaultPet?.id ?? "builtin",
-      builtIn: defaultPet?.builtIn === true,
-      broken: defaultPet?.broken === true,
-    },
-    paused: getDefaultPetPaused(),
-    defaultPetVisible: isDefaultPetVisible(),
-    openDefaultPetOnLaunch: state.preferences.openDefaultPetOnLaunch,
-    speechBubblesEnabled: state.preferences.speechBubblesEnabled,
-  };
 }

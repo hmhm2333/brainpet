@@ -15,7 +15,7 @@
 | 单调输入时间与暂停剔除 | `performance.now()`、LogicalSessionClock；失焦 Electron smoke 与单元测试 | 通过 |
 | 固定 seed 可重复 | runtime、两款 task 与 Stage Exerciser 确定性测试 | 通过 |
 | renderer 异常不拖垮宿主 | Electron `Page.crash` 后宠物 target 仍存在 | 通过 |
-| feature flag 完全回退 | `OPENPETS_BRAINPET_ENABLED=0` 时无热点、无 Stage | 通过 |
+| feature flag 完全回退 | `BRAINPET_ENABLED=0` 时无热点、无 Stage | 通过 |
 | 第二模块不改基础设施 | Stage Exerciser、cargo-signal、pack-refresh 通过同一 registry/contract | 通过 |
 | 状态机、生命周期、结果与清理测试 | 原 42 项 BrainPet 专项测试 + 4 项 distribution/idle timing 子测试 + Electron smoke/stress | 通过；全量上游套件受 symlink 权限阻塞 |
 
@@ -46,7 +46,7 @@
 - 目标舞台 640×360；本机 150% Windows 缩放实测内容区 640×360。修复后源码宠物可用约 618ms、舞台约 178ms；最终 unpacked 包宠物可用约 579ms、舞台约 157ms。
 - 宠物移动后舞台跟随；失焦自动暂停/恢复已在源码 smoke 覆盖；按钮可点击区域 30×30。BrainPet Windows 档使用原生窗口 shape，修复透明窗口首击竞态。
 - 介绍、Stage Exerciser、Go/No-Go、持续更新、结算页、unpacked 和 portable package 均有 Electron 实机截图留在本地 `output/playwright`（该目录不进入 Git）；最终视觉检查未发现文字/按钮溢出、默认 HTML 控件或像素缩放模糊。
-- 正常私测入口改为 `apps/desktop/dist-electron/win-unpacked/brainpet.exe`。旧 portable 包每次首次展开约 57 秒，只保留为传输/诊断形式，不再作为体验或启动性能证据；其旧哈希也不代表本轮修复后的代码。
+- 正常私测入口为 `apps/desktop/dist-brainpet/private-test/win-unpacked/brainpet.exe`。portable 包只保留为传输/诊断形式，不作为启动性能证据。
 - 空闲 BrainPet 轻量档实测 4 个进程、约 516–548MB 工作集、304–336MB 私有内存；完整 OpenPets 默认插件档为 7 个进程、约 802MB 工作集、401MB 私有内存。轻量档减少 3 个插件 renderer，但 Electron 底座仍然明显，不宣称原生桌宠级占用。
 - 空闲 6 帧不再平均摊在 5.5 秒内；首帧保持 78%，眨眼帧集中播放，修复视觉上的慢动作卡顿。
 - 2026-08-14 用户在最终 unpacked 包上人工确认：宠物动画卡顿已消失，单击 `B` 可正常弹出训练舞台；该确认只放行入口与舞台基础设施，不代表两款游戏设计通过。
@@ -75,6 +75,6 @@
 
 ## 回退
 
-1. 临时回退：启动前设置 `OPENPETS_BRAINPET_ENABLED=0`，宠物 HTML 不渲染训练热点，Host 不注册 BrainPet IPC/窗口。
+1. 临时回退：启动前设置 `BRAINPET_ENABLED=0`，宠物 HTML 不渲染训练热点，Host 不注册 BrainPet IPC/窗口。
 2. 私测目录回退：关闭私测版，重新运行原 OpenPets；BrainPet 仅写用户数据目录下的 `brainpet-state.json`。
 3. 代码回退：BrainPet 变更保持独立 commit，可从 `codex/foundation` 回退对应 commit，不改写保存的 upstream ref。

@@ -17,6 +17,7 @@ export const ptBR: Partial<Messages> = {
   "tray.settings": "Configurações...",
   "tray.openLogsFolder": "Abrir pasta de logs...",
   "tray.quit": "Sair do OpenPets",
+  "tray.quitProduct": "Sair do {name}",
 
   // --- Shared ---
   "common.latest": "mais recente",

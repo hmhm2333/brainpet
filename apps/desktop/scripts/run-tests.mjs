@@ -12,7 +12,7 @@ import { readdir } from "node:fs/promises";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "..");
 
-const preloadChecks = ["control-center-preload.cjs", "pet-preload.cjs", "brainpet-preload.cjs", "plugin-sdk-preload.cjs", "panel-preload.cjs"];
+const preloadChecks = ["control-center-preload.cjs", "pet-preload.cjs", "brainpet-preload.cjs", "brainpet-setup-preload.cjs", "plugin-sdk-preload.cjs", "panel-preload.cjs"];
 const distChecks = [
   "dist/check-opencode-desktop-setup.js",
   "dist/check-cursor-desktop.js",

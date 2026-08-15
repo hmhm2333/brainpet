@@ -1,8 +1,8 @@
 # BrainPet Privacy
 
-BrainPet is local-first. The desktop runtime stores pet preferences, training progress, and bounded Agent activity on the user's device. It does not upload prompts, transcripts, workspace paths, tool input, tool output, or response text.
+BrainPet is local-first. The desktop runtime stores pet preferences, training progress, and bounded Agent activity on the user's device. It does not upload prompts, transcripts, the current working directory (cwd), tool input, tool output, or response text.
 
-The Codex Bridge sends only a normalized lifecycle state, an ephemeral session identifier, a monotonic sequence, a timestamp, and a short host-provided status category to the local BrainPet IPC endpoint. It performs no network request. If the runtime is missing, stopped by policy, or cannot be authenticated, the Bridge exits successfully without changing the Agent task.
+The Codex Bridge sends only the normalized Agent identifier, an ephemeral session identifier, an optional ephemeral turn identifier, lifecycle state, timestamp, declared lifecycle capability, and (only for permission hooks) the request kind to the local BrainPet IPC endpoint. It performs no network request. If the runtime is missing, stopped by policy, or cannot be authenticated, the Bridge exits successfully without changing the Agent task.
 
 Checking for BrainPet updates makes a request to the public GitHub Releases API. No analytics or advertising SDK is included.
 

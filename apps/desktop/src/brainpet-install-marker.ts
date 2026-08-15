@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, posix, win32 } from "node:path";
 
@@ -32,6 +32,17 @@ export function normalizeBrainPetReleaseChannel(value: unknown): BrainPetRelease
   return brainPetReleaseChannels.find((channel) => channel === value) ?? "stable";
 }
 
+export function resolveBrainPetMarkerExecutablePath(
+  executablePath: string,
+  platform: NodeJS.Platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  if (platform !== "linux" || typeof environment.APPIMAGE !== "string") return executablePath;
+  const appImagePath = environment.APPIMAGE;
+  if (!posix.isAbsolute(appImagePath) || /[\0\r\n]/.test(appImagePath)) return executablePath;
+  return isAllowedBrainPetExecutableName(posix.basename(appImagePath), platform) ? appImagePath : executablePath;
+}
+
 export function createBrainPetInstallMarker(input: {
   readonly executablePath: string;
   readonly appVersion: string;
@@ -58,15 +69,21 @@ export function validateBrainPetInstallMarker(value: unknown, platform: NodeJS.P
   if (!isRecord(value) || value.schemaVersion !== brainPetInstallMarkerVersion || value.product !== "brainpet") throw new TypeError("BrainPet install marker identity is invalid.");
   const pathApi = platform === "win32" ? win32 : posix;
   if (typeof value.executablePath !== "string" || !pathApi.isAbsolute(value.executablePath) || value.executablePath.length > 4096 || /[\0\r\n]/.test(value.executablePath)) throw new TypeError("BrainPet executable path is invalid.");
-  const executableName = pathApi.basename(value.executablePath).toLowerCase();
-  const allowedNames = platform === "win32" ? ["brainpet.exe"] : platform === "linux" ? ["brainpet", "brainpet.appimage"] : ["brainpet"];
-  if (!allowedNames.includes(executableName)) throw new TypeError("BrainPet executable name is invalid.");
+  const executableName = pathApi.basename(value.executablePath);
+  if (!isAllowedBrainPetExecutableName(executableName, platform)) throw new TypeError("BrainPet executable name is invalid.");
   if (typeof value.appVersion !== "string" || value.appVersion.length < 1 || value.appVersion.length > 64 || /[\0\r\n]/.test(value.appVersion)) throw new TypeError("BrainPet app version is invalid.");
   if (!brainPetReleaseChannels.includes(value.channel as BrainPetReleaseChannel)) throw new TypeError("BrainPet release channel is invalid.");
   if (value.platform !== platform) throw new TypeError("BrainPet install marker platform is invalid.");
   if (typeof value.arch !== "string" || !/^[a-z0-9_-]{2,32}$/i.test(value.arch)) throw new TypeError("BrainPet architecture is invalid.");
   if (typeof value.writtenAt !== "number" || !Number.isSafeInteger(value.writtenAt) || value.writtenAt <= 0) throw new TypeError("BrainPet install marker timestamp is invalid.");
   return value as unknown as BrainPetInstallMarker;
+}
+
+function isAllowedBrainPetExecutableName(value: string, platform: NodeJS.Platform): boolean {
+  const executableName = value.toLowerCase();
+  if (platform === "win32") return executableName === "brainpet.exe";
+  if (platform === "linux") return executableName === "brainpet" || /^brainpet(?:[-_.][a-z0-9._-]+)?\.appimage$/i.test(executableName);
+  return executableName === "brainpet";
 }
 
 export function writeBrainPetInstallMarker(marker: BrainPetInstallMarker, path = getBrainPetInstallMarkerPath()): string {
@@ -79,6 +96,22 @@ export function writeBrainPetInstallMarker(marker: BrainPetInstallMarker, path =
   renameSync(temporaryPath, path);
   try { chmodSync(path, 0o600); } catch { /* best effort on Windows */ }
   return path;
+}
+
+export function readValidBrainPetInstallMarker(
+  path = getBrainPetInstallMarkerPath(),
+  platform: NodeJS.Platform = process.platform,
+): BrainPetInstallMarker | null {
+  try {
+    const markerStat = lstatSync(path);
+    if (!markerStat.isFile() || markerStat.isSymbolicLink()) return null;
+    const marker = validateBrainPetInstallMarker(JSON.parse(readFileSync(path, "utf8")), platform);
+    const executableStat = lstatSync(marker.executablePath);
+    if (!executableStat.isFile() || executableStat.isSymbolicLink()) return null;
+    return marker;
+  } catch {
+    return null;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

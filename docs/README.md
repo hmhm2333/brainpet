@@ -51,6 +51,12 @@ Docs here are the *narrative* layer on top of those maps.
 - **[brainpet-primary-companion-plan.md](brainpet-primary-companion-plan.md)** -
   the current Primary Companion iteration: native-pet parity tiers, provider
   capabilities, auto-wake, action safety, cross-platform gates, and rollback.
+- **[brainpet-m5.1-architecture-hardening.md](brainpet-m5.1-architecture-hardening.md)** -
+  the M5.1 composition-root, rollback, protocol, installation-state, and real
+  release validation hardening required before the next product milestone.
+- **[brainpet-codex-local-install.md](brainpet-codex-local-install.md)** - the
+  current-machine private-test install, Codex Bridge upgrade, verification, and
+  rollback procedure.
 - **[brainpet-gonogo-game-spec.md](brainpet-gonogo-game-spec.md)** - the target
   Go/No-Go game, pet-to-reaction-zone interaction rig, independent placement,
   scoring V2, telemetry, and implementation acceptance criteria.

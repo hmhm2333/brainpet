@@ -6,6 +6,7 @@ on:
     paths:
       - "apps/desktop/**"
       - "integrations/**"
+      - "config/**"
       - "native/brainpet-hook/**"
       - "scripts/brainpet-**"
       - ".github/workflows/brainpet-portability-gate.yml"
@@ -34,7 +35,7 @@ jobs:
       matrix:
         include:
           - { id: windows-x64, os: windows-latest, rust: x86_64-pc-windows-msvc, file: brainpet-hook.exe }
-          - { id: windows-arm64, os: windows-latest, rust: aarch64-pc-windows-msvc, file: brainpet-hook.exe }
+          - { id: windows-arm64, os: windows-11-arm, rust: aarch64-pc-windows-msvc, file: brainpet-hook.exe }
           - { id: macos-x64, os: macos-15-intel, rust: x86_64-apple-darwin, file: brainpet-hook }
           - { id: macos-arm64, os: macos-14, rust: aarch64-apple-darwin, file: brainpet-hook }
           - { id: linux-x64, os: ubuntu-latest, rust: x86_64-unknown-linux-gnu, file: brainpet-hook }
@@ -47,6 +48,7 @@ jobs:
           targets: ${{ matrix.rust }}
       - run: cargo test --manifest-path native/brainpet-hook/Cargo.toml --target ${{ matrix.rust }}
       - run: cargo build --release --manifest-path native/brainpet-hook/Cargo.toml --target ${{ matrix.rust }}
+      - run: node scripts/validate-native-helper.mjs ${{ matrix.id }} native/brainpet-hook/target/${{ matrix.rust }}/release/${{ matrix.file }}
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.id }}
@@ -58,12 +60,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { id: windows-x64, os: windows-latest, platform: windows, arch: x64, private: --unsigned-private }
-          - { id: windows-arm64, os: windows-latest, platform: windows, arch: arm64, private: --unsigned-private }
-          - { id: macos-x64, os: macos-15-intel, platform: macos, arch: x64, private: "" }
-          - { id: macos-arm64, os: macos-14, platform: macos, arch: arm64, private: "" }
-          - { id: linux-x64, os: ubuntu-latest, platform: linux, arch: x64, private: "" }
-          - { id: linux-arm64, os: ubuntu-24.04-arm, platform: linux, arch: arm64, private: "" }
+          - { id: windows-x64, os: windows-latest, platform: windows, arch: x64 }
+          - { id: windows-arm64, os: windows-11-arm, platform: windows, arch: arm64 }
+          - { id: macos-x64, os: macos-15-intel, platform: macos, arch: x64 }
+          - { id: macos-arm64, os: macos-14, platform: macos, arch: arm64 }
+          - { id: linux-x64, os: ubuntu-latest, platform: linux, arch: x64 }
+          - { id: linux-arm64, os: ubuntu-24.04-arm, platform: linux, arch: arm64 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -76,12 +78,12 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @open-pets/desktop build
-      - run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target dir ${{ matrix.private }}
-      - run: node apps/desktop/scripts/validate-brainpet-package.mjs --target ${{ matrix.id }}
+      - run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode private-test
+      - run: node apps/desktop/scripts/validate-brainpet-package.mjs --target ${{ matrix.id }} --mode private-test
       - uses: actions/upload-artifact@v4
         with:
           name: brainpet-runtime-${{ matrix.id }}
-          path: apps/desktop/dist-brainpet/
+          path: apps/desktop/dist-brainpet/private-test/
           if-no-files-found: error
 
   assemble-bridge:

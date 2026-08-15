@@ -1,11 +1,10 @@
-export const brainPetReleaseTargets = Object.freeze([
-  { id: "windows-x64", platform: "windows", electronPlatform: "win", arch: "x64", rustTarget: "x86_64-pc-windows-msvc", helperName: "brainpet-hook.exe" },
-  { id: "windows-arm64", platform: "windows", electronPlatform: "win", arch: "arm64", rustTarget: "aarch64-pc-windows-msvc", helperName: "brainpet-hook.exe" },
-  { id: "macos-x64", platform: "macos", electronPlatform: "mac", arch: "x64", rustTarget: "x86_64-apple-darwin", helperName: "brainpet-hook" },
-  { id: "macos-arm64", platform: "macos", electronPlatform: "mac", arch: "arm64", rustTarget: "aarch64-apple-darwin", helperName: "brainpet-hook" },
-  { id: "linux-x64", platform: "linux", electronPlatform: "linux", arch: "x64", rustTarget: "x86_64-unknown-linux-gnu", helperName: "brainpet-hook" },
-  { id: "linux-arm64", platform: "linux", electronPlatform: "linux", arch: "arm64", rustTarget: "aarch64-unknown-linux-gnu", helperName: "brainpet-hook" },
-]);
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+export const brainPetDistributionContract = Object.freeze(JSON.parse(readFileSync(resolve(root, "config", "brainpet-distribution.json"), "utf8")));
+export const brainPetReleaseTargets = Object.freeze(brainPetDistributionContract.releaseTargets.map((target) => Object.freeze({ ...target })));
 
 export const brainPetReleaseTargetIds = Object.freeze(brainPetReleaseTargets.map((target) => target.id));
 

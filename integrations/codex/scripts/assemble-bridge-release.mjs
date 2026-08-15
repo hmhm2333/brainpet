@@ -5,7 +5,8 @@ import { chmodSync, cpSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFil
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { brainPetReleaseTargets } from "../../../scripts/brainpet-release-contract.mjs";
+import { brainPetDistributionContract, brainPetReleaseTargets } from "../../../scripts/brainpet-release-contract.mjs";
+import { assertBrainPetBinary } from "../../../scripts/brainpet-binary-format.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const sourcePluginRoot = resolve(scriptDir, "..", "plugins", "brainpet-codex-bridge");
@@ -36,9 +37,10 @@ export function assembleBridgeRelease({ artifactsRoot, outputRoot }) {
     cpSync(source, destination);
     if (target.platform !== "windows") chmodSync(destination, 0o755);
     const bytes = readFileSync(destination);
+    assertBrainPetBinary(bytes, target, `Bridge helper ${target.id}`);
     files.push({ target: target.id, path: `bin/${target.id}/${target.helperName}`, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") });
   }
-  const receipt = { schemaVersion: 1, bridgeVersion: "0.2.0", createdAt: new Date().toISOString(), files };
+  const receipt = { schemaVersion: 1, bridgeVersion: brainPetDistributionContract.bridge.version, createdAt: new Date().toISOString(), files };
   writeFileSync(join(output, "brainpet-release.json"), `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
   return receipt;
 }

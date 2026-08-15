@@ -1,6 +1,6 @@
 # BrainPet 安装与公开发行方案
 
-> 状态：M5 发行基础设施代码完成；签名、公证、公开目录提交和六平台实机验证仍是发布门。当前个人 marketplace 与 Node hook 只用于开发验证，不是最终用户安装方案。
+> 状态：M5.1 发行加固代码完成，Windows x64 私测安装包已生成并通过打包后 runtime smoke；签名、公证、公开目录提交、六平台 CI 和真实 Codex 信任仍是发布门。Node hook 仅是源码/私测回退，不是公开发行依赖。
 
 主宠替代层的分期、Codex 原生控件覆盖和本轮验收门见
 `docs/brainpet-primary-companion-plan.md`。
@@ -63,17 +63,18 @@ brainpet-codex-bridge/
     └── linux-arm64/brainpet-hook
 ```
 
-Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discovery 发送一次本机 IPC。热路径连接上限为 400ms；若 runtime 未运行，helper 会读取 per-user 安装标记，验证它只指向当前平台的 BrainPet 可执行文件，启动 runtime，并在总计最多 2.5 秒内等待首个 IPC。它不启动游戏、不访问网络、不写用户任务内容。源码位于 `native/brainpet-hook/`，同一份 Rust 代码构建 Windows、macOS、Linux 的 x64/arm64 六个目标。开发源码包允许在原生二进制缺失时回退到本机 Node Bridge；公开包的验证门必须确认对应平台 helper 存在，不能依赖该回退，更不能下载并执行网络脚本。
+Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discovery 发送一次本机 IPC。每次连接尝试最多 350ms；热连接、冷启动轮询和最终发送共享 2600ms 内部 deadline，为 Codex 的 3 秒 Hook 预算保留启动与退出余量。若 runtime 未运行，helper 会读取 per-user 安装标记，验证它只指向当前平台的 BrainPet 可执行文件后再启动。Linux AppImage 记录原始 `APPIMAGE` 路径，而不是临时挂载目录。它不启动游戏、不访问网络、不写用户任务内容。
 
-## M5 发行合同
+## M5.1 发行合同
 
-- `apps/desktop/electron-builder.brainpet.yml` 是 BrainPet 唯一独立桌面发行配置；不得再用命令行覆盖 OpenPets 身份拼装公开包。
-- `apps/desktop/scripts/brainpet-package.mjs` 只接受平台、架构、产物类型与私测未签名开关；`package:brainpet:matrix` 对六目标做无副作用 dry-run。
+- `config/brainpet-distribution.json` 是产品身份、Bridge 版本、deadline 与六平台目标矩阵的机器事实源。
+- Electron builder 分为 `electron-builder.brainpet.base.yml`、`electron-builder.brainpet.private.yml` 和 `electron-builder.brainpet.public.yml`。私测包进入 `dist-brainpet/private-test`；公开包缺签名/公证凭据时 fail closed。
+- `apps/desktop/scripts/brainpet-package.mjs` 只接受平台、架构、产物类型与 `private-test/public-release` 模式；`package:brainpet:matrix` 对六目标和两种模式做无副作用 dry-run。
 - `integrations/codex/scripts/assemble-bridge-release.mjs` 只从 CI helper 产物装配插件，并生成逐文件 SHA-256 回执。
 - `brainpet:bridge:validate-release` 是二进制发行门；源码 checkout 没有六个 helper 时失败是正确行为。`brainpet:release:test` 是本地源码与装配逻辑门，不替代签名或实机验证。
 - `.github/workflows/brainpet-portability-gate.yml` 构建六类 runtime/helper 私测产物，不发布 Release，也不把未签名包称为公开安装包。
 
-托盘“BrainPet 安装与恢复”页给出三类人工回执：runtime 标记是否存在、Bridge 是否已由用户在 Codex 内安装/信任、新任务是否已实际唤醒。升级导致 Hook hash 变化时必须重新确认；暂停或卸载 Bridge 不影响离线宠物与训练；卸载 runtime 会删除安装标记并让 Bridge 快速 no-op，但默认保留用户训练进度以便重装恢复。
+托盘“BrainPet 安装与恢复”页给出三类分离证据：runtime 标记与运行版本、用户明确确认已审核 Bridge、新任务是否真的送达首条 lifecycle。状态保存在 BrainPet 独立用户目录，Bridge 版本变化会转为重新确认。暂停或卸载 Bridge 不影响离线宠物与训练；卸载 runtime 会删除安装标记并让 Bridge 快速 no-op，但默认保留用户训练进度。
 
 BrainPet 与 OpenPets 使用独立 discovery 命名空间，避免两款应用同时运行时把 Agent 事件发错进程。macOS 使用 `~/Library/Application Support/BrainPet/runtime/ipc.json`，Windows 使用 `%APPDATA%\\BrainPet\\runtime\\ipc.json`，Linux 优先使用 `$XDG_RUNTIME_DIR/brainpet/ipc.json`。安装标记位于系统的 per-user BrainPet 配置目录；源码 checkout 在没有安装标记时才允许回退到 OpenPets discovery 供开发验证。各端使用相同的 `agent.activity` schema v1 和 discovery token。
 

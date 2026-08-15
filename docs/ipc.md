@@ -102,6 +102,13 @@ is absent or disconnected. It has no arbitrary shell or private-host IPC path.
 absolute path and an explicit `zip`/`folder` kind. `react()`/`say()`/
 `showMedia()` accept an optional `leaseId` to target a specific pet.
 
+`agent.activity` is capability-gated by the desktop composition. The OpenPets
+profile and enabled BrainPet profile accept it; the BrainPet rollback profile
+returns an `unsupported_method` error before validating or ingesting the event.
+This disables the Host behavior itself instead of hiding only renderer UI. The
+machine-readable lifecycle contract lives at
+`config/brainpet-agent-lifecycle.json`.
+
 Experimental multi-pet LAN mode converts only default-target `working`,
 `editing`, `running`, and `testing` reactions into a coarse authenticated
 `work` activity when the owner's pet is away and meeting another pet. The LAN

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "ipcMethod": "agent.activity",
+  "states": ["working", "waiting", "ready", "blocked", "idle"],
+  "requiredFields": ["schemaVersion", "agent", "sessionId", "state", "occurredAt", "capabilities"],
+  "optionalFields": ["turnId", "request"],
+  "privacyRejectedFields": ["prompt", "transcript", "cwd", "toolInput", "toolOutput", "response"]
+}

@@ -61,7 +61,7 @@ Agent providers
 ### 3.3 自动唤醒与收起
 
 - BrainPet 已运行：bridge 直接发送事件，主宠按状态显示。
-- BrainPet 未运行：bridge 读取安装标记，启动签名 runtime，等待最多 2.5 秒发现 IPC，再重发首个事件。
+- BrainPet 未运行：bridge 读取安装标记，启动签名 runtime；连接、冷启动轮询和重发共享 2.8 秒总 deadline。
 - runtime 使用单实例锁；同时到达的多个 hook 不会启动多份进程或多只宠物。
 - 用户选择“本次收起”：当前没有新事件时保持隐藏，下一个新的 Agent 事件可以再次唤醒。
 - 用户选择“暂停跟随 Agent”：持续隐藏且 bridge 不触发窗口，直到用户从托盘选择“唤醒 BrainPet”。
@@ -165,7 +165,7 @@ Codex 当前桥接只具备 `observeLifecycle`。在找到并验证公开的动�
 
 ### M2：Primary Companion 生命周期与自动唤醒
 
-实现状态（2026-08-14）：代码完成。BrainPet/OpenPets discovery 已隔离，打包 runtime 会写安装标记，Node 开发 bridge 与 Rust helper 源码均实现自动唤醒和 2.5 秒有界重试；Electron 单实例锁继续作为并发启动收敛门。当前 Windows 机器缺少 Rust 工具链，因此原生 helper 仍需在发布构建环境运行 `cargo test` 和四目标构建，不能据此标记公开发行通过。
+实现状态（2026-08-15）：代码完成。BrainPet/OpenPets discovery 已隔离，打包 runtime 会写安装标记，Node 开发 bridge 与 Rust helper 源码均使用 2.8 秒端到端 deadline；Electron 单实例锁继续作为并发启动收敛门。当前 Windows 机器缺少 Rust 工具链，因此原生 helper 仍需在六目标 CI 运行 `cargo test` 与真实构建，不能据此标记公开发行通过。
 
 - 将 lifecycle controller 输出改为单一主宠 presentation；
 - 新增“本次收起 / 暂停跟随 / 唤醒”状态机；
@@ -219,6 +219,12 @@ Codex 当前桥接只具备 `observeLifecycle`。在找到并验证公开的动�
 
 当前 provider 能力以 `integrations/brainpet-provider-support.json` 为唯一机器可读清单：Codex 仅将 lifecycle 标为 implemented；任务跳转、请求操作、消息和语音均保持 unavailable。Claude Code、WorkBuddy 与 DeepSeek Harness 只标 planned，不用“兼容”一词掩盖尚未完成的 adapter。
 
+### M5.1：产品边界与发行可靠性修复
+
+独立架构审查确认：task/runtime 核心内聚性较好，但 BrainPet 仍复用 OpenPets 完整 composition root，feature rollback、AppImage 冷唤醒、Bridge deadline、安装状态和真实产物验证尚不足以通过 M5 退出门。因此 M5 状态回退为“发行基础设施初版完成”，暂停进入下一产品里程碑，按 `docs/brainpet-m5.1-architecture-hardening.md` 完成修复。
+
+**退出门：** BrainPet/OpenPets 独立装配；完整回退；协议无漂移；Hook 端到端预算低于 2.8 秒；AppImage 可冷唤醒；六目标真实二进制格式/架构验证；Windows 本地安装、Codex 信任和原宠恢复均有回执。
+
 ## 7. 测试矩阵
 
 ### 自动测试
@@ -248,7 +254,7 @@ Codex 当前桥接只具备 `observeLifecycle`。在找到并验证公开的动�
 | 指标 | 目标 |
 | --- | --- |
 | 已运行时 hook 处理 | P95 < 100ms，hook 不等待 UI 动画 |
-| 冷唤醒到 IPC 可用 | P95 < 2.5s |
+| 冷唤醒到 IPC 可用 | P95 < 2.8s，且 Hook 总时限为 3s |
 | 冷唤醒到宠物可见 | P95 < 3s |
 | 空闲 CPU | 典型 < 1%，无持续渲染循环 |
 | 空闲工作集 | 先以现有基线测量；本轮不得增长超过基线 15% |

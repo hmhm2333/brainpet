@@ -206,7 +206,8 @@ assert.match(agentPetControllerSource, /function clearAgentPetLeaseState/, "agen
 assert.match(localIpcSource, /handleLastExplicitLease/, "agent pet dismissal must clear when the explicit lease group ends.");
 assert.match(localIpcSource, /clearAgentPetLeaseState\(petId\)/, "last explicit lease cleanup must reset dismissed agent pet state.");
 assert.match(localIpcSource, /reason: applied\.reason/, "IPC responses must report dismissed explicit pet events as not shown.");
-assert.match(updateCheckerSource, /alvinunreal\/openpets/, "GitHub release notice must check the public OpenPets repository.");
+assert.match(updateCheckerSource, /resolveDistributionUpdateRepository/, "GitHub release notice must select the repository from the packaged distribution identity.");
+assert.match(updateCheckerSource, /packaged:\s*app\.isPackaged/, "packaged update checks must prevent environment overrides from changing the release source.");
 assert.match(updateCheckerSource, /api\.github\.com\/repos\/\$\{githubRepository\}\/releases\/latest/, "update checker must use GitHub latest release API.");
 assert.match(updateCheckerSource, /shell\.openExternal\(url\)/, "update action must open the GitHub release page externally.");
 assert.match(traySource, /t\("tray\.updateAvailable"/, "tray menu must surface available updates.");

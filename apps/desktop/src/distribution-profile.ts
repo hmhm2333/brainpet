@@ -8,8 +8,13 @@ export interface DesktopDistributionSettings {
   readonly brainPetEnabled: boolean;
 }
 
-export function resolveDesktopDistributionSettings(appName: string, override?: string, executableName?: string): DesktopDistributionSettings {
-  const normalizedOverride = override?.trim().toLowerCase();
+export function resolveDesktopDistributionSettings(
+  appName: string,
+  override?: string,
+  executableName?: string,
+  options: { readonly packaged?: boolean } = {},
+): DesktopDistributionSettings {
+  const normalizedOverride = options.packaged ? undefined : override?.trim().toLowerCase();
   const hasBrainPetIdentity = [appName, executableName]
     .filter((value): value is string => typeof value === "string")
     .some((value) => value.trim().toLowerCase().replace(/\.exe$/, "") === "brainpet");
@@ -27,11 +32,21 @@ export function resolveDesktopDistributionSettings(appName: string, override?: s
 }
 
 export function isBrainPetFeatureEnabled(settings: DesktopDistributionSettings, override?: string): boolean {
-  if (override === "1") return true;
+  if (settings.profile !== "brainpet") return false;
   if (override === "0") return false;
   return settings.brainPetEnabled;
 }
 
 export function shouldUseIsolatedBrainPetUserData(profile: DesktopDistributionProfile, argv: readonly string[]): boolean {
   return profile === "brainpet" && !argv.some((argument) => argument === "--user-data-dir" || argument.startsWith("--user-data-dir="));
+}
+
+export function resolveDistributionUpdateRepository(
+  settings: DesktopDistributionSettings,
+  override?: string,
+  options: { readonly packaged?: boolean } = {},
+): string {
+  const developmentOverride = options.packaged ? undefined : override?.trim();
+  if (developmentOverride && /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i.test(developmentOverride)) return developmentOverride;
+  return settings.profile === "brainpet" ? "hmhm2333/brainpet" : "alvinunreal/openpets";
 }

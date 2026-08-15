@@ -26,6 +26,7 @@ BrainPet additionally carries a privacy-minimized Codex desktop lifecycle plugin
 | `apps/desktop/` | User-facing Electron companion app: tray UX, pet windows, pet installation, plugin automation/runtime, agent setup, update checks, and local IPC server. | [View Map](apps/desktop/codemap.md) |
 | `apps/desktop/contracts/` | Desktop public-boundary contract tests for catalog fixtures, local IPC protocol behavior, and plugin manifest schema validation. | [View Map](apps/desktop/contracts/codemap.md) |
 | `apps/desktop/src/` | Main-process service layer for app lifecycle, state, tray/windows, IPC routing, lease-managed agent pets, catalog installation, SDK v3 plugin subsystem, i18n, and editor integration. | [View Map](apps/desktop/src/codemap.md) |
+| `config/` | Machine-readable BrainPet distribution, platform matrix, Bridge deadline, and Agent lifecycle privacy contracts. | `config/brainpet-*.json` |
 | `apps/desktop/src/i18n/` | Desktop host i18n catalogs and localized reaction speech pools. | [View Map](apps/desktop/src/i18n/codemap.md) |
 | `apps/desktop/src/i18n/locales/` | Host UI locale dictionaries keyed by BCP-47 locale. | [View Map](apps/desktop/src/i18n/locales/codemap.md) |
 | `apps/desktop/src/i18n/reactions/` | Localized pet reaction message pools. | [View Map](apps/desktop/src/i18n/reactions/codemap.md) |
@@ -63,7 +64,7 @@ BrainPet additionally carries a privacy-minimized Codex desktop lifecycle plugin
 
 ## Architecture Flow
 
-1. The desktop app starts `apps/desktop/src/main.ts`, initializes app state, creates tray/task windows, and starts a local IPC server.
+1. The desktop app starts `apps/desktop/src/main.ts`, selects the OpenPets or BrainPet composition, initializes only that profile's services, creates tray/task windows, and starts a local IPC server.
 2. Agent integrations (`packages/claude`, `packages/opencode`, `packages/cursor`, `packages/pi`, and `packages/mcp`) configure agents or emit pet commands through `@open-pets/client`.
 3. The client discovers Unix sockets, Windows named pipes, or TCP endpoints for WSL cross-platform access.
 4. The desktop IPC server routes commands through lease-managed controllers so default and agent pets can coexist safely.

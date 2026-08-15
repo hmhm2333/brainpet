@@ -27,12 +27,12 @@ test("Codex bridge plugin owns the full local task lifecycle", () => {
   const desktopRoot = process.env.OPENPETS_DESKTOP_ROOT ?? resolve(process.cwd(), "apps/desktop");
   const pluginRoot = resolve(desktopRoot, "../..", "integrations/codex/plugins/brainpet-codex-bridge");
   const hooks = JSON.parse(readFileSync(resolve(pluginRoot, "hooks/hooks.json"), "utf8")) as { hooks: Record<string, unknown> };
-  assert.deepEqual(Object.keys(hooks.hooks).sort(), ["PermissionRequest", "PostToolUse", "SessionEnd", "Stop", "UserPromptSubmit"]);
+  assert.deepEqual(Object.keys(hooks.hooks).sort(), ["PermissionRequest", "PostToolUse", "SessionEnd", "Stop", "StopFailure", "UserPromptSubmit"]);
   const hookDefinitions = Object.values(hooks.hooks).flatMap((entries) => entries as Array<{ hooks: Array<{ command: string; commandWindows: string; timeout: number }> }>).flatMap((entry) => entry.hooks);
   assert.ok(hookDefinitions.every((hook) => hook.command.includes("bridge.sh")), "Unix hooks must route through the platform-and-architecture-aware launcher.");
   assert.ok(hookDefinitions.every((hook) => hook.commandWindows.includes("bridge.cmd")), "Windows hooks must route through the architecture-aware launcher.");
   assert.ok(hookDefinitions.every((hook) => !hook.command.startsWith("node ") && !hook.commandWindows.startsWith("node ")), "public hook definitions must not directly require Node.");
-  assert.ok(hookDefinitions.filter((hook) => hook.timeout > 1).every((hook) => hook.timeout * 1_000 > 2_500), "activity hooks must outlive the bounded runtime wake window.");
+  assert.ok(hookDefinitions.filter((hook) => hook.timeout > 1).every((hook) => hook.timeout * 1_000 >= 2_600), "activity hooks must contain the full Bridge deadline.");
   const unixLauncher = readFileSync(resolve(pluginRoot, "scripts/bridge.sh"), "utf8");
   assert.match(unixLauncher, /Darwin\) platform="macos"/);
   assert.match(unixLauncher, /Linux\) platform="linux"/);
@@ -54,6 +54,7 @@ test("Codex bridge resolves isolated BrainPet runtime paths and rejects arbitrar
     getRuntimePaths(platform: string, environment: Record<string, string>, homeDirectory: string): Record<string, string | null>;
     shouldWakeRuntime(event: { state: string }): boolean;
     validateInstallMarker(value: unknown, platform: string): { executablePath: string };
+    remainingDeadlineMs(deadline: number, now?: number): number;
   };
   const paths = runtime.getRuntimePaths("win32", { APPDATA: "C:\\Users\\test\\AppData\\Roaming", LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local" }, "C:\\Users\\test");
   assert.equal(paths.brainPetDiscovery, "C:\\Users\\test\\AppData\\Roaming\\BrainPet\\runtime\\ipc.json");
@@ -64,4 +65,7 @@ test("Codex bridge resolves isolated BrainPet runtime paths and rejects arbitrar
   const valid = { schemaVersion: 1, product: "brainpet", executablePath: "C:\\Program Files\\BrainPet\\brainpet.exe", appVersion: "1.0.0", channel: "stable", platform: "win32", arch: "x64", writtenAt: 123 };
   assert.equal(runtime.validateInstallMarker(valid, "win32").executablePath, valid.executablePath);
   assert.throws(() => runtime.validateInstallMarker({ ...valid, executablePath: "C:\\Windows\\System32\\cmd.exe" }, "win32"));
+  assert.equal(runtime.validateInstallMarker({ ...valid, platform: "linux", executablePath: "/home/test/BrainPet-3.4.0-x86_64.AppImage" }, "linux").executablePath, "/home/test/BrainPet-3.4.0-x86_64.AppImage");
+  assert.equal(runtime.remainingDeadlineMs(2_600, 2_250), 350);
+  assert.equal(runtime.remainingDeadlineMs(2_600, 2_700), 0);
 });

@@ -17,6 +17,7 @@ export const ja: Partial<Messages> = {
   "tray.settings": "設定...",
   "tray.openLogsFolder": "ログフォルダを開く...",
   "tray.quit": "OpenPets を終了",
+  "tray.quitProduct": "{name} を終了",
 
   // --- Shared ---
   "common.latest": "最新",

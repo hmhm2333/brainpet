@@ -3,6 +3,7 @@ import { debug, info } from "./logger.js";
 import { publishPluginAgentActivity } from "./plugin-events-source.js";
 import { applyAgentLifecycleEvent, deriveAgentLifecyclePresentation, pruneStaleAgentLifecycleEntries, type AgentLifecycleEntry, type AgentLifecycleEvent, type AgentLifecyclePresentation } from "./agent-lifecycle.js";
 import { agentCompanionActivityKey, deriveAgentCompanionActivitySummary, type AgentCompanionActivitySummary } from "./agent-companion-activity.js";
+import { recordBrainPetLifecycleVerified } from "./brainpet-installation-state.js";
 
 const staleAfterMs = 30 * 60_000;
 const pruneIntervalMs = 60_000;
@@ -21,6 +22,7 @@ export function initializeAgentLifecycleController(): void {
 }
 
 export function ingestAgentLifecycleEvent(event: AgentLifecycleEvent): AgentLifecyclePresentation {
+  recordBrainPetLifecycleVerified();
   entries = applyAgentLifecycleEvent(entries, event);
   compactSeenActivityKeys();
   const next = deriveAgentLifecyclePresentation(entries, event);

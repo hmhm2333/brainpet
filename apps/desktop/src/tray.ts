@@ -9,16 +9,35 @@ import { quitOpenPets } from "./lifecycle.js";
 import { info, openLogsFolder } from "./logger.js";
 import { shellState, togglePaused } from "./state.js";
 import { getUpdateStatus, openUpdateReleasePage } from "./update-checker.js";
-import { getPluginVoiceOperation, subscribePluginVoiceOperation } from "./plugin-voice.js";
-import { createVoiceMenuItems } from "./tray-voice-menu.js";
-import { openControlCenterWindow } from "./windows.js";
-import { resolveDesktopDistributionSettings } from "./distribution-profile.js";
-import { openBrainPetSetupGuide } from "./brainpet-setup-guide.js";
+import { resolveDesktopDistributionSettings, type DesktopDistributionSettings } from "./distribution-profile.js";
+import type { DesktopCompositionCapabilities } from "./composition/desktop-composition.js";
 
-const distribution = resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath));
+let distribution = resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath), { packaged: app.isPackaged });
+let capabilities: DesktopCompositionCapabilities = {
+  agentLifecycle: true,
+  brainPetHost: false,
+  brainPetInstallMarker: false,
+  brainPetOnboarding: false,
+  controlCenter: true,
+  lan: true,
+  localIpc: true,
+  openPetsAgentSetup: true,
+  pluginPlatform: true,
+  remoteControl: true,
+  voice: true,
+};
 
 let tray: Tray | null = null;
 let voiceOperationSubscriptionInstalled = false;
+let createConfiguredVoiceMenuItems: (() => MenuItemConstructorOptions[]) | null = null;
+
+export function configureAppTray(options: {
+  readonly distribution: DesktopDistributionSettings;
+  readonly capabilities: DesktopCompositionCapabilities;
+}): void {
+  distribution = options.distribution;
+  capabilities = options.capabilities;
+}
 
 export function createAppTray(): Tray {
   if (tray) {
@@ -27,9 +46,13 @@ export function createAppTray(): Tray {
 
   tray = new Tray(createTrayIcon());
   tray.setToolTip(distribution.displayName);
-  if (!voiceOperationSubscriptionInstalled) {
+  if (capabilities.voice && !voiceOperationSubscriptionInstalled) {
     voiceOperationSubscriptionInstalled = true;
-    subscribePluginVoiceOperation(() => refreshTrayMenu());
+    void Promise.all([import("./plugin-voice.js"), import("./tray-voice-menu.js")]).then(([voice, menu]) => {
+      createConfiguredVoiceMenuItems = () => menu.createVoiceMenuItems(voice.getPluginVoiceOperation());
+      voice.subscribePluginVoiceOperation(() => refreshTrayMenu());
+      refreshTrayMenu();
+    });
   }
   refreshTrayMenu();
   info("tray", "created");
@@ -54,10 +77,11 @@ export function refreshTrayMenu(): void {
     },
     ...createUpdateMenuItems(),
     { type: "separator" },
-    ...createVoiceMenuItems(getPluginVoiceOperation()),
+    ...(capabilities.voice ? createConfiguredVoiceMenuItems?.() ?? [] : []),
     {
       label: t("tray.defaultPet", { name: defaultPetName }),
-      click: () => openControlCenterWindow("pets"),
+      enabled: capabilities.controlCenter,
+      click: capabilities.controlCenter ? () => openControlCenter("pets") : undefined,
     },
     {
       label: isDefaultPetVisible() ? t("tray.hideDefaultPet") : getPrimaryCompanionFollowMode() === "paused" ? t("tray.wakeBrainPet") : t("tray.showDefaultPet"),
@@ -84,30 +108,28 @@ export function refreshTrayMenu(): void {
       },
     },
     { type: "separator" },
-    {
+    ...(capabilities.controlCenter ? [{
       label: t("tray.managePets"),
-      click: () => openControlCenterWindow("pets"),
-    },
-    {
+      click: () => openControlCenter("pets"),
+    }, {
       label: t("tray.controlCenter"),
-      click: () => openControlCenterWindow(),
-    },
-    {
+      click: () => openControlCenter(),
+    }, ...(capabilities.openPetsAgentSetup ? [{
       label: t("tray.integrations"),
-      click: () => openControlCenterWindow("integrations"),
-    },
-    ...(distribution.profile === "brainpet" ? [{
+      click: () => openControlCenter("integrations"),
+    }] : [])] : []),
+    ...(capabilities.brainPetHost ? [{
       label: t("tray.brainpetSetup"),
-      click: () => openBrainPetSetupGuide(),
+      click: () => { void import("./brainpet-setup-guide.js").then(({ openBrainPetSetupGuide }) => openBrainPetSetupGuide()); },
     }] : []),
-    {
+    ...(capabilities.pluginPlatform ? [{
       label: t("tray.plugins"),
-      click: () => openControlCenterWindow("plugins"),
-    },
-    {
+      click: () => openControlCenter("plugins"),
+    }] : []),
+    ...(capabilities.controlCenter ? [{
       label: t("tray.settings"),
-      click: () => openControlCenterWindow("settings"),
-    },
+      click: () => openControlCenter("settings"),
+    }] : []),
     { type: "separator" },
     {
       label: t("tray.website"),
@@ -119,12 +141,16 @@ export function refreshTrayMenu(): void {
     },
     { type: "separator" },
     {
-      label: t("tray.quit"),
+      label: t("tray.quitProduct", { name: distribution.displayName }),
       click: () => quitOpenPets(),
     },
   ]);
 
   tray.setContextMenu(menu);
+}
+
+function openControlCenter(section?: "pets" | "integrations" | "plugins" | "settings"): void {
+  void import("./windows.js").then(({ openControlCenterWindow }) => openControlCenterWindow(section));
 }
 
 function createUpdateMenuItems(): MenuItemConstructorOptions[] {

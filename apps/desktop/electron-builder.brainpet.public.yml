@@ -1,0 +1,18 @@
+extends: ./electron-builder.brainpet.base.yml
+
+directories:
+  output: dist-brainpet/public-release
+
+artifactName: BrainPet-${version}-${os}-${arch}.${ext}
+
+mac:
+  hardenedRuntime: true
+  gatekeeperAssess: true
+  notarize: true
+
+win:
+  signAndEditExecutable: true
+  verifyUpdateCodeSignature: true
+
+nsis:
+  artifactName: BrainPet-${version}-win-${arch}-setup.${ext}

@@ -1,11 +1,10 @@
 import { app, BrowserWindow, ipcMain, powerMonitor, screen, type IpcMainEvent, type Session } from "electron";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 
 import { applyExternalPetReaction, getDefaultPetWindowForPlugins } from "../default-pet-controller.js";
 import { getAppStateSnapshot } from "../app-state.js";
 import { debug, error as logError, info, warn } from "../logger.js";
 import { setBrainPetDragLifecycleHandler, setBrainPetTrainingRequestHandler, setPetWindowPositionLocked } from "../pet-window.js";
-import { isBrainPetFeatureEnabled, resolveDesktopDistributionSettings } from "../distribution-profile.js";
 import { subscribePluginEvent } from "../plugin-events-source.js";
 import { isBrainPetAgentCompletion, parseBrainPetAgentActivity } from "./agent-activity-policy.js";
 import { createBrainPetInteractionRig, isBrainPetPointInsideRectangle, reanchorBrainPetInteractionRig, reflowBrainPetInteractionRig, setBrainPetInteractionRigDragging, translateBrainPetStageInRig, type BrainPetInteractionRigSnapshot, type BrainPetRigEnvironment } from "./interaction-rig.js";
@@ -52,6 +51,7 @@ let applyingRigBounds = false;
 let removeStageAnchorListeners: (() => void) | null = null;
 let anchorSyncScheduled = false;
 let lastPetThrowAt = 0;
+let brainPetHostEnabled = false;
 
 export interface BrainPetStageBootstrap {
   readonly apiVersion: 1;
@@ -68,10 +68,7 @@ export interface BrainPetStageBootstrap {
 }
 
 export function initializeBrainPetHost(): void {
-  if (!isBrainPetEnabled()) {
-    info("brainpet.host", "disabled by environment");
-    return;
-  }
+  brainPetHostEnabled = true;
   installBrainPetIpc();
   installBrainPetHostEvents();
   statePath = join(app.getPath("userData"), "brainpet-state.json");
@@ -88,7 +85,7 @@ export function initializeBrainPetHost(): void {
 }
 
 export function openBrainPetStage(anchorWindow?: BrowserWindow): void {
-  if (!isBrainPetEnabled()) return;
+  if (!brainPetHostEnabled) return;
   const current = stageWindow;
   if (current && !current.isDestroyed()) {
     if (anchorWindow && !anchorWindow.isDestroyed() && anchorWindow !== stageAnchorWindow) {
@@ -738,10 +735,6 @@ function transition(event: BrainPetRuntimeEvent): BrainPetRuntimeSnapshot {
   const next = reduceBrainPetRuntime(runtime, event);
   debug("brainpet.runtime", "transition", { from: runtime.phase, to: next.phase, event: event.type });
   return next;
-}
-
-function isBrainPetEnabled(): boolean {
-  return isBrainPetFeatureEnabled(resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath)), process.env.OPENPETS_BRAINPET_ENABLED);
 }
 
 function getStageMode(): "stage-exerciser" | "training" {

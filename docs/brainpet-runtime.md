@@ -84,7 +84,7 @@ idle → opening → ready → running ⇄ paused → settling → ready
 - `pnpm --filter @open-pets/desktop test:brainpet-stress`：真实 Electron 窗口连续开启、开始 session、关闭 100 次。
 - `pnpm --filter @open-pets/desktop test:brainpet-rollback`：关闭 feature flag 后，宠物热点与舞台均不存在。
 - `pnpm --filter @open-pets/desktop test:brainpet-soak`：真实 Electron 舞台持续 30 分钟，反复 session，并通过 CDP 采样 renderer JS heap。
-- `pnpm --filter @open-pets/desktop package:brainpet:unpacked`：产出快速启动的 `dist-electron/win-unpacked/brainpet.exe`，这是当前 Windows 体验测试入口。
+- `pnpm --filter @open-pets/desktop package:brainpet:unpacked`：产出快速启动的 `dist-brainpet/private-test/win-unpacked/brainpet.exe`，这是当前 Windows 体验测试入口。
 - `pnpm --filter @open-pets/desktop package:brainpet:portable`：只用于需要单文件传输的诊断场景；它每次需要自解压，不用于启动性能和日常体验验收。
 
 ## 渲染决策

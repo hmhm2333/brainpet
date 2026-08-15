@@ -22,6 +22,12 @@ export type IpcEndpoint =
   | { readonly kind: "tcp"; readonly host: string; readonly port: number }
   | { readonly kind: "path"; readonly path: string };
 
+let configuredDistributionProfile: DesktopDistributionProfile | null = null;
+
+export function configureLocalIpcDistributionProfile(profile: DesktopDistributionProfile): void {
+  configuredDistributionProfile = profile;
+}
+
 export function getDiscoveryFilePath(): string {
   if (process.env.OPENPETS_DISCOVERY_FILE) {
     return process.env.OPENPETS_DISCOVERY_FILE;
@@ -52,7 +58,7 @@ export function resolveLocalIpcDistributionProfile(
   executableName = basename(process.execPath),
   override = process.env.OPENPETS_DISTRIBUTION_PROFILE,
 ): DesktopDistributionProfile {
-  return resolveDesktopDistributionSettings(appName, override, executableName).profile;
+  return configuredDistributionProfile ?? resolveDesktopDistributionSettings(appName, override, executableName, { packaged: app.isPackaged }).profile;
 }
 
 export interface IpcEndpointConfig {

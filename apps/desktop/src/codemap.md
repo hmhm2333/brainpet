@@ -20,6 +20,7 @@ BrainPet adds an infrastructure-first training path under `brainpet/`: pure stag
 - **Capability-Oriented SDK Surface**: The plugin bridge is split into focused SDK modules for audio, bus, config, events, quotas, routes, state, storage, types, and UI so permission checks and host effects stay localized.
 - **Host-Rendered Plugin UI**: Plugins describe bubbles, alerts, commands, panels, assets, and pet behavior; the host validates descriptors and renders them through pet windows, Control Center IPC, or sandboxed panel windows.
 - **Distribution Profiles**: `distribution-profile.ts` keeps normal OpenPets bundled-plugin defaults while giving BrainPet builds a separate identity and lean fresh-start policy.
+- **Composition Root**: `composition/desktop-composition.ts` selects the full OpenPets service surface, the lean BrainPet surface, or the BrainPet rollback surface before any optional service initializes.
 - **Sprite Timing**: `pet-animation-timing.ts` defines the testable held-idle/short-blink timeline used by pet renderers.
 - **Localized Runtime Content**: `i18n/` and plugin locale catalogs resolve host UI text, pet reaction messages, and plugin `$t:` strings through fallback-aware message catalogs.
 - **Motion Engine Abstraction**: Advanced pet movement uses a small physics/interpolation engine rather than embedding movement math in window or SDK routing code.
@@ -207,6 +208,8 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 **Core**:
 - `main.ts`: Entry, single-instance lock, bootstrap sequence, JavaScript plugin host construction
 - `distribution-profile.ts`: Pure OpenPets/BrainPet identity and bundled-plugin seeding policy
+- `composition/desktop-composition.ts`: Pure capability matrix for OpenPets, enabled BrainPet, and full BrainPet rollback
+- `brainpet-installation-state.ts`: Atomic BrainPet runtime/Bridge/lifecycle evidence store and Bridge-version reauthorization policy
 - `lifecycle.ts`: App event handlers (quit, window-all-closed, second-instance) with logging; stops plugin service, IPC, and pet windows on quit
 - `state.ts`: Simple shell pause state
 - `app-state.ts`: Persistent JSON state with V1 schema, atomic writes, reaction animation overrides, and the validated waiting animation duration preference

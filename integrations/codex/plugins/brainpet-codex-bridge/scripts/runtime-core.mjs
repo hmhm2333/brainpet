@@ -1,6 +1,12 @@
 import { posix, win32 } from "node:path";
 
-export const runtimeWakeTimeoutMs = 2_500;
+export const hookDeadlineMs = 2_600;
+export const connectAttemptMs = 350;
+export const runtimePollIntervalMs = 50;
+
+export function remainingDeadlineMs(deadline, now = Date.now()) {
+  return Math.max(0, deadline - now);
+}
 
 export function shouldWakeRuntime(event) {
   return event?.state !== "idle";
@@ -43,8 +49,9 @@ export function validateInstallMarker(value, platform) {
   const pathApi = platform === "win32" ? win32 : posix;
   if (typeof value.executablePath !== "string" || !pathApi.isAbsolute(value.executablePath) || value.executablePath.length > 4096 || /[\0\r\n]/.test(value.executablePath)) throw new Error("Invalid BrainPet executable path.");
   const executableName = pathApi.basename(value.executablePath).toLowerCase();
-  const allowedNames = platform === "win32" ? ["brainpet.exe"] : platform === "linux" ? ["brainpet", "brainpet.appimage"] : ["brainpet"];
-  if (!allowedNames.includes(executableName)) throw new Error("Invalid BrainPet executable name.");
+  const validLinuxName = executableName === "brainpet" || /^brainpet(?:[-_.][a-z0-9._-]+)?\.appimage$/i.test(executableName);
+  const validName = platform === "win32" ? executableName === "brainpet.exe" : platform === "linux" ? validLinuxName : executableName === "brainpet";
+  if (!validName) throw new Error("Invalid BrainPet executable name.");
   if (typeof value.appVersion !== "string" || value.appVersion.length < 1 || value.appVersion.length > 64) throw new Error("Invalid BrainPet version.");
   if (!["stable", "beta", "dev"].includes(value.channel)) throw new Error("Invalid BrainPet release channel.");
   if (typeof value.arch !== "string" || !/^[a-z0-9_-]{2,32}$/i.test(value.arch)) throw new Error("Invalid BrainPet architecture.");

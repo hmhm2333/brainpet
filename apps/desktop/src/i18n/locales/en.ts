@@ -24,6 +24,7 @@ export const en = {
   "tray.cancelVoiceTranscription": "Cancel transcription",
   "tray.openLogsFolder": "Open Logs Folder...",
   "tray.quit": "Quit OpenPets",
+  "tray.quitProduct": "Quit {name}",
   "brainpet.firstRun.guide": "Open the tray → BrainPet Setup. Install and trust the Codex Bridge; a new task will wake me.",
 
   // --- Shared ---

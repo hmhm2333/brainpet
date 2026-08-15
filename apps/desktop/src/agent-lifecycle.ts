@@ -1,8 +1,8 @@
-import type { OpenPetsReaction } from "./local-ipc-protocol.js";
+import { allowedAgentLifecycleStates, type OpenPetsReaction } from "./local-ipc-protocol.js";
 import type { AgentCompanionCapability } from "./agent-companion-capabilities.js";
 import type { AgentCompanionRequestSummary } from "./agent-companion-capabilities.js";
 
-export const agentLifecycleStates = ["working", "waiting", "ready", "blocked", "idle"] as const;
+export const agentLifecycleStates = allowedAgentLifecycleStates;
 export type AgentLifecycleState = typeof agentLifecycleStates[number];
 
 export interface AgentLifecycleEvent {

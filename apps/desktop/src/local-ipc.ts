@@ -26,6 +26,7 @@ import { getAgentCompanionActivitySummary, ingestAgentLifecycleEvent } from "./a
 let ipcServer: net.Server | null = null;
 let ipcDiscovery: OpenPetsDiscoveryFile | null = null;
 let leaseCleanupTimer: NodeJS.Timeout | null = null;
+let agentLifecycleIpcEnabled = true;
 /** leaseId → window-tracking unsubscribe function (for confined agent pets). */
 const confinementUnsubscribers = new Map<string, () => void>();
 const leaseManager = new LeaseManager({
@@ -45,6 +46,10 @@ const warnedFallbackPets = new Set<string>();
 const suspendedPoolSessions = new Map<number, string | undefined>();
 
 const safePetIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+export function configureLocalIpcCapabilities(options: { readonly agentLifecycle: boolean }): void {
+  agentLifecycleIpcEnabled = options.agentLifecycle;
+}
 
 export async function startLocalIpcServer(): Promise<void> {
   if (ipcServer) {
@@ -396,6 +401,9 @@ async function handleRequest(request: OpenPetsIpcRequest): Promise<unknown> {
   }
 
   if (request.method === "agent.activity") {
+    if (!agentLifecycleIpcEnabled) {
+      throw new IpcProtocolError("unsupported_method", "Agent lifecycle events are disabled for this runtime profile.");
+    }
     const event = validateAgentLifecycleParams(request.params);
     const presentation = ingestAgentLifecycleEvent(event);
     const activity = getAgentCompanionActivitySummary();

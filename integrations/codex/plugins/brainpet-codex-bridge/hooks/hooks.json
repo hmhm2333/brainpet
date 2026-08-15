@@ -51,6 +51,18 @@
         ]
       }
     ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$PLUGIN_ROOT/scripts/bridge.sh\"",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\bridge.cmd\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [

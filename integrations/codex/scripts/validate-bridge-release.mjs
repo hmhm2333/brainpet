@@ -6,7 +6,8 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { brainPetReleaseTargets, brainPetReleaseTargetIds } from "../../../scripts/brainpet-release-contract.mjs";
+import { brainPetDistributionContract, brainPetReleaseTargets, brainPetReleaseTargetIds } from "../../../scripts/brainpet-release-contract.mjs";
+import { assertBrainPetBinary } from "../../../scripts/brainpet-binary-format.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const defaultPluginRoot = resolve(scriptDir, "..", "plugins", "brainpet-codex-bridge");
@@ -15,6 +16,10 @@ export function validateBridgeRelease(pluginRoot = defaultPluginRoot) {
   const contract = JSON.parse(readFileSync(join(pluginRoot, "brainpet.bridge.json"), "utf8"));
   assert.equal(contract.schemaVersion, 1);
   assert.deepEqual(contract.releaseTargets, brainPetReleaseTargetIds);
+  assert.equal(contract.bridgeVersion, brainPetDistributionContract.bridge.version);
+  assert.equal(contract.minimumRuntimeIpcVersion, brainPetDistributionContract.bridge.minimumRuntimeIpcVersion);
+  assert.equal(contract.hookDeadlineMs, brainPetDistributionContract.bridge.hookDeadlineMs);
+  assert.equal(contract.connectAttemptMs, brainPetDistributionContract.bridge.connectAttemptMs);
   assert.deepEqual(contract.transportPriority, ["native-hook", "node-development-fallback"]);
 
   const receiptPath = join(pluginRoot, "brainpet-release.json");
@@ -27,6 +32,7 @@ export function validateBridgeRelease(pluginRoot = defaultPluginRoot) {
     const stat = lstatSync(path);
     assert.ok(stat.isFile() && !stat.isSymbolicLink(), `Bridge helper must be a regular file: ${target.id}/${target.helperName}`);
     assert.ok(stat.size >= 16 * 1024 && stat.size <= 20 * 1024 * 1024, `Bridge helper size is implausible: ${target.id}/${target.helperName}`);
+    assertBrainPetBinary(readFileSync(path), target, `Bridge helper ${target.id}`);
     if (process.platform !== "win32" && target.platform !== "windows") assert.ok((stat.mode & 0o111) !== 0, `Unix bridge helper must retain its executable bit: ${target.id}/${target.helperName}`);
     if (receipt) {
       const record = receipt.files.find((candidate) => candidate.target === target.id);
@@ -48,6 +54,7 @@ export function validateBridgeRelease(pluginRoot = defaultPluginRoot) {
   assert.ok(definitions.every((hook) => hook.command.includes("bridge.sh")), "Every Unix hook must use the native-helper launcher.");
   assert.ok(definitions.every((hook) => hook.commandWindows.includes("bridge.cmd")), "Every Windows hook must use the native-helper launcher.");
   assert.ok(definitions.every((hook) => !hook.command.startsWith("node ") && !hook.commandWindows.startsWith("node ")), "Published hook definitions must not directly require Node.");
+  assert.ok(definitions.every((hook) => hook.timeout * 1_000 >= contract.hookDeadlineMs || hook.timeout === 1), "Lifecycle hook timeouts must contain the Bridge deadline; SessionEnd may use the bounded one-second no-wake path.");
   return { targetCount: brainPetReleaseTargets.length, receipt: Boolean(receipt) };
 }
 

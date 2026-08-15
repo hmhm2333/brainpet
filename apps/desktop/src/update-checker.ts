@@ -2,7 +2,7 @@ import { app, shell } from "electron";
 import https from "node:https";
 import { basename } from "node:path";
 
-import { resolveDesktopDistributionSettings } from "./distribution-profile.js";
+import { resolveDesktopDistributionSettings, resolveDistributionUpdateRepository } from "./distribution-profile.js";
 import { createParsedUpdateStatus, normalizeVersion } from "./update-version.js";
 
 export type UpdateStatusState = "idle" | "checking" | "available" | "current" | "error";
@@ -22,8 +22,8 @@ interface GitHubReleaseResponse {
   readonly html_url?: unknown;
 }
 
-const distribution = resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath));
-const githubRepository = process.env.OPENPETS_GITHUB_REPOSITORY || (distribution.profile === "brainpet" ? "hmhm2333/brainpet" : "alvinunreal/openpets");
+const distribution = resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath), { packaged: app.isPackaged });
+const githubRepository = resolveDistributionUpdateRepository(distribution, process.env.OPENPETS_GITHUB_REPOSITORY, { packaged: app.isPackaged });
 const latestReleaseApiUrl = `https://api.github.com/repos/${githubRepository}/releases/latest`;
 const releasesPageUrl = `https://github.com/${githubRepository}/releases`;
 const releaseCheckTimeoutMs = 6_000;

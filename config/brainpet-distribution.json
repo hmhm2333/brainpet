@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "identity": {
+    "profile": "brainpet",
+    "displayName": "BrainPet",
+    "appId": "dev.brainpet.app",
+    "executableName": "brainpet",
+    "repository": "hmhm2333/brainpet",
+    "updateRepository": "hmhm2333/brainpet"
+  },
+  "bridge": {
+    "version": "0.2.0",
+    "minimumRuntimeIpcVersion": 1,
+    "hookDeadlineMs": 2600,
+    "connectAttemptMs": 350,
+    "pollIntervalMs": 50
+  },
+  "releaseTargets": [
+    { "id": "windows-x64", "platform": "windows", "nodePlatform": "win32", "electronPlatform": "win", "arch": "x64", "rustTarget": "x86_64-pc-windows-msvc", "helperName": "brainpet-hook.exe", "binaryFormat": "pe", "machine": 34404 },
+    { "id": "windows-arm64", "platform": "windows", "nodePlatform": "win32", "electronPlatform": "win", "arch": "arm64", "rustTarget": "aarch64-pc-windows-msvc", "helperName": "brainpet-hook.exe", "binaryFormat": "pe", "machine": 43620 },
+    { "id": "macos-x64", "platform": "macos", "nodePlatform": "darwin", "electronPlatform": "mac", "arch": "x64", "rustTarget": "x86_64-apple-darwin", "helperName": "brainpet-hook", "binaryFormat": "mach-o", "machine": 16777223 },
+    { "id": "macos-arm64", "platform": "macos", "nodePlatform": "darwin", "electronPlatform": "mac", "arch": "arm64", "rustTarget": "aarch64-apple-darwin", "helperName": "brainpet-hook", "binaryFormat": "mach-o", "machine": 16777228 },
+    { "id": "linux-x64", "platform": "linux", "nodePlatform": "linux", "electronPlatform": "linux", "arch": "x64", "rustTarget": "x86_64-unknown-linux-gnu", "helperName": "brainpet-hook", "binaryFormat": "elf", "machine": 62 },
+    { "id": "linux-arm64", "platform": "linux", "nodePlatform": "linux", "electronPlatform": "linux", "arch": "arm64", "rustTarget": "aarch64-unknown-linux-gnu", "helperName": "brainpet-hook", "binaryFormat": "elf", "machine": 183 }
+  ]
+}

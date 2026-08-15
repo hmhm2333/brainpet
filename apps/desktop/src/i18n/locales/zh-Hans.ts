@@ -19,6 +19,7 @@ export const zhHans: Partial<Messages> = {
   "tray.settings": "设置...",
   "tray.openLogsFolder": "打开日志文件夹...",
   "tray.quit": "退出 OpenPets",
+  "tray.quitProduct": "退出 {name}",
   "brainpet.firstRun.guide": "打开托盘里的 BrainPet 安装与恢复，安装并信任 Codex Bridge；新任务会自动唤醒我。",
 
   // --- Shared ---

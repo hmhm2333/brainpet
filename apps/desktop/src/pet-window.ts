@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, Menu, screen, type IpcMainEvent } from "electron";
 import { readFileSync } from "node:fs";
 import { mkdir, stat, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { getAppStateSnapshot, markPetBroken, petScaleOptions, updatePreferences, type PetScaleValue } from "./app-state.js";
@@ -20,7 +20,6 @@ import { isFocusActionAvailable } from "./capabilities.js";
 import { canForwardMouseEvents as platformCanForwardMouseEvents, shouldWatchForwardedMouseEvents } from "./mouse-forwarding.js";
 import { computeEffectiveWaylandBackend, shouldPetWindowBeFocusable } from "./wayland-backend.js";
 import { createIdleSpriteKeyframes } from "./pet-animation-timing.js";
-import { isBrainPetFeatureEnabled, resolveDesktopDistributionSettings } from "./distribution-profile.js";
 import type { AgentCompanionActivitySummary } from "./agent-companion-activity.js";
 import { derivePrimaryCompanionView } from "./primary-companion-ui.js";
 import type { PrimaryCompanionActionControl, PrimaryCompanionActionPrompt } from "./agent-companion-action-broker.js";
@@ -104,6 +103,13 @@ interface PetContentRender {
 }
 
 const petWindowRenderCache = new WeakMap<BrowserWindow, string>();
+let brainPetSurfaceEnabled = false;
+let petProductName = "OpenPets";
+
+export function configurePetWindowCapabilities(options: { readonly brainPetSurface: boolean; readonly productName: "OpenPets" | "BrainPet" }): void {
+  brainPetSurfaceEnabled = options.brainPetSurface;
+  petProductName = options.productName;
+}
 
 const windowLoadChains = new WeakMap<BrowserWindow, Promise<void>>();
 const windowLoadSequences = new WeakMap<BrowserWindow, number>();
@@ -171,7 +177,7 @@ export function isPetWindowDragging(window: BrowserWindow): boolean {
 }
 
 export function createDefaultPetWindow(options: DefaultPetWindowOptions, dismissToken?: string): BrowserWindow {
-  const window = createBasePetWindow("OpenPets — Default Pet", options.position, {
+  const window = createBasePetWindow(`${petProductName} — Default Pet`, options.position, {
     hasInteractiveInput: petPluginBubblesHaveInteractiveInput(options.pluginBubbles ?? null) || options.companionTrayOpen === true,
   });
   info("pet.window", "default window create", { windowId: window.id, position: options.position, paused: options.paused, hasDisplay: Boolean(options.display), badge: options.badge });
@@ -200,7 +206,7 @@ export function createDefaultPetWindow(options: DefaultPetWindowOptions, dismiss
 }
 
 export function createAgentPetWindow(options: AgentPetWindowOptions, dismissToken?: string): BrowserWindow {
-  const window = createBasePetWindow(`OpenPets — ${options.displayName}`, options.position);
+  const window = createBasePetWindow(`${petProductName} — ${options.displayName}`, options.position);
   info("pet.window", "agent window create", { windowId: window.id, petId: options.petId, displayName: options.displayName, position: options.position, hasDisplay: Boolean(options.display), badge: options.badge });
   installMousePassthroughAndDrag(window, options);
   installMotionStatePublisher(window);
@@ -265,7 +271,7 @@ async function buildPetContextMenuTemplate(window: BrowserWindow, action: { read
     plugins.set(item.pluginId, group);
   }
   const template: Electron.MenuItemConstructorOptions[] = [];
-  const brainPetEnabled = isBrainPetFeatureEnabled(resolveCurrentDistribution(), process.env.OPENPETS_BRAINPET_ENABLED);
+  const brainPetEnabled = brainPetSurfaceEnabled;
   if (brainPetEnabled) {
     const selectedScale = getAppStateSnapshot().preferences.petScale;
     const followPaused = getAppStateSnapshot().preferences.primaryCompanionFollowMode === "paused";
@@ -995,11 +1001,7 @@ export function readWindowPosition(window: BrowserWindow): Point {
 
 function usesNativePetWindowShape(): boolean {
   return process.platform === "linux"
-    || process.platform === "win32" && isBrainPetFeatureEnabled(resolveCurrentDistribution(), process.env.OPENPETS_BRAINPET_ENABLED);
-}
-
-function resolveCurrentDistribution() {
-  return resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath));
+    || process.platform === "win32" && brainPetSurfaceEnabled;
 }
 
 function applyNativePetWindowShape(window: BrowserWindow, scale: PetScaleValue, hasBubble: boolean): void {
@@ -1052,7 +1054,7 @@ function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | 
   const spriteUrl = pathToFileURL(join(app.getAppPath(), "assets", defaultPetSprite.fileName)).toString();
   const hasPinned = Boolean(pluginBubbles?.pinned);
   const companionMarkup = createPrimaryCompanionMarkup(companionActivity, companionTrayOpen, companionActionPrompt);
-  const bodyHtml = createPetBodyMarkup("OpenPets default pet", createBubbleMarkup(display, paused, companionActivity?.totalCount ? null : badge, dismissToken, pluginBubbles), `<div class="sprite" role="img" aria-label="Claude animated default pet"></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned, companionMarkup);
+  const bodyHtml = createPetBodyMarkup(`${petProductName} default pet`, createBubbleMarkup(display, paused, companionActivity?.totalCount ? null : badge, dismissToken, pluginBubbles), `<div class="sprite" role="img" aria-label="${petProductName} animated default pet"></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned, companionMarkup);
   const reactionState = getReactionSpriteState(display?.reaction ?? getPrimaryCompanionReaction(companionActivity) ?? badge ?? undefined);
   const waitingAnimationDurationMs = getAppStateSnapshot().preferences.waitingAnimationDurationMs;
   const stateRows = getConfiguredSpriteStates(waitingAnimationDurationMs);
@@ -1067,7 +1069,7 @@ function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | 
         <meta charset="utf-8" />
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file: data:; font-src file:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>OpenPets Default Pet</title>
+        <title>${petProductName} Default Pet</title>
         <style>
           ${createPetWindowCss(paused, scale)}
           .sprite {
@@ -1148,7 +1150,7 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
           <meta charset="utf-8" />
           <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file: data:; font-src file:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
-          <title>OpenPets Default Pet</title>
+          <title>${petProductName} Default Pet</title>
           <style>
             ${createPetWindowCss(paused, scale)}
             .installed-card { width: ${Math.ceil(defaultPetSprite.frameWidth * scale)}px; height: ${Math.ceil(defaultPetSprite.frameHeight * scale)}px; overflow: visible; position: relative; }
@@ -1269,7 +1271,7 @@ function getPrimaryCompanionReaction(summary: AgentCompanionActivitySummary | nu
 }
 
 function createPetBodyMarkup(stageLabel: string, bubble: string, spriteMarkup: string, pinnedBubble = "", hasPinned = false, companionMarkup = ""): string {
-  const brainPetTrigger = !isBrainPetFeatureEnabled(resolveCurrentDistribution(), process.env.OPENPETS_BRAINPET_ENABLED)
+  const brainPetTrigger = !brainPetSurfaceEnabled
     ? ""
     : `<button class="brainpet-trigger" type="button" data-brainpet-trigger aria-label="${escapeHtml(t("pet.menu.startTraining"))}" title="${escapeHtml(t("pet.menu.startTraining"))}"><span class="brainpet-gem" aria-hidden="true"></span></button>`;
   return `<div class="stage${hasPinned ? " has-pinned" : ""}" aria-label="${stageLabel}">

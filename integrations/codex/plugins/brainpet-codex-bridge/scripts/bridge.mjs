@@ -1,22 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, readFile, unlink } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import net from "node:net";
 import { homedir } from "node:os";
 
 import { selectLifecycleEvent, shouldWriteJsonResult } from "./bridge-core.mjs";
-import { getRuntimePaths, runtimeWakeTimeoutMs, shouldWakeRuntime, validateInstallMarker } from "./runtime-core.mjs";
+import { connectAttemptMs, getRuntimePaths, hookDeadlineMs, remainingDeadlineMs, runtimePollIntervalMs, shouldWakeRuntime, validateInstallMarker } from "./runtime-core.mjs";
 
 const maxHookInputBytes = 8 * 1024 * 1024;
 const maxIpcMessageBytes = 16 * 1024;
-const socketTimeoutMs = 400;
+const hookDeadline = Date.now() + hookDeadlineMs;
 
 let hookInput = null;
 try {
   const raw = await readStdin();
   hookInput = JSON.parse(raw);
   const event = selectLifecycleEvent(hookInput);
-  if (event) await sendLifecycleEvent(event);
+  if (event) await sendLifecycleEvent(event, hookDeadline);
 } catch {
   // BrainPet is optional. Its bridge must never interrupt or slow a Codex turn.
 } finally {
@@ -34,30 +34,30 @@ async function readStdin() {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function sendLifecycleEvent(event) {
+async function sendLifecycleEvent(event, deadline) {
+  if (remainingDeadlineMs(deadline) === 0) return;
   const paths = getRuntimePaths(process.platform, process.env, homedir());
   if (paths.explicitDiscovery) {
     const discovery = await readDiscovery(paths.explicitDiscovery);
-    await sendToDiscovery(event, discovery);
+    await sendToDiscovery(event, discovery, deadline);
     return;
   }
 
   const running = await readDiscoveryIfPresent(paths.brainPetDiscovery);
-  if (running && await sendToDiscovery(event, running)) return;
+  if (running && await sendToDiscovery(event, running, deadline)) return;
 
   if (!shouldWakeRuntime(event)) {
     const development = await readDiscoveryIfPresent(paths.openPetsDevelopmentDiscovery);
-    if (development) await sendToDiscovery(event, development);
+    if (development) await sendToDiscovery(event, development, deadline);
     return;
   }
 
   const wake = paths.installMarker ? await launchInstalledRuntime(paths.installMarker) : { status: "missing" };
   if (paths.brainPetDiscovery && wake.status === "launched") {
-    const deadline = Date.now() + runtimeWakeTimeoutMs;
-    while (Date.now() < deadline) {
-      await delay(50);
+    while (remainingDeadlineMs(deadline) > 0) {
+      await delay(Math.min(runtimePollIntervalMs, remainingDeadlineMs(deadline)));
       const discovery = await readDiscoveryIfPresent(paths.brainPetDiscovery);
-      if (discovery && await sendToDiscovery(event, discovery)) return;
+      if (discovery && await sendToDiscovery(event, discovery, deadline)) return;
     }
     return;
   }
@@ -65,10 +65,10 @@ async function sendLifecycleEvent(event) {
   if (wake.status !== "missing") return;
 
   const development = await readDiscoveryIfPresent(paths.openPetsDevelopmentDiscovery);
-  if (development) await sendToDiscovery(event, development);
+  if (development) await sendToDiscovery(event, development, deadline);
 }
 
-async function sendToDiscovery(event, discovery) {
+async function sendToDiscovery(event, discovery, deadline) {
   const request = {
     id: randomUUID(),
     version: 1,
@@ -78,7 +78,7 @@ async function sendToDiscovery(event, discovery) {
   };
   const line = `${JSON.stringify(request)}\n`;
   if (Buffer.byteLength(line, "utf8") > maxIpcMessageBytes) return false;
-  return sendRequest(discovery.endpoint, request.id, line);
+  return sendRequest(discovery.endpoint, request.id, line, Math.min(connectAttemptMs, remainingDeadlineMs(deadline)));
 }
 
 async function readDiscovery(path) {
@@ -97,16 +97,21 @@ async function readDiscoveryIfPresent(path) {
 }
 
 async function launchInstalledRuntime(markerPath) {
+  let markerValidated = false;
   try {
     const markerRaw = await readFile(markerPath, "utf8");
     if (Buffer.byteLength(markerRaw, "utf8") > maxIpcMessageBytes) return { status: "invalid" };
     const marker = validateInstallMarker(JSON.parse(markerRaw), process.platform);
+    markerValidated = true;
     const executable = await lstat(marker.executablePath);
     if (!executable.isFile() || executable.isSymbolicLink()) return { status: "invalid" };
     const child = spawn(marker.executablePath, [], { detached: true, stdio: "ignore", windowsHide: true });
     child.unref();
     return { status: "launched" };
   } catch (error) {
+    if (markerValidated && error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      await unlink(markerPath).catch(() => undefined);
+    }
     return { status: error && typeof error === "object" && "code" in error && error.code === "ENOENT" ? "missing" : "invalid" };
   }
 }
@@ -115,8 +120,9 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function sendRequest(endpoint, requestId, line) {
+function sendRequest(endpoint, requestId, line, timeoutMs) {
   return new Promise((resolve) => {
+    if (timeoutMs <= 0) return resolve(false);
     const parsed = parseEndpoint(endpoint);
     const socket = parsed.kind === "tcp" ? net.createConnection({ host: parsed.host, port: parsed.port }) : net.createConnection(parsed.path);
     let settled = false;
@@ -129,7 +135,7 @@ function sendRequest(endpoint, requestId, line) {
       socket.destroy();
       resolve(accepted);
     };
-    timer = setTimeout(finish, socketTimeoutMs);
+    timer = setTimeout(finish, timeoutMs);
     socket.setEncoding("utf8");
     socket.once("connect", () => socket.write(line));
     socket.on("data", (chunk) => {

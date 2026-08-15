@@ -55,6 +55,13 @@ router, or participates in LAN pet presence or leases. The v1 transport is raw
 unencrypted TCP and is intended only for a trusted private network or an
 encrypted overlay with its own ACLs; CGNAT addressing alone is not encryption.
 
+BrainPet selects a separate composition before service startup. Its production
+profile keeps the pet, local IPC, Agent lifecycle adapter, training Host,
+updates and logs, while omitting the OpenPets Control Center, plugin platform,
+LAN, remote control, voice and Agent configuration writers. The rollback
+composition selected by `BRAINPET_ENABLED=0` also rejects
+`agent.activity` and never refreshes the BrainPet install marker.
+
 ## The packages, and what each is for
 
 | Package | Role | Doc |

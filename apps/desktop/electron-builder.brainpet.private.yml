@@ -1,0 +1,18 @@
+extends: ./electron-builder.brainpet.base.yml
+
+directories:
+  output: dist-brainpet/private-test
+
+artifactName: BrainPet-PrivateTest-${version}-${os}-${arch}.${ext}
+
+mac:
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+
+win:
+  signAndEditExecutable: false
+  verifyUpdateCodeSignature: false
+
+nsis:
+  artifactName: BrainPet-PrivateTest-${version}-win-${arch}-setup.${ext}

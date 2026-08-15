@@ -2,11 +2,13 @@
   "schemaVersion": 1,
   "bridgeVersion": "0.2.0",
   "minimumRuntimeIpcVersion": 1,
+  "hookDeadlineMs": 2600,
+  "connectAttemptMs": 350,
   "provider": "codex",
   "transportPriority": ["native-hook", "node-development-fallback"],
   "releaseTargets": ["windows-x64", "windows-arm64", "macos-x64", "macos-arm64", "linux-x64", "linux-arm64"],
   "privacy": {
-    "allowedFields": ["schemaVersion", "source", "sessionId", "sequence", "state", "occurredAt", "summary", "request"],
+    "allowedFields": ["schemaVersion", "agent", "sessionId", "state", "occurredAt", "capabilities", "turnId", "request"],
     "rejectedFields": ["prompt", "transcript", "cwd", "toolInput", "toolOutput", "response"]
   }
 }

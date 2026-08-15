@@ -18,6 +18,7 @@ const require = createRequire(import.meta.url);
 const electronPath = process.env.BRAINPET_ELECTRON_EXECUTABLE || require("electron");
 const userDataDir = await mkdtemp(join(tmpdir(), "brainpet-electron-smoke-"));
 const discoveryPath = join(userDataDir, "brainpet-ipc.json");
+const installMarkerPath = join(userDataDir, "runtime-install.json");
 const port = await reservePort();
 const logs = [];
 const spawnedAt = Date.now();
@@ -33,10 +34,11 @@ const videoPath = process.env.BRAINPET_VIDEO_PATH ? resolve(process.env.BRAINPET
 if (forcedTask && forcedTask !== "cargo-signal" && forcedTask !== "pack-refresh" && forcedTask !== "foundation-probe") throw new Error("BRAINPET_SMOKE_TASK must be cargo-signal, pack-refresh, or foundation-probe.");
 
 const exerciserMode = !forcedTask || forcedTask === "foundation-probe";
+const petWindowTitle = "BrainPet Default Pet";
 
 const child = spawn(electronPath, [".", `--user-data-dir=${userDataDir}`, `--remote-debugging-port=${port}`], {
   cwd: appDir,
-  env: { ...process.env, ...(exerciserMode ? { OPENPETS_BRAINPET_EXERCISER: "1" } : {}), ...(forcedTask ? { OPENPETS_BRAINPET_FORCE_TASK: forcedTask } : {}), OPENPETS_DISTRIBUTION_PROFILE: process.env.OPENPETS_DISTRIBUTION_PROFILE ?? "brainpet", OPENPETS_DISCOVERY_FILE: discoveryPath, OPENPETS_DISABLE_PLUGIN_CATALOG: "1", OPENPETS_LOG_CONSOLE: "1", ...(expectDisabled ? { OPENPETS_BRAINPET_ENABLED: "0" } : {}) },
+  env: { ...process.env, ...(exerciserMode ? { OPENPETS_BRAINPET_EXERCISER: "1" } : {}), ...(forcedTask ? { OPENPETS_BRAINPET_FORCE_TASK: forcedTask } : {}), OPENPETS_DISTRIBUTION_PROFILE: process.env.OPENPETS_DISTRIBUTION_PROFILE ?? "brainpet", OPENPETS_DISCOVERY_FILE: discoveryPath, BRAINPET_INSTALL_MARKER_FILE: installMarkerPath, OPENPETS_DISABLE_PLUGIN_CATALOG: "1", OPENPETS_LOG_CONSOLE: "1", ...(expectDisabled ? { BRAINPET_ENABLED: "0" } : {}) },
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true,
 });
@@ -44,7 +46,7 @@ child.stdout?.on("data", (chunk) => logs.push(String(chunk)));
 child.stderr?.on("data", (chunk) => logs.push(String(chunk)));
 
 try {
-  const petTarget = await waitForTarget(port, (target) => target.title === "OpenPets Default Pet", startupTimeoutMs);
+  const petTarget = await waitForTarget(port, (target) => target.title === petWindowTitle, startupTimeoutMs);
   const petReadyMs = Date.now() - spawnedAt;
   await delay(500);
   const idleProcessMetrics = process.platform === "win32" ? await measureProcessesForUserDataDir(userDataDir) : null;
@@ -53,7 +55,15 @@ try {
     const disabledState = await evaluate(petTarget, `({ triggerFound: Boolean(document.querySelector('[data-brainpet-trigger]')) })`);
     assert.equal(disabledState.triggerFound, false, "feature flag must remove the BrainPet trigger");
     assert.equal((await listTargets(port)).some((target) => target.title === "BrainPet"), false, "feature flag must prevent the stage window");
-    process.stdout.write(`${JSON.stringify({ ok: true, featureFlagRollback: true })}\n`);
+    const rollbackClient = createOpenPetsClient({ discoveryPath });
+    await assert.rejects(
+      rollbackClient.reportAgentActivity({ agent: "codex", sessionId: "rollback-probe", state: "working", occurredAt: Date.now(), capabilities: ["observeLifecycle"] }),
+      /disabled|unsupported/i,
+      "feature flag rollback must reject lifecycle ingestion instead of hiding only the UI",
+    );
+    assert.equal(await evaluate(petTarget, `Boolean(document.querySelector('[data-companion-toggle]'))`), false, "feature flag rollback must not render Agent lifecycle UI");
+    await assert.rejects(readFile(installMarkerPath), /ENOENT/, "feature flag rollback must not refresh the packaged install marker");
+    process.stdout.write(`${JSON.stringify({ ok: true, featureFlagRollback: true, lifecycleRejected: true })}\n`);
     process.exitCode = 0;
   } else {
   const companionClient = createOpenPetsClient({ discoveryPath });
@@ -70,7 +80,7 @@ try {
   assert.equal(companionBadge.found, true, "Agent activity must render a companion status badge");
   assert.equal(companionBadge.expanded, "false");
   assert.equal(companionBadge.width >= 28 && companionBadge.height >= 20, true, "companion badge must keep a usable native hit target");
-  await clickWindowPoint(petTarget, companionBadge, "OpenPets Default Pet", false);
+  await clickWindowPoint(petTarget, companionBadge, petWindowTitle, false);
   await waitForEvaluation(petTarget, `document.querySelectorAll('.primary-companion-item').length === 2`, 2_000);
   const companionTray = await evaluate(petTarget, `({
     expanded: document.querySelector('[data-companion-toggle]')?.getAttribute('aria-expanded'),
@@ -89,7 +99,7 @@ try {
   const companionScreenshot = await sendCdp(petTarget.webSocketDebuggerUrl, "Page.captureScreenshot", { format: "png", fromSurface: true });
   await mkdir(dirname(companionOutputPath), { recursive: true });
   await writeFile(companionOutputPath, Buffer.from(companionScreenshot.data, "base64"));
-  await clickWindowPoint(petTarget, await evaluate(petTarget, `(() => { const button = document.querySelector('[data-companion-toggle]'); const rect = button.getBoundingClientRect(); return { viewportWidth: innerWidth, viewportHeight: innerHeight, screenX, screenY, xRatio: (rect.left + rect.width / 2) / innerWidth, yRatio: (rect.top + rect.height / 2) / innerHeight }; })()`), "OpenPets Default Pet", false);
+  await clickWindowPoint(petTarget, await evaluate(petTarget, `(() => { const button = document.querySelector('[data-companion-toggle]'); const rect = button.getBoundingClientRect(); return { viewportWidth: innerWidth, viewportHeight: innerHeight, screenX, screenY, xRatio: (rect.left + rect.width / 2) / innerWidth, yRatio: (rect.top + rect.height / 2) / innerHeight }; })()`), petWindowTitle, false);
   await waitForEvaluation(petTarget, `document.querySelector('[data-companion-toggle]')?.getAttribute('aria-expanded') === 'false'`, 2_000);
   await companionClient.reportAgentActivity({ agent: "codex", sessionId: "smoke-working", turnId: "turn-working", state: "idle", occurredAt: companionNow + 2, capabilities: ["observeLifecycle"] });
   await companionClient.reportAgentActivity({ agent: "claude", sessionId: "smoke-review", turnId: "turn-cleanup", state: "idle", occurredAt: companionNow + 3, capabilities: ["observeLifecycle"] });
@@ -380,7 +390,7 @@ try {
   for (let cycle = 1; cycle < lifecycleCycles; cycle += 1) {
     await evaluate(stageTarget, closeStageExpression);
     await waitForTargetToDisappear(port, stageTarget.id, 10_000);
-    const currentPetTarget = await waitForTarget(port, (target) => target.title === "OpenPets Default Pet", 5_000);
+    const currentPetTarget = await waitForTarget(port, (target) => target.title === petWindowTitle, 5_000);
     await evaluate(currentPetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
     stageTarget = await waitForTarget(port, (target) => target.title === "BrainPet", 10_000);
     await waitForEvaluation(stageTarget, stageIdentityExpression, 5_000);
@@ -395,7 +405,7 @@ try {
   assert.doesNotMatch(logs.join(""), /invalid stage event rejected|stage event transition rejected/, "host must accept every validated session event during smoke and soak");
 
   if (!petToggleCloseVerified) {
-    const togglePetTarget = await waitForTarget(port, (target) => target.title === "OpenPets Default Pet", 5_000);
+    const togglePetTarget = await waitForTarget(port, (target) => target.title === petWindowTitle, 5_000);
     await evaluate(togglePetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
     await waitForTargetToDisappear(port, stageTarget.id, 10_000);
     await waitForEvaluation(togglePetTarget, `document.documentElement.dataset.brainpetStageOpen !== 'true'`, 2_000);
@@ -414,8 +424,8 @@ try {
   }
   await delay(500);
   const remainingTargets = await listTargets(port);
-  assert.equal(remainingTargets.some((target) => target.title === "OpenPets Default Pet"), true, "stage crash must not close the pet host");
-  const currentPetTarget = await waitForTarget(port, (target) => target.title === "OpenPets Default Pet", 5_000);
+  assert.equal(remainingTargets.some((target) => target.title === petWindowTitle), true, "stage crash must not close the pet host");
+  const currentPetTarget = await waitForTarget(port, (target) => target.title === petWindowTitle, 5_000);
   await evaluate(currentPetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
   const recoveredStageTarget = await waitForTarget(port, (target) => target.title === "BrainPet" && target.id !== stageTarget.id, 10_000);
   assert.notEqual(recoveredStageTarget.id, stageTarget.id, "crash recovery must create a fresh renderer target");
@@ -462,7 +472,7 @@ async function listTargets(debugPort) {
 }
 
 async function clickPetTrigger(petTarget, trigger) {
-  return clickWindowPoint(petTarget, trigger, "OpenPets Default Pet", false);
+  return clickWindowPoint(petTarget, trigger, petWindowTitle, false);
 }
 
 async function clickWindowPoint(target, geometry, windowTitle, useOsClick) {

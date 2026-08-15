@@ -55,7 +55,7 @@ BrainPet carries a local Codex plugin at
 `integrations/codex/plugins/brainpet-codex-bridge`. Codex hooks translate only
 the task lifecycle into `agent.activity` over authenticated local IPC:
 `UserPromptSubmit` and `PostToolUse` → working, `PermissionRequest` → waiting,
-`Stop` → ready, and `SessionEnd` → idle. Prompt text, tool input/output,
+`Stop` → ready, `StopFailure` → blocked, and `SessionEnd` → idle. Prompt text, tool input/output,
 transcripts, paths, and working directories are deliberately discarded.
 
 The schema-v1 payload declares provider capabilities and may include only a
@@ -69,8 +69,9 @@ single-line failure fallback; disconnected or unsupported providers show only
 bridge has no verified public stop/permission/reply contract.
 The desktop aggregates activity by provider/session so completion in one task
 cannot hide another task that is still working or waiting. A running runtime
-uses a 400ms local IPC timeout. A packaged but stopped BrainPet can be launched
-from its validated per-user install marker, with a 2.5s total cold-wake bound;
+uses at most 350ms per local IPC attempt. A packaged but stopped BrainPet can be launched
+from its validated per-user install marker; every attempt, cold-wake poll and final
+send shares one 2600ms internal hook deadline, leaving 400ms inside Codex's 3s process budget;
 missing or invalid installations fail open. Codex must load the plugin in a new
 task after installation, and the user must approve its hook commands in Codex's
 trust review.
