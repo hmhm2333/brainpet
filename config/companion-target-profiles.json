@@ -1,6 +1,13 @@
 {
   "schemaVersion": 1,
   "adapterVersion": "1.0.0",
+  "ipc": {
+    "protocol": "openpets-ipc",
+    "version": 1,
+    "maxMessageBytes": 16384,
+    "connectTimeoutMs": 2000,
+    "responseTimeoutMs": 3000
+  },
   "products": {
     "brainpet": {
       "appId": "dev.brainpet.app",

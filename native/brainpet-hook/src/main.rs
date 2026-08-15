@@ -12,12 +12,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod generated_contract;
 use generated_contract::{
     AGENT_ACTIVITY_METHOD, AGENT_ACTIVITY_SCHEMA_VERSION, BRAINPET_APP_ID,
-    BRAINPET_PRODUCT_DIRECTORY, CONNECT_ATTEMPT_MS, HOOK_DEADLINE_MS, IPC_PROTOCOL_VERSION,
-    LIFECYCLE_STATES, RUNTIME_POLL_INTERVAL_MS,
+    BRAINPET_PRODUCT_DIRECTORY, CONNECT_ATTEMPT_MS, HOOK_DEADLINE_MS, IPC_PROTOCOL,
+    IPC_PROTOCOL_VERSION, LIFECYCLE_STATES, MAX_IPC_MESSAGE_BYTES, RUNTIME_POLL_INTERVAL_MS,
 };
 
 const MAX_HOOK_INPUT_BYTES: u64 = 8 * 1024 * 1024;
-const MAX_IPC_MESSAGE_BYTES: usize = 16 * 1024;
 const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(CONNECT_ATTEMPT_MS);
 const HOOK_DEADLINE: Duration = Duration::from_millis(HOOK_DEADLINE_MS);
 const RUNTIME_POLL_INTERVAL: Duration = Duration::from_millis(RUNTIME_POLL_INTERVAL_MS);
@@ -57,7 +56,6 @@ fn main() {
 enum AgentKind {
     Codex,
     Claude,
-    WorkBuddy,
 }
 
 impl AgentKind {
@@ -65,7 +63,6 @@ impl AgentKind {
         match self {
             Self::Codex => "codex",
             Self::Claude => "claude",
-            Self::WorkBuddy => "workbuddy",
         }
     }
 }
@@ -79,7 +76,6 @@ fn parse_agent_arg() -> Option<AgentKind> {
         return match args.next()?.as_str() {
             "codex" => Some(AgentKind::Codex),
             "claude" | "claude-code" => Some(AgentKind::Claude),
-            "workbuddy" => Some(AgentKind::WorkBuddy),
             _ => None,
         };
     }
@@ -103,10 +99,10 @@ fn map_hook_event(agent: AgentKind, input: &Value, occurred_at: u64) -> Option<V
     let hook_name = object.get("hook_event_name")?.as_str()?;
     let state = match (agent, hook_name) {
         (_, "UserPromptSubmit" | "PreToolUse" | "PostToolUse") => "working",
-        (AgentKind::Claude | AgentKind::WorkBuddy, "PermissionRequest") => "waiting",
+        (AgentKind::Claude, "PermissionRequest") => "waiting",
         (_, "Stop") => "ready",
         (AgentKind::Codex, "ErrorOccurred") => "blocked",
-        (AgentKind::Claude | AgentKind::WorkBuddy, "StopFailure" | "ErrorOccurred") => "blocked",
+        (AgentKind::Claude, "StopFailure" | "ErrorOccurred") => "blocked",
         (_, "SessionEnd") => "idle",
         _ => return None,
     };
@@ -200,7 +196,7 @@ fn send_event_to_discovery(
 ) -> io::Result<()> {
     let request = json!({
         "id": request_id(),
-        "version": 1,
+        "version": IPC_PROTOCOL_VERSION,
         "token": discovery.token.as_str(),
         "method": AGENT_ACTIVITY_METHOD,
         "params": event,
@@ -239,7 +235,7 @@ fn read_discovery_at(path: &Path) -> Option<Discovery> {
         return None;
     }
     let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
-    if value.get("protocol")?.as_str()? != "openpets-ipc"
+    if value.get("protocol")?.as_str()? != IPC_PROTOCOL
         || value.get("protocolVersion")?.as_u64()? != IPC_PROTOCOL_VERSION
         || value.get("product")?.as_str()? != "brainpet"
         || value.get("appId")?.as_str()? != BRAINPET_APP_ID
@@ -646,7 +642,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_and_workbuddy_share_the_same_hook_shape() {
+    fn claude_hook_shape_is_supported_without_hidden_probe_providers() {
         let input = json!({
             "hook_event_name": "PermissionRequest",
             "session_id": "session-2"
@@ -655,11 +651,6 @@ mod tests {
             map_hook_event(AgentKind::Claude, &input, 123)
                 .and_then(|event| event.get("state").cloned()),
             Some(json!("waiting"))
-        );
-        assert_eq!(
-            map_hook_event(AgentKind::WorkBuddy, &input, 123)
-                .and_then(|event| event.get("agent").cloned()),
-            Some(json!("workbuddy"))
         );
     }
 

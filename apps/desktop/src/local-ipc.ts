@@ -11,7 +11,7 @@ import { createStaleLeaseStatus, LeaseManager } from "./lease-manager.js";
 import { debug, error as logError, info } from "./logger.js";
 import { cleanupUnixSocket, getDiscoveryFilePath, getIpcEndpointConfig, parseIpcEndpoint, protectUnixSocket, removeDiscoveryFile, writeDiscoveryFile, type IpcEndpoint, type IpcEndpointConfig, type OpenPetsDiscoveryFile } from "./local-ipc-paths.js";
 import { stat } from "node:fs/promises";
-import { errorResponse, IpcProtocolError, isRecord, maxIpcMessageBytes, maxMediaFileBytes, okResponse, parseIpcRequest, validateAgentLifecycleParams, validateInstallLocalKind, validateInstallLocalPath, validateInstallPetId, validateMediaClickUrl, validateMediaDurationMs, validateMediaPath, validateOptionalLeaseId, validateReaction, validateRequestedPetId, validateSayMessage, validateSessionNonce, type OpenPetsIpcRequest } from "./local-ipc-protocol.js";
+import { errorResponse, IpcProtocolError, isRecord, maxIpcMessageBytes, maxMediaFileBytes, okResponse, openPetsIpcProtocol, openPetsIpcVersion, parseIpcRequest, validateAgentLifecycleParams, validateInstallLocalKind, validateInstallLocalPath, validateInstallPetId, validateMediaClickUrl, validateMediaDurationMs, validateMediaPath, validateOptionalLeaseId, validateReaction, validateRequestedPetId, validateSayMessage, validateSessionNonce, type OpenPetsIpcRequest } from "./local-ipc-protocol.js";
 import { installPet, installPetFromFolderWithResult, installPetFromZipFileWithResult } from "./pet-installation.js";
 import { clearConfinementState, setConfinementState } from "./confinement-manager.js";
 import { isConfinementSupported } from "./capabilities.js";
@@ -286,8 +286,8 @@ async function handleRequest(request: OpenPetsIpcRequest): Promise<unknown> {
   if (request.method === "hello") {
     return {
       ok: true,
-      protocol: "openpets-ipc",
-      protocolVersion: 1,
+      protocol: openPetsIpcProtocol,
+      protocolVersion: openPetsIpcVersion,
       product: ipcDiscovery?.product,
       appId: ipcDiscovery?.appId,
       appVersion: ipcDiscovery?.appVersion ?? "0.0.0",
@@ -307,7 +307,7 @@ async function handleRequest(request: OpenPetsIpcRequest): Promise<unknown> {
     return {
       ok: true,
       appRunning: true,
-      protocolVersion: 1,
+      protocolVersion: openPetsIpcVersion,
       product: ipcDiscovery?.product,
       appId: ipcDiscovery?.appId,
       appVersion: ipcDiscovery?.appVersion ?? "0.0.0",

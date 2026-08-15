@@ -20,7 +20,7 @@ assert.throws(() => parseIpcRequest(JSON.stringify({ ...valid, version: 2 }), to
 assert.throws(() => parseIpcRequest(JSON.stringify({ ...valid, method: "pet.install" }), token));
 assert.throws(() => parseIpcRequest("not json", token));
 
-assert.deepEqual(validateAgentLifecycleParams({ agent: "codex", sessionId: "session-1", turnId: "turn-1", state: "working", occurredAt: 123 }), {
+assert.deepEqual(validateAgentLifecycleParams({ schemaVersion: 1, agent: "codex", sessionId: "session-1", turnId: "turn-1", state: "working", occurredAt: 123, capabilities: ["observeLifecycle"] }), {
   schemaVersion: 1,
   agent: "codex",
   sessionId: "session-1",
@@ -32,6 +32,8 @@ assert.deepEqual(validateAgentLifecycleParams({ agent: "codex", sessionId: "sess
 assert.deepEqual(validateAgentLifecycleParams({ schemaVersion: 1, agent: "codex", sessionId: "session-1", state: "waiting", occurredAt: 123, capabilities: ["observeLifecycle", "openTask", "openTask"] }).capabilities, ["observeLifecycle", "openTask"]);
 assert.deepEqual(validateAgentLifecycleParams({ schemaVersion: 1, agent: "codex", sessionId: "session-1", state: "waiting", occurredAt: 123, capabilities: ["observeLifecycle"], request: { kind: "permission" } }).request, { kind: "permission" });
 for (const invalidLifecycle of [
+  { agent: "codex", sessionId: "session-1", state: "working", occurredAt: 123, capabilities: ["observeLifecycle"] },
+  { schemaVersion: 1, agent: "codex", sessionId: "session-1", state: "working", occurredAt: 123 },
   { schemaVersion: 2, agent: "codex", sessionId: "session-1", state: "working", occurredAt: 123 },
   { agent: "Codex", sessionId: "session-1", state: "working", occurredAt: 123 },
   { agent: "codex", sessionId: "", state: "working", occurredAt: 123 },
@@ -43,7 +45,7 @@ for (const invalidLifecycle of [
   { agent: "codex", sessionId: "session-1", state: "waiting", occurredAt: 123, request: { kind: "private" } },
 ]) assert.throws(() => validateAgentLifecycleParams(invalidLifecycle));
 for (const field of ["prompt", "transcript", "cwd", "toolInput", "toolOutput", "response"]) {
-  assert.throws(() => validateAgentLifecycleParams({ agent: "codex", sessionId: "session-1", state: "working", occurredAt: 123, [field]: "private" }));
+  assert.throws(() => validateAgentLifecycleParams({ schemaVersion: 1, agent: "codex", sessionId: "session-1", state: "working", occurredAt: 123, capabilities: ["observeLifecycle"], [field]: "private" }));
 }
 
 validateReaction("testing");

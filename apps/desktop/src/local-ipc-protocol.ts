@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { extname, isAbsolute } from "node:path";
 
-import { agentActivityPrivacyRejectedFields, agentActivitySchemaVersion, normalizedAgentLifecycleStates } from "@open-pets/agent-events";
+import { agentActivitySchemaVersion, assertAgentActivityContract, companionIpcMaxMessageBytes, companionIpcProtocol, companionIpcVersion, normalizedAgentLifecycleStates } from "@open-pets/agent-events";
 
-export const openPetsIpcProtocol = "openpets-ipc";
-export const openPetsIpcVersion = 1;
-export const maxIpcMessageBytes = 16 * 1024;
+export const openPetsIpcProtocol = companionIpcProtocol;
+export const openPetsIpcVersion = companionIpcVersion;
+export const maxIpcMessageBytes = companionIpcMaxMessageBytes;
 export const transientDisplayMs = 4_000;
 export const maxMediaFileBytes = 10 * 1024 * 1024;
 export const minMediaDurationMs = 1_000;
@@ -100,11 +100,13 @@ export function parseIpcRequest(raw: string, expectedToken: string): OpenPetsIpc
 }
 
 export function validateAgentLifecycleParams(value: unknown): AgentLifecycleParams {
-  if (!isRecord(value)) throw new IpcProtocolError("invalid_params", "Agent lifecycle payload must be an object.");
-  for (const field of agentActivityPrivacyRejectedFields) {
-    if (field in value) throw new IpcProtocolError("invalid_params", `Agent lifecycle payload contains rejected field: ${field}`);
+  try {
+    assertAgentActivityContract(value);
+  } catch (error) {
+    throw new IpcProtocolError("invalid_params", error instanceof Error ? error.message : "Agent lifecycle payload is invalid.");
   }
-  if (value.schemaVersion !== undefined && value.schemaVersion !== agentActivitySchemaVersion) {
+  if (!isRecord(value)) throw new IpcProtocolError("invalid_params", "Agent lifecycle payload must be an object.");
+  if (value.schemaVersion !== agentActivitySchemaVersion) {
     throw new IpcProtocolError("invalid_params", "Agent activity schema version is invalid.");
   }
   const agent = validateLifecycleIdentifier(value.agent, "Agent", 32, /^[a-z0-9][a-z0-9-]*$/);
@@ -116,9 +118,7 @@ export function validateAgentLifecycleParams(value: unknown): AgentLifecyclePara
   if (typeof value.occurredAt !== "number" || !Number.isSafeInteger(value.occurredAt) || value.occurredAt <= 0) {
     throw new IpcProtocolError("invalid_params", "Agent lifecycle timestamp is invalid.");
   }
-  const capabilities = value.capabilities === undefined
-    ? ["observeLifecycle"] as const
-    : validateAgentCompanionCapabilities(value.capabilities);
+  const capabilities = validateAgentCompanionCapabilities(value.capabilities);
   if (!capabilities.includes("observeLifecycle")) {
     throw new IpcProtocolError("invalid_params", "Agent lifecycle provider must declare observeLifecycle.");
   }

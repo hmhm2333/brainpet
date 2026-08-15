@@ -42,13 +42,20 @@ export function preserveAppStateUnknownFields<T extends StateEnvelope>(source: u
 export function writeJsonFileAtomically(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   if (existsSync(path)) {
+    let current: string;
     try {
-      const current = readFileSync(path, "utf8");
+      current = readFileSync(path, "utf8");
+    } catch (error) {
+      throw new Error(`Cannot read existing state before atomic replacement: ${path}`, { cause: error });
+    }
+    let primaryIsValid = false;
+    try {
       JSON.parse(current) as unknown;
-      replaceTextFileAtomically(`${path}.bak`, current);
+      primaryIsValid = true;
     } catch {
       // Never replace a last-known-good backup with a malformed primary file.
     }
+    if (primaryIsValid) replaceTextFileAtomically(`${path}.bak`, current);
   }
   replaceTextFileAtomically(path, `${JSON.stringify(value, null, 2)}\n`);
 }

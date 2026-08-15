@@ -37,8 +37,18 @@ export interface GlobalPlannedTextWrite {
 }
 
 export interface OpenCodeGlobalState {
-  readonly status: "not_installed" | "installed" | "custom" | "conflict" | "error";
+  readonly status: "not_installed" | "installed" | "needs_update" | "custom" | "conflict" | "error";
   readonly message: string;
+}
+
+export interface DoctorOpenCodeGlobalSetupOptions {
+  readonly product: TargetProduct;
+  readonly petId?: string;
+  readonly cliVersion: string;
+  readonly pluginVersion?: string;
+  readonly commandMode?: OpenCodeCommandMode;
+  readonly cliEntryPath?: string;
+  readonly excludeReactions?: readonly string[];
 }
 
 const maxInstructionBytes = 1024 * 1024;
@@ -118,10 +128,10 @@ export function writePreparedOpenCodeGlobalRemove(prepared: { readonly configWri
   if (prepared.instructionWrite) executeTextWrite(prepared.instructionWrite);
 }
 
-export function doctorOpenCodeGlobalSetup(configDir: string): OpenCodeGlobalState {
+export function doctorOpenCodeGlobalSetup(configDir: string, expected?: DoctorOpenCodeGlobalSetupOptions): OpenCodeGlobalState {
   try {
     const paths = getExplicitGlobalOpenCodeConfigPaths(configDir);
-    return classifyGlobalState(configDir, readExistingGlobalConfigs(configDir, paths.candidates));
+    return classifyGlobalState(configDir, readExistingGlobalConfigs(configDir, paths.candidates), expected);
   } catch (error) {
     return { status: "error", message: error instanceof Error ? error.message : "OpenCode global setup status is unavailable." };
   }
@@ -224,10 +234,22 @@ function hasCustomOpenPetsEntry(configDir: string, config: Record<string, unknow
   return false;
 }
 
-function classifyGlobalState(configDir: string, existing: readonly { readonly path: string; readonly config: Record<string, unknown> }[]): OpenCodeGlobalState {
+function classifyGlobalState(configDir: string, existing: readonly { readonly path: string; readonly config: Record<string, unknown> }[], expected?: DoctorOpenCodeGlobalSetupOptions): OpenCodeGlobalState {
   if (existing.some((entry) => hasCustomOpenPetsEntry(configDir, entry.config))) return { status: "custom", message: "OpenCode has custom OpenPets-like global entries. Edit or remove them manually." };
   const owners = existing.filter((entry) => hasManagedOpenPetsEntry(configDir, entry.config));
   if (owners.length > 1) return { status: "conflict", message: "OpenCode has OpenPets entries in multiple global config files. Remove duplicates manually." };
+  if (owners.length === 1 && expected) {
+    const configs = existing.map((entry) => entry.config);
+    const instructionPath = buildOpenCodeInstructionPath("global", configDir);
+    const instructionContent = existsSync(instructionPath) ? readSafeInstructionFile(instructionPath) : "";
+    const statuses = [
+      classifyOpenCodeMcpStatus(configs, expected),
+      classifyOpenCodePluginStatus(configs, expected.petId, expected.pluginVersion ?? expected.cliVersion, expected.excludeReactions, expected.product),
+      classifyOpenCodeInstructionsStatus(configs, "global", configDir, { [instructionPath]: instructionContent }),
+    ];
+    if (statuses.every((status) => status.status === "installed")) return { status: "installed", message: `OpenCode global setup targets ${expected.product}.` };
+    return { status: "needs_update", message: `OpenCode global setup does not match the ${expected.product} product profile.` };
+  }
   if (owners.length === 1) return { status: "installed", message: "OpenCode global OpenPets setup is installed." };
   return { status: "not_installed", message: "OpenCode global OpenPets setup is not installed." };
 }

@@ -61,6 +61,7 @@
     "wait-on": "^9.0.10"
   },
   "dependencies": {
+    "@open-pets/adapter-core": "workspace:*",
     "@open-pets/agent-events": "workspace:*",
     "@open-pets/client": "workspace:*",
     "@open-pets/claude": "workspace:*",

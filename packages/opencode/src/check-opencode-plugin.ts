@@ -74,13 +74,20 @@ try {
   });
 
   hooks.event({ event: { type: "session.status", properties: { sessionID: "session-1", status: { type: "busy" } } } });
+  assert.equal(scheduled.length, 1);
+  await scheduled.shift()?.();
   hooks.event({ event: { type: "permission.asked", properties: { sessionID: "session-1" } } });
+  assert.equal(scheduled.length, 1);
+  await scheduled.shift()?.();
   hooks["chat.message"]({ sessionID: "session-1" }, {});
+  assert.equal(scheduled.length, 1);
+  await scheduled.shift()?.();
   hooks["tool.execute.before"]({ tool: "edit", sessionID: "session-1" }, { args: { prompt: "private" } });
+  assert.equal(scheduled.length, 1);
+  await scheduled.shift()?.();
   hooks["tool.execute.before"]({ tool: "openpets_openpets_say", sessionID: "session-1" }, { args: {} });
 
-  assert.equal(scheduled.length, 4, "each valid provider event schedules exactly one lifecycle update");
-  await Promise.all(scheduled.splice(0).map((work) => work()));
+  assert.equal(scheduled.length, 0, "ignored tools must not schedule lifecycle work");
   assert.equal(lifecycleCalls.length, 4);
   assert.deepEqual((lifecycleCalls[0] as { state: string }).state, "working");
   assert.deepEqual((lifecycleCalls[1] as { state: string }).state, "waiting");
@@ -99,6 +106,43 @@ try {
   await scheduled.shift()?.();
   assert.equal(errors.length, 1, "transport failures fail open without a second channel");
   assert.deepEqual(forbiddenCalls, []);
+
+  const burstCalls: unknown[] = [];
+  const burstScheduled: Array<() => Promise<void>> = [];
+  const burstHooks = createOpenPetsOpenCodeHooks({
+    clientFactory: () => ({ ...client, reportAgentActivity: async (event) => { burstCalls.push(event); } }),
+    schedule: (work) => { burstScheduled.push(work); },
+    now: () => 3_000,
+  });
+  burstHooks.event({ event: { type: "session.status", properties: { sessionID: "burst-session", status: { type: "busy" } } } });
+  burstHooks.event({ event: { type: "permission.asked", properties: { sessionID: "burst-session" } } });
+  burstHooks["chat.message"]({ sessionID: "burst-session" }, {});
+  assert.equal(burstScheduled.length, 1, "a burst must have one bounded drain, not an unbounded promise chain");
+  await burstScheduled.shift()?.();
+  assert.equal(burstCalls.length, 1, "same-session bursts coalesce to the latest lifecycle state");
+  assert.equal((burstCalls[0] as { readonly state: string }).state, "working");
+
+  let clock = 4_000;
+  let releaseSlow: (() => void) | undefined;
+  const slowCalls: unknown[] = [];
+  const slowScheduled: Array<() => Promise<void>> = [];
+  const slowHooks = createOpenPetsOpenCodeHooks({
+    clientFactory: () => ({ ...client, reportAgentActivity: async (event) => {
+      slowCalls.push(event);
+      await new Promise<void>((resolve) => { releaseSlow = resolve; });
+    } }),
+    schedule: (work) => { slowScheduled.push(work); },
+    now: () => clock,
+    deliveryDeadlineMs: 25,
+  });
+  slowHooks.event({ event: { type: "session.status", properties: { sessionID: "slow-session", status: { type: "busy" } } } });
+  const draining = slowScheduled.shift()?.();
+  clock += 1;
+  slowHooks.event({ event: { type: "permission.asked", properties: { sessionID: "slow-session" } } });
+  clock += 100;
+  releaseSlow?.();
+  await draining;
+  assert.equal(slowCalls.length, 1, "expired queued state must not replay after a slow host recovers");
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

@@ -83,7 +83,9 @@ try {
   const [openPetsHello, brainPetHello] = await Promise.all([openPetsClient.hello(), brainPetClient.hello()]);
   assert.deepEqual(openPetsHello, { ok: true, product: "openpets", appId: "dev.openpets.app" });
   assert.deepEqual(brainPetHello, { ok: true, product: "brainpet", appId: "dev.brainpet.app" });
-  assert.throws(() => brainPetClient.reportAgentActivity({ agent: "codex", sessionId: "session-private", state: "working", occurredAt: 123, capabilities: ["observeLifecycle"], prompt: "private" } as never), /rejected field/);
+  assert.throws(() => brainPetClient.reportAgentActivity({ schemaVersion: 1, agent: "codex", sessionId: "session-private", state: "working", occurredAt: 123, capabilities: ["observeLifecycle"], prompt: "private" } as never), /rejected field/);
+  assert.throws(() => brainPetClient.reportAgentActivity({ agent: "codex", sessionId: "missing-version", state: "working", occurredAt: 123, capabilities: ["observeLifecycle"] } as never), /schemaVersion/);
+  assert.throws(() => brainPetClient.reportAgentActivity({ schemaVersion: 1, agent: "codex", sessionId: "missing-capabilities", state: "working", occurredAt: 123 } as never), /capabilities/);
   assert.deepEqual(openPetsHost.requests, [{ method: "hello", token: openPetsHost.token }]);
   assert.deepEqual(brainPetHost.requests, [{ method: "hello", token: brainPetHost.token }]);
 } finally {

@@ -42,19 +42,10 @@ const runtime = createOpenPetsPiExtension(api, {
 assert.equal(typeof extension, "function");
 assert.equal(typeof runtime.handleEvent, "function");
 assert.equal(typeof commandHandler, "function");
-for (const eventName of ["session_start", "session_shutdown", "agent_start", "agent_end", "turn_start", "tool_execution_start", "tool_execution_end"]) {
-  assert.equal(typeof handlers.get(eventName), "function", `${eventName} must be subscribed`);
-}
-
-handlers.get("session_start")?.({ reason: "startup", prompt: "PRIVATE_PROMPT" });
-handlers.get("tool_execution_start")?.({ toolName: "bash", args: { command: "pnpm test /Users/alvin/private token=abc" } });
-handlers.get("tool_execution_end")?.({ isError: true, result: "STACK /Users/alvin/private token=abc" });
-assert.equal(calls.length, 0, "Pi event callbacks must not block on OpenPets IPC");
-while (scheduled.length) await scheduled.shift()?.();
-
-assert.deepEqual(calls.slice(0, 3), ["react:waving", "react:testing", "say:Something failed:error"]);
-assert.ok(!calls.join("\n").includes("/Users/alvin/private"));
-assert.ok(!calls.join("\n").includes("token=abc"));
+assert.equal(handlers.size, 0, "Pi must not register an implicit lifecycle transport");
+runtime.handleEvent({ type: "session_start", prompt: "PRIVATE_PROMPT" });
+assert.equal(scheduled.length, 0);
+assert.equal(calls.length, 0);
 
 await commandHandler?.("status", { ui: { notify: (message: string) => notifications.push(message) } });
 await commandHandler?.("test", { ui: { notify: (message: string) => notifications.push(message) } });

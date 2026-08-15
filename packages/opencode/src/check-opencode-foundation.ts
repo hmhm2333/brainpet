@@ -132,13 +132,18 @@ try {
   if (createTestSymlink(project, join(root, "project-link"))) assert.throws(() => getProjectOpenCodeConfigPaths(join(root, "project-link")));
 
   const globalDir = join(root, "global-missing");
-  const globalPrepared = prepareOpenCodeGlobalSetup({ configDir: globalDir, petId: "fixer", cliVersion: "0.0.0" });
+  const globalPrepared = prepareOpenCodeGlobalSetup({ product: "brainpet", configDir: globalDir, petId: "fixer", cliVersion: "0.0.0" });
   writePreparedOpenCodeGlobalSetup(globalPrepared);
   assert.equal(existsSync(join(globalDir, "opencode.jsonc")), true);
   assert.equal(doctorOpenCodeGlobalSetup(globalDir).status, "installed");
+  assert.equal(doctorOpenCodeGlobalSetup(globalDir, { product: "brainpet", petId: "fixer", cliVersion: "0.0.0" }).status, "installed");
+  assert.equal(doctorOpenCodeGlobalSetup(globalDir, { product: "openpets", petId: "fixer", cliVersion: "0.0.0" }).status, "needs_update");
   const globalConfig = readFileSync(join(globalDir, "opencode.jsonc"), "utf8");
   assert.match(globalConfig, /@open-pets\/opencode@0\.0\.0/);
   assert.match(readFileSync(join(globalDir, "openpets.md"), "utf8"), /OPENPETS:START/);
+  writePreparedOpenCodeGlobalSetup(prepareOpenCodeGlobalSetup({ product: "openpets", configDir: globalDir, petId: "fixer", cliVersion: "0.0.0" }));
+  assert.equal(doctorOpenCodeGlobalSetup(globalDir, { product: "openpets", petId: "fixer", cliVersion: "0.0.0" }).status, "installed");
+  assert.equal(doctorOpenCodeGlobalSetup(globalDir, { product: "brainpet", petId: "fixer", cliVersion: "0.0.0" }).status, "needs_update");
   const globalRemove = prepareOpenCodeGlobalRemove(globalDir);
   writePreparedOpenCodeGlobalRemove(globalRemove);
   assert.equal(doctorOpenCodeGlobalSetup(globalDir).status, "not_installed");

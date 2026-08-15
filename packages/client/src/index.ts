@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { posix, win32 } from "node:path";
 
 import { parseIpcEndpoint, readDiscoveryFile, type OpenPetsDiscoveryFile } from "./discovery.js";
-import { agentActivityPrivacyRejectedFields } from "@open-pets/agent-events";
+import { assertAgentActivityContract } from "@open-pets/agent-events";
 import { agentActivitySchemaVersion, allowedAgentCompanionRequestKinds, connectTimeoutMs, maxIpcMessageBytes, openPetsIpcVersion, parseIpcResponse, responseTimeoutMs, validateAgentCompanionCapabilities, validateAgentCompanionRequestOptions, validateAgentLifecycleState, validateReaction, OpenPetsClientError, type AgentCompanionCapability, type AgentCompanionRequestKind, type AgentCompanionRequestOption, type AgentLifecycleState, type OpenPetsIpcMethod, type OpenPetsIpcRequest, type OpenPetsReaction } from "./protocol.js";
 import { maxRemoteMessageBytes, openPetsRemoteProtocol, openPetsRemoteVersion, parseRemoteEndpoint, parseRemoteResponse, remoteConnectTimeoutMs, remoteResponseTimeoutMs, validateRemoteClientId, validateRemoteMessage, validateRemoteReaction, validateRemoteToken, type OpenPetsRemoteEndpoint, type OpenPetsRemoteMethod, type OpenPetsRemoteRequest } from "./remote-protocol.js";
 import { isTargetProfile, resolveTargetProfile, targetProducts, type TargetProduct, type TargetProfile } from "./target-profile.js";
@@ -80,13 +80,13 @@ export interface OpenPetsPetListItem {
 }
 
 export interface OpenPetsAgentLifecycleEvent {
-  readonly schemaVersion?: 1;
+  readonly schemaVersion: 1;
   readonly agent: string;
   readonly sessionId: string;
   readonly turnId?: string;
   readonly state: AgentLifecycleState;
   readonly occurredAt: number;
-  readonly capabilities?: readonly AgentCompanionCapability[];
+  readonly capabilities: readonly AgentCompanionCapability[];
   readonly request?: { readonly kind: AgentCompanionRequestKind; readonly requestId?: string; readonly options?: readonly AgentCompanionRequestOption[] };
 }
 
@@ -169,15 +169,16 @@ export function createOpenPetsClient(options: OpenPetsClientOptions = {}): OpenP
 }
 
 function validateAgentLifecycleEvent(event: OpenPetsAgentLifecycleEvent): OpenPetsAgentLifecycleEvent {
-  if (!event || typeof event !== "object") throw new OpenPetsClientError("invalid_params", "Agent lifecycle event is required.");
-  for (const field of agentActivityPrivacyRejectedFields) {
-    if (field in event) throw new OpenPetsClientError("invalid_params", `Agent lifecycle event contains rejected field: ${field}`);
+  try {
+    assertAgentActivityContract(event);
+  } catch (error) {
+    throw new OpenPetsClientError("invalid_params", error instanceof Error ? error.message : "Agent lifecycle event is invalid.");
   }
   if (typeof event.agent !== "string" || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(event.agent)) throw new OpenPetsClientError("invalid_params", "Agent is invalid.");
   if (!isLifecycleIdentifier(event.sessionId)) throw new OpenPetsClientError("invalid_params", "Session id is invalid.");
   if (event.turnId !== undefined && !isLifecycleIdentifier(event.turnId)) throw new OpenPetsClientError("invalid_params", "Turn id is invalid.");
   if (!Number.isSafeInteger(event.occurredAt) || event.occurredAt <= 0) throw new OpenPetsClientError("invalid_params", "Lifecycle timestamp is invalid.");
-  if (event.schemaVersion !== undefined && event.schemaVersion !== agentActivitySchemaVersion) throw new OpenPetsClientError("invalid_params", "Agent activity schema version is invalid.");
+  if (event.schemaVersion !== agentActivitySchemaVersion) throw new OpenPetsClientError("invalid_params", "Agent activity schema version is invalid.");
   const state = validateAgentLifecycleState(event.state);
   const request = event.request === undefined ? undefined : validateAgentCompanionRequest(event.request);
   if (request && state !== "waiting") throw new OpenPetsClientError("invalid_params", "Agent request summaries require the waiting state.");

@@ -28,7 +28,8 @@
     "messagesSent": 3,
     "reactionsSent": 4,
     "reactionCounts": {
-      "success": 2
+      "success": 2,
+      "futureReaction": 17
     },
     "perPetActivityCounts": {},
     "futureCounter": 9

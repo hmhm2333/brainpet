@@ -2,7 +2,7 @@ import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 
 import { createOpenPetsClient, type OpenPetsClient, type OpenPetsReaction, type TargetProduct } from "@open-pets/client";
-import { createNormalizedAgentLifecycleEvent, type HookSpeechCategory, type NormalizedAgentLifecycleEvent } from "@open-pets/agent-events";
+import { agentActivityDeliveryDeadlineMs, createNormalizedAgentLifecycleEvent, type HookSpeechCategory, type NormalizedAgentLifecycleEvent } from "@open-pets/agent-events";
 import { createInstallerPlan, defineAdapterDescriptor, type InstallerPlan, type TargetProfile } from "@open-pets/adapter-core";
 
 import { validateOpenPetsPetArg } from "./opencode-previews.js";
@@ -22,6 +22,7 @@ export interface OpenCodePluginRuntimeOptions extends OpenCodePluginOptions {
   readonly random?: () => number;
   readonly throttlePath?: string;
   readonly debugLog?: (message: string) => void;
+  readonly deliveryDeadlineMs?: number;
 }
 
 export const openCodeAdapterDescriptor = defineAdapterDescriptor({
@@ -63,26 +64,42 @@ export function createOpenPetsOpenCodeHooks(options: OpenCodePluginRuntimeOption
   const schedule = options.schedule ?? defaultSchedule;
   const debug = options.debug === true || process.env.OPENPETS_DEBUG === "1";
   const debugLog = options.debugLog ?? ((message) => { if (debug) process.stderr.write(`${message}\n`); });
+  const now = options.now ?? Date.now;
+  const deliveryDeadline = options.deliveryDeadlineMs ?? agentActivityDeliveryDeadlineMs;
   let client: OpenPetsClient | undefined;
-  let scheduledTail: Promise<void> | undefined;
+  let drainScheduled = false;
+  const pendingBySession = new Map<string, { readonly lifecycle: NormalizedAgentLifecycleEvent; readonly expiresAt: number }>();
 
   const run = (lifecycle?: NormalizedAgentLifecycleEvent | null): void => {
     if (!lifecycle) return;
+    pendingBySession.delete(lifecycle.sessionId);
+    pendingBySession.set(lifecycle.sessionId, { lifecycle, expiresAt: now() + deliveryDeadline });
+    while (pendingBySession.size > 32) pendingBySession.delete(pendingBySession.keys().next().value as string);
+    if (drainScheduled) return;
+    drainScheduled = true;
     try {
       schedule(async () => {
-        const work = async () => {
-          try {
-            client ??= clientFactory();
-            await client.reportAgentActivity(lifecycle);
-          } catch (error) {
-            debugLog(`OpenPets OpenCode lifecycle ignored error: ${sanitizeDebugError(error)}`);
+        try {
+          while (pendingBySession.size > 0) {
+            const batch = [...pendingBySession.values()];
+            pendingBySession.clear();
+            for (const pending of batch) {
+              const remaining = pending.expiresAt - now();
+              if (remaining <= 0) continue;
+              try {
+                client ??= clientFactory();
+                await settleWithin(client.reportAgentActivity(pending.lifecycle), remaining);
+              } catch (error) {
+                debugLog(`OpenPets OpenCode lifecycle ignored error: ${sanitizeDebugError(error)}`);
+              }
+            }
           }
-        };
-        const current = scheduledTail ? scheduledTail.then(work) : work();
-        scheduledTail = current.then(() => undefined, () => undefined);
-        await current;
+        } finally {
+          drainScheduled = false;
+        }
       });
     } catch (error) {
+      drainScheduled = false;
       debugLog(`OpenPets OpenCode plugin scheduling ignored error: ${sanitizeDebugError(error)}`);
     }
   };
@@ -90,18 +107,18 @@ export function createOpenPetsOpenCodeHooks(options: OpenCodePluginRuntimeOption
   return {
     event(input) {
       try {
-        run(mapOpenCodeLifecycleEvent(input.event, options.now?.() ?? Date.now()));
+        run(mapOpenCodeLifecycleEvent(input.event, now()));
       } catch (error) {
         debugLog(`OpenPets OpenCode event ignored error: ${sanitizeDebugError(error)}`);
       }
     },
     "chat.message"(input) {
-      run(mapOpenCodeSyntheticLifecycle(input, "working", options.now?.() ?? Date.now()));
+      run(mapOpenCodeSyntheticLifecycle(input, "working", now()));
     },
     "tool.execute.before"(input, output) {
       const tool = typeof input.tool === "string" ? input.tool : "";
       if (shouldIgnoreOpenPetsTool(tool)) return;
-      run(mapOpenCodeSyntheticLifecycle(input, "working", options.now?.() ?? Date.now()));
+      run(mapOpenCodeSyntheticLifecycle(input, "working", now()));
     },
     "tool.execute.after"() {
       // Intentionally quiet for now; session.error/session.status events provide less noisy completion signals.
@@ -204,6 +221,21 @@ function getEventPermission(event: unknown): string | undefined {
 
 function defaultSchedule(work: () => Promise<void>): void {
   queueMicrotask(() => { void work(); });
+}
+
+function settleWithin(work: Promise<unknown>, timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: unknown): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error === undefined) resolve();
+      else reject(error);
+    };
+    const timer = setTimeout(() => finish(), Math.max(1, timeoutMs));
+    void work.then(() => finish(), (error) => finish(error));
+  });
 }
 
 function sanitizeDebugError(error: unknown): string {

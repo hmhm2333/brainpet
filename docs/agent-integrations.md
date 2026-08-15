@@ -61,7 +61,9 @@ current plugin parser does not register Claude's `PermissionRequest` or
 Prompt text, tool input/output,
 transcripts, paths, and working directories are deliberately discarded.
 
-The schema-v1 payload declares provider capabilities and may include only a
+The schema-v1 payload requires both `schemaVersion` and `capabilities`; clients
+and the desktop apply the same generated strict envelope gate and reject a
+missing required field instead of supplying a compatibility default. It may include only a
 bounded request category plus short structured options; it still carries no
 task body. Capability claims from lifecycle events are display metadata, not
 authority. A side-effect control appears only when the desktop has also
@@ -203,10 +205,14 @@ Ships both a config manager and a runtime plugin.
   instruction blocks use `<!-- OPENPETS:START/END -->` markers. Full
   prepare/write/remove/doctor lifecycle. OpenCode uses the XDG-style
   `~/.config/opencode/` location on Windows as well; it does not use
-  `%APPDATA%\opencode`.
+  `%APPDATA%\opencode`. Desktop doctoring compares the installed MCP and plugin
+  entries with the exact BrainPet/OpenPets product, package version, pet, and
+  command-mode profile; an opposite-product installation is `needs_update`.
 - **Runtime** (`opencode-plugin-runtime.ts`, plugin id `open-pets-opencode`):
-  hooks `event`, `chat.message`, `tool.execute.before/after` and emits one
-  ordered `agent.activity` update for each recognized event. It does not acquire
+  hooks `event`, `chat.message`, `tool.execute.before/after` and emits
+  privacy-minimal `agent.activity` updates. Delivery uses a bounded 32-session
+  latest-state queue; same-session bursts coalesce, expired states are dropped
+  at the generated deadline, and a slow host cannot cause stale replay. It does not acquire
   a pet lease or send automatic reaction/speech. Existing `pet` and
   `excludeReactions` config keys remain parse-compatible during migration but do
   not create a second lifecycle channel.
@@ -233,9 +239,10 @@ the CLI writes project rules.
 
 ## Pi - `@open-pets/pi`
 
-A Pi coding-agent extension (declared in `pi.extensions`). It maps Pi lifecycle
-events (`session_start`, `agent_start`, `turn_start`, …) to reactions and
-registers a `/openpets` slash command namespace (`status`, `test`,
+A Pi coding-agent extension (declared in `pi.extensions`). Pi is not a
+registered automatic lifecycle adapter, so the extension does not subscribe to
+session/tool events and never turns them into implicit reactions or speech. It
+registers only a user-invoked `/openpets` slash command namespace (`status`, `test`,
 `react <reaction>`, `say <message>`). MVP scope is default-pet-only and
 non-blocking; it registers **no** model-callable tools, and never forwards
 prompt/assistant/tool/command text, paths, URLs, or secrets.
@@ -279,5 +286,5 @@ discovery-based behavior unchanged.
 | MCP (generic) | agent's MCP config | stdio MCP tools |
 | OpenCode | `.opencode/` or `~/.config/opencode/` | plugin event hooks |
 | Cursor | `.cursor/mcp.json` + rules | MCP tools |
-| Pi | `pi.extensions` | extension events + `/openpets` |
+| Pi | `pi.extensions` | explicit `/openpets` commands only |
 | Codex desktop (BrainPet) | Codex plugin marketplace | lifecycle hooks → local `agent.activity` |

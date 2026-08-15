@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readdir } from "node:fs/promises";
+import electronPath from "electron";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "..");
@@ -57,6 +58,7 @@ async function main() {
 
   const behaviorTests = (await readdir(join(rootDir, ".test-dist", "tests")))
     .filter((name) => name.endsWith(".test.js"))
+    .filter((name) => name !== "app-state-migration.test.js")
     .sort()
     .map((name) => `.test-dist/tests/${name}`);
   const contractTests = (await readdir(join(rootDir, ".test-dist", "contracts")))
@@ -67,6 +69,9 @@ async function main() {
   // 3. Run behavior tests
   console.log("\n[3/5] Running behavior tests...");
   for (const test of behaviorTests) await run("node", [test]);
+  await run(electronPath, [".test-dist/tests/app-state-migration.test.js"], {
+    env: { ...process.env, OPENPETS_DESKTOP_ROOT: rootDir, ELECTRON_RUN_AS_NODE: undefined },
+  });
 
   // 4. Run contract tests
   console.log("\n[4/5] Running contract tests...");

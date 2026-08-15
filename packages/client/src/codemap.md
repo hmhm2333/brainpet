@@ -52,6 +52,7 @@ IPC protocol constants, request/response types, `parseIpcResponse()`, `validateR
 - `validateReaction()` - Ensures reaction is in allowed enum
 - `validateAgentLifecycleState()` - Ensures lifecycle state is one of working/waiting/ready/blocked/idle
 - `validateAgentCompanionCapabilities()` - Rejects unknown provider capabilities and requires lifecycle observation
+- `reportAgentActivity()` - Requires explicit `schemaVersion` and `capabilities`; the shared agent-events contract rejects missing or private fields before IPC
 - `parseIpcResponse()` - Discriminated union parsing (ok: true/false)
 
 ### discovery.ts
@@ -60,7 +61,7 @@ Discovery file handling. `getDiscoveryFilePaths(product)` resolves exactly one p
 
 ### target-profile.ts
 
-Single source for `TargetProfile`: product, app id, discovery path, runtime marker path, update channel and adapter contract version. Both desktop and integration packages use this resolver.
+Single source for `TargetProfile`: product, app id, discovery path, runtime marker path, update channel and adapter contract version. Discovery app identity is read from the generated product definitions rather than a product-name branch.
 
 **Platform Paths:**
 - macOS: `~/Library/Application Support/{OpenPets,BrainPet}/runtime/ipc.json`

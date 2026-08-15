@@ -57,7 +57,7 @@ try {
     assert.equal((await listTargets(port)).some((target) => target.title === "BrainPet"), false, "feature flag must prevent the stage window");
     const rollbackClient = createOpenPetsClient({ target: "brainpet", discoveryPath });
     await assert.rejects(
-      rollbackClient.reportAgentActivity({ agent: "codex", sessionId: "rollback-probe", state: "working", occurredAt: Date.now(), capabilities: ["observeLifecycle"] }),
+      rollbackClient.reportAgentActivity({ schemaVersion: 1, agent: "codex", sessionId: "rollback-probe", state: "working", occurredAt: Date.now(), capabilities: ["observeLifecycle"] }),
       /disabled|unsupported/i,
       "feature flag rollback must reject lifecycle ingestion instead of hiding only the UI",
     );
@@ -68,8 +68,8 @@ try {
   } else {
   const companionClient = createOpenPetsClient({ target: "brainpet", discoveryPath });
   const companionNow = Date.now();
-  await companionClient.reportAgentActivity({ agent: "codex", sessionId: "smoke-working", turnId: "turn-working", state: "working", occurredAt: companionNow, capabilities: ["observeLifecycle"] });
-  await companionClient.reportAgentActivity({ agent: "claude", sessionId: "smoke-review", turnId: "turn-review", state: "waiting", occurredAt: companionNow + 1, capabilities: ["observeLifecycle", "respondToRequest"], request: { kind: "permission", requestId: "smoke-request", options: [{ id: "once", label: "Allow once", intent: "runOnce" }, { id: "deny", label: "Deny", intent: "deny" }] } });
+  await companionClient.reportAgentActivity({ schemaVersion: 1, agent: "codex", sessionId: "smoke-working", turnId: "turn-working", state: "working", occurredAt: companionNow, capabilities: ["observeLifecycle"] });
+  await companionClient.reportAgentActivity({ schemaVersion: 1, agent: "claude", sessionId: "smoke-review", turnId: "turn-review", state: "waiting", occurredAt: companionNow + 1, capabilities: ["observeLifecycle", "respondToRequest"], request: { kind: "permission", requestId: "smoke-request", options: [{ id: "once", label: "Allow once", intent: "runOnce" }, { id: "deny", label: "Deny", intent: "deny" }] } });
   await waitForEvaluation(petTarget, `Boolean(document.querySelector('[data-companion-toggle]'))`, 2_000);
   const companionBadge = await evaluate(petTarget, `(() => {
     const button = document.querySelector('[data-companion-toggle]');
@@ -101,8 +101,8 @@ try {
   await writeFile(companionOutputPath, Buffer.from(companionScreenshot.data, "base64"));
   await clickWindowPoint(petTarget, await evaluate(petTarget, `(() => { const button = document.querySelector('[data-companion-toggle]'); const rect = button.getBoundingClientRect(); return { viewportWidth: innerWidth, viewportHeight: innerHeight, screenX, screenY, xRatio: (rect.left + rect.width / 2) / innerWidth, yRatio: (rect.top + rect.height / 2) / innerHeight }; })()`), petWindowTitle, false);
   await waitForEvaluation(petTarget, `document.querySelector('[data-companion-toggle]')?.getAttribute('aria-expanded') === 'false'`, 2_000);
-  await companionClient.reportAgentActivity({ agent: "codex", sessionId: "smoke-working", turnId: "turn-working", state: "idle", occurredAt: companionNow + 2, capabilities: ["observeLifecycle"] });
-  await companionClient.reportAgentActivity({ agent: "claude", sessionId: "smoke-review", turnId: "turn-cleanup", state: "idle", occurredAt: companionNow + 3, capabilities: ["observeLifecycle"] });
+  await companionClient.reportAgentActivity({ schemaVersion: 1, agent: "codex", sessionId: "smoke-working", turnId: "turn-working", state: "idle", occurredAt: companionNow + 2, capabilities: ["observeLifecycle"] });
+  await companionClient.reportAgentActivity({ schemaVersion: 1, agent: "claude", sessionId: "smoke-review", turnId: "turn-cleanup", state: "idle", occurredAt: companionNow + 3, capabilities: ["observeLifecycle"] });
   await waitForEvaluation(petTarget, `!document.querySelector('[data-companion-toggle]')`, 2_000);
   await companionClient.say("PIXEL UI", { reaction: "working" });
   await waitForEvaluation(petTarget, `Boolean(document.querySelector('.bubble'))`, 2_000);

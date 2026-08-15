@@ -2,7 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 import { basename, dirname } from "node:path";
 
 import { isRecord, maxIpcMessageBytes, openPetsIpcProtocol, openPetsIpcVersion, OpenPetsClientError } from "./protocol.js";
-import { isTargetProfile, resolveTargetProfile, type TargetProduct, type TargetProfile } from "./target-profile.js";
+import { isTargetProfile, resolveTargetProfile, targetProductDefinitions, type TargetProduct, type TargetProfile } from "./target-profile.js";
 
 export interface OpenPetsDiscoveryFile {
   readonly protocolVersion: 1;
@@ -68,7 +68,7 @@ export function validateDiscovery(value: unknown, expectedProduct?: TargetProduc
   if (value.protocolVersion !== openPetsIpcVersion) throw new OpenPetsClientError("invalid_discovery", "Discovery protocol version is invalid.");
   if (value.product !== "brainpet" && value.product !== "openpets") throw new OpenPetsClientError("invalid_discovery", "Discovery product is invalid.");
   if (expectedProduct !== undefined && value.product !== expectedProduct) throw new OpenPetsClientError("invalid_discovery", "Discovery product does not match the requested target.");
-  const expectedAppId = value.product === "brainpet" ? "dev.brainpet.app" : "dev.openpets.app";
+  const expectedAppId = targetProductDefinitions[value.product].appId;
   if (value.appId !== expectedAppId) throw new OpenPetsClientError("invalid_discovery", "Discovery app identity is invalid.");
   if (typeof value.endpoint !== "string") throw new OpenPetsClientError("invalid_discovery", "Discovery endpoint is invalid.");
   if (typeof value.token !== "string" || value.token.length < 16 || value.token.length > 256) throw new OpenPetsClientError("invalid_discovery", "Discovery token is invalid.");

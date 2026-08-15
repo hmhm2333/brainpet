@@ -1,6 +1,6 @@
-import { agentActivityPrivacyRejectedFields, agentActivitySchemaVersion, normalizedAgentLifecycleStates } from "./generated-contract.js";
+import { agentActivityPrivacyRejectedFields, agentActivityRequiredFields, agentActivitySchemaVersion, normalizedAgentLifecycleStates } from "./generated-contract.js";
 
-export { agentActivityMethod, agentActivityOptionalFields, agentActivityPrivacyRejectedFields, agentActivityRequiredFields, agentActivitySchemaVersion, normalizedAgentLifecycleStates } from "./generated-contract.js";
+export { agentActivityDeliveryDeadlineMs, agentActivityMethod, agentActivityOptionalFields, agentActivityPrivacyRejectedFields, agentActivityRequiredFields, agentActivitySchemaVersion, companionIpcConnectTimeoutMs, companionIpcMaxMessageBytes, companionIpcProtocol, companionIpcResponseTimeoutMs, companionIpcVersion, normalizedAgentLifecycleStates } from "./generated-contract.js";
 
 export type HookSpeechCategory = "thinking" | "success" | "error" | "permission";
 export type NormalizedAgentLifecycleState = typeof normalizedAgentLifecycleStates[number];
@@ -52,6 +52,24 @@ export function assertNoRejectedAgentActivityFields(value: unknown): void {
   for (const field of agentActivityPrivacyRejectedFields) {
     if (field in value) throw new TypeError(`Agent lifecycle event contains rejected field: ${field}`);
   }
+}
+
+/** Shared strict envelope gate used on both sides of local IPC. */
+export function assertAgentActivityContract(value: unknown): asserts value is Record<string, unknown> {
+  assertNoRejectedAgentActivityFields(value);
+  const record = value as Record<string, unknown>;
+  for (const field of agentActivityRequiredFields) {
+    if (!Object.prototype.hasOwnProperty.call(record, field) || record[field] === undefined) {
+      throw new TypeError(`Agent lifecycle event is missing required field: ${field}`);
+    }
+  }
+  if (record.schemaVersion !== agentActivitySchemaVersion) throw new TypeError("Agent activity schema version is invalid.");
+  if (typeof record.agent !== "string" || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(record.agent)) throw new TypeError("Agent lifecycle provider is invalid.");
+  if (!isOpaqueIdentifier(record.sessionId, 160)) throw new TypeError("Agent lifecycle session id is invalid.");
+  if (record.turnId !== undefined && !isOpaqueIdentifier(record.turnId, 160)) throw new TypeError("Agent lifecycle turn id is invalid.");
+  if (typeof record.state !== "string" || !normalizedAgentLifecycleStates.includes(record.state as NormalizedAgentLifecycleState)) throw new TypeError("Agent lifecycle state is invalid.");
+  if (!Number.isSafeInteger(record.occurredAt) || (record.occurredAt as number) <= 0) throw new TypeError("Agent lifecycle timestamp is invalid.");
+  if (!Array.isArray(record.capabilities) || !record.capabilities.includes("observeLifecycle")) throw new TypeError("Agent lifecycle provider must declare observeLifecycle.");
 }
 
 export const hookSpeechPools: Record<HookSpeechCategory, readonly string[]> = {

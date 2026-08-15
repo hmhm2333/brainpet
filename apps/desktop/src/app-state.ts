@@ -492,7 +492,7 @@ function normalizeActivity(value: unknown): OpenPetsActivityState {
 
 function normalizeReactionCounts(value: unknown): Record<OpenPetsReaction, number> {
   const record = isRecord(value) ? value : {};
-  const counts = {} as Record<OpenPetsReaction, number>;
+  const counts = copyUnknownFields(record, allowedReactions) as Record<OpenPetsReaction, number>;
   for (const reaction of allowedReactions) {
     counts[reaction] = normalizeCount(record[reaction]);
   }
@@ -606,7 +606,7 @@ function normalizeInstalledPet(value: unknown): InstalledPetState | null {
     builtIn: value.id === builtInPet.id ? true : value.builtIn === true,
     protected: value.id === builtInPet.id ? true : value.protected === true,
     installed: true,
-    source: normalizeSource(value.source),
+    source: normalizeInstalledPetSource(value.source),
     broken: brokenReason ? true : typeof value.broken === "boolean" ? value.broken : undefined,
     brokenReason: brokenReason ?? (typeof value.brokenReason === "string" ? value.brokenReason : undefined),
   };
@@ -679,18 +679,19 @@ function validateInstalledPetFiles(petId: string): string | undefined {
   }
 }
 
-function normalizeSource(value: unknown): InstalledPetState["source"] | undefined {
+export function normalizeInstalledPetSource(value: unknown): InstalledPetState["source"] | undefined {
   if (!isRecord(value)) {
     return undefined;
   }
 
   if (value.kind === "codex" && typeof value.path === "string") {
-    return { kind: "codex", path: value.path };
+    return { ...copyUnknownFields(value, ["kind", "path"]), kind: "codex", path: value.path };
   }
 
   if (value.catalogVersion !== 2 || typeof value.zip !== "string" || typeof value.preview !== "string") return undefined;
 
   return {
+    ...copyUnknownFields(value, ["kind", "catalogVersion", "zip", "preview"]),
     kind: "catalog",
     catalogVersion: 2,
     zip: value.zip,

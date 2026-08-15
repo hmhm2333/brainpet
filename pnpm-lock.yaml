@@ -20,6 +20,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@open-pets/adapter-core':
+        specifier: workspace:*
+        version: link:../../packages/adapter-core
       '@open-pets/agent-events':
         specifier: workspace:*
         version: link:../../packages/agent-events

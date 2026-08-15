@@ -345,16 +345,18 @@ async function getOpenCodeSetup(commandMode: OpenPetsCommandMode, selectedPetId:
   const cliEntryPath = commandMode === "published" ? undefined : getDesktopCliEntryPath(commandMode);
   const prepared = safePrepareOpenCode(configDir, petId, cliVersion, pluginVersion, commandMode, cliEntryPath);
   const detected = await runOpenCodeCommand(["--version"]);
-  const globalState = doctorOpenCodeGlobalSetup(configDir);
+  const product = resolveLocalIpcDistributionProfile();
+  const globalState = doctorOpenCodeGlobalSetup(configDir, { product, petId, cliVersion, pluginVersion, commandMode, cliEntryPath });
   const configured = globalState.status === "installed";
+  const needsUpdate = globalState.status === "needs_update";
   return {
     status: {
       state: globalState.status === "error" || globalState.status === "custom" || globalState.status === "conflict" ? "error" : configured ? "configured" : detected.ok ? "needs_setup" : "not_detected",
-      label: configured ? "Installed" : globalState.status === "custom" || globalState.status === "conflict" ? "Needs attention" : detected.ok ? "Ready" : "Not detected",
-      details: globalState.status === "custom" || globalState.status === "conflict" || globalState.status === "error" ? globalState.message : configured ? globalState.message : detected.ok ? "OpenCode was detected. Desktop setup writes global OpenCode config." : getPreferredOpenCodeCommand() === getDefaultOpenCodeCommand() ? "OpenCode was not found on PATH or in a Scoop shim directory. You can still preview setup, but OpenCode must be installed to use it." : "OpenCode did not run from the saved command path. You can still preview setup, but OpenCode must be installed to use it.",
+      label: configured ? "Installed" : needsUpdate ? "Update needed" : globalState.status === "custom" || globalState.status === "conflict" ? "Needs attention" : detected.ok ? "Ready" : "Not detected",
+      details: globalState.status === "custom" || globalState.status === "conflict" || globalState.status === "error" || needsUpdate ? globalState.message : configured ? globalState.message : detected.ok ? "OpenCode was detected. Desktop setup writes global OpenCode config." : getPreferredOpenCodeCommand() === getDefaultOpenCodeCommand() ? "OpenCode was not found on PATH or in a Scoop shim directory. You can still preview setup, but OpenCode must be installed to use it." : "OpenCode did not run from the saved command path. You can still preview setup, but OpenCode must be installed to use it.",
       configDir: formatUserPath(configDir) ?? configDir,
       canInstall: prepared.ok && !configured,
-      canRemove: configured,
+      canRemove: configured || needsUpdate,
     },
     preview: {
       global: true,

@@ -77,19 +77,10 @@ for (const unsafe of [
   });
 
   runtime.handleEvent({ type: "tool_execution_start", toolName: "bash", args: { command: "pnpm test /Users/alvin/private" }, prompt: "PRIVATE_PROMPT" });
-  assert.equal(calls.length, 0, "automatic handler must schedule without blocking");
-  assert.equal(scheduled.length, 1);
-  await scheduled.shift()?.();
-  assert.deepEqual(calls, ["react:testing"]);
-
   runtime.handleEvent({ type: "tool_execution_end", isError: true, result: "STACK /Users/alvin/private token=abc" });
-  await scheduled.shift()?.();
-  assert.equal(calls[1], "say:Something failed:error");
-  assert.ok(!calls.join("\n").includes("/Users/alvin/private"));
-  assert.ok(!calls.join("\n").includes("token=abc"));
-
   runtime.handleEvent({ type: "agent_end" });
-  assert.equal(scheduled.length, 0, "recent errors suppress success overwrite");
+  assert.deepEqual(calls, [], "Pi lifecycle events must never emit implicit pet actions");
+  assert.equal(scheduled.length, 0, "Pi lifecycle events must not schedule hidden transport work");
 }
 
 {
@@ -120,39 +111,11 @@ for (const unsafe of [
     }),
   });
   assert.equal(typeof runtime.handleEvent, "function");
-  assert.ok(events.includes("session_start"));
-  assert.ok(events.includes("tool_execution_start"));
+  assert.deepEqual(events, [], "Pi extension must not subscribe to automatic lifecycle events");
   assert.equal(typeof commandHandler, "function");
-  handlers.get("agent_start")?.({ reason: "payload lacks type", prompt: "PRIVATE_PROMPT" });
-  await scheduled.shift()?.();
-  assert.deepEqual(calls, ["react:thinking"]);
-}
-
-{
-  const debugLogs: string[] = [];
-  const runtime = createOpenPetsPiRuntime({
-    debug: true,
-    debugLog: (message) => debugLogs.push(message),
-    clientFactory: () => ({
-      hello: async () => ({}),
-      status: async () => ({ ok: false, appRunning: false, unavailableReason: "/Users/alvin/private.sock" }),
-      listPets: async () => ({ ok: true, defaultPetId: "builtin", pets: [] }),
-      installPet: async () => ({ ok: true, petId: "x", displayName: "X", installed: true }),
-      installLocalPet: async () => ({ ok: true, petId: "x", displayName: "X", installed: true }),
-      acquireLease: async () => { throw new Error("no leases in pi mvp"); },
-      heartbeatLease: async () => ({ leaseId: "x", expiresAt: 0 }),
-      releaseLease: async () => ({ released: true }),
-      reportAgentActivity: async () => ({}),
-      react: async () => { throw Object.assign(new Error("/Users/alvin/private token=abc"), { code: "ENOENT /Users/alvin/private" }); },
-      say: async () => { throw new Error("should not speak"); },
-      showMedia: async () => ({ ok: true, shown: true }),
-    }),
-  });
   runtime.handleEvent({ type: "agent_start", prompt: "PRIVATE_PROMPT" });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.ok(debugLogs.some((entry) => entry.includes("ENOENT")));
-  assert.ok(!debugLogs.join("\n").includes("/Users/alvin/private"));
-  assert.ok(!debugLogs.join("\n").includes("token=abc"));
+  assert.deepEqual(calls, []);
+  assert.equal(scheduled.length, 0);
 }
 
 console.log("Pi integration package checks passed.");

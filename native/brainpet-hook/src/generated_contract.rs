@@ -11,7 +11,9 @@ pub const PRIVACY_REJECTED_FIELDS: &[&str] = &[
     "toolOutput",
     "response",
 ];
+pub const IPC_PROTOCOL: &str = "openpets-ipc";
 pub const IPC_PROTOCOL_VERSION: u64 = 1;
+pub const MAX_IPC_MESSAGE_BYTES: usize = 16384;
 pub const HOOK_DEADLINE_MS: u64 = 2600;
 pub const CONNECT_ATTEMPT_MS: u64 = 350;
 pub const RUNTIME_POLL_INTERVAL_MS: u64 = 50;

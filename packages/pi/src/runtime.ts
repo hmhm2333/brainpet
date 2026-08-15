@@ -1,4 +1,4 @@
-import { pickHookSpeech, validateHookSpeech } from "@open-pets/agent-events";
+import { validateHookSpeech } from "@open-pets/agent-events";
 import { allowedReactions, createOpenPetsClient, type OpenPetsClient, type OpenPetsReaction, type TargetProduct } from "@open-pets/client";
 
 export interface OpenPetsPiOptions {
@@ -46,8 +46,6 @@ export type OpenPetsPiCommand =
   | { readonly kind: "react"; readonly reaction: OpenPetsReaction }
   | { readonly kind: "say"; readonly message: string };
 
-const automaticTimeoutMs = 500;
-const errorSuccessSuppressionMs = 5_000;
 const boundedCommandSliceLength = 300;
 
 export const allowedPiOpenPetsCommands = ["help", "status", "test", "react", "say"] as const;
@@ -57,16 +55,8 @@ export function createOpenPetsPiExtension(pi: unknown, options: OpenPetsPiOption
   const api = isPiApi(pi) ? pi : undefined;
   if (!api) return runtime;
 
-  const subscribe = (eventName: string): void => {
-    api.on?.(eventName, (event) => runtime.handleEvent({ type: eventName, payload: event }));
-  };
-
-  for (const eventName of ["session_start", "session_shutdown", "agent_start", "agent_end", "turn_start", "tool_execution_start", "tool_execution_end"]) {
-    subscribe(eventName);
-  }
-
   api.registerCommand?.("openpets", {
-    description: "Control OpenPets desktop pet reactions and check local connection status.",
+    description: "Explicitly control OpenPets and check local connection status.",
     handler: async (args, ctx) => runtime.handleCommand(args, isCommandContext(ctx) ? ctx : undefined),
   });
 
@@ -76,59 +66,19 @@ export function createOpenPetsPiExtension(pi: unknown, options: OpenPetsPiOption
 export function createOpenPetsPiRuntime(options: OpenPetsPiOptions = {}): OpenPetsPiRuntime {
   const clientFactory = options.clientFactory ?? (() => {
     if (!options.product) throw new Error("Pi extension requires an explicit brainpet or openpets product target.");
-    return createOpenPetsClient({ target: options.product, connectTimeoutMs: automaticTimeoutMs, responseTimeoutMs: automaticTimeoutMs });
-  });
-  const schedule = options.schedule ?? defaultSchedule;
-  const debug = options.debug === true || process.env.OPENPETS_PI_DEBUG === "1";
-  const debugLog = options.debugLog ?? ((message) => {
-    if (debug) process.stderr.write(`${message}\n`);
+    return createOpenPetsClient({ target: options.product });
   });
   let client: OpenPetsClient | undefined;
-  let recentErrorAt = Number.NEGATIVE_INFINITY;
-  let lastErrorSpeechAt = Number.NEGATIVE_INFINITY;
 
   const getClient = (): OpenPetsClient => {
     client ??= clientFactory();
     return client;
   };
 
-  const runAutomatic = (decision: PiEventDecision | undefined): void => {
-    if (!decision?.reaction) return;
-    const reaction = decision.reaction;
-    if (decision.markError) recentErrorAt = options.now?.() ?? Date.now();
-    if (decision.clearError && (options.now?.() ?? Date.now()) - recentErrorAt < errorSuccessSuppressionMs) return;
-
-    try {
-      schedule(async () => {
-        try {
-          if (decision.speech === "error" && shouldSendErrorSpeech()) {
-            await getClient().say(validateHookSpeech(pickHookSpeech("error", options.random)), { reaction });
-            return;
-          }
-          await getClient().react(reaction);
-        } catch (error) {
-          debugLog(`OpenPets Pi extension ignored error: ${sanitizeDebugError(error)}`);
-        }
-      });
-    } catch (error) {
-      debugLog(`OpenPets Pi extension scheduling ignored error: ${sanitizeDebugError(error)}`);
-    }
-  };
-
-  const shouldSendErrorSpeech = (): boolean => {
-    const now = options.now?.() ?? Date.now();
-    if (now - lastErrorSpeechAt < 20_000) return false;
-    lastErrorSpeechAt = now;
-    return true;
-  };
-
   return {
-    handleEvent(event) {
-      try {
-        runAutomatic(classifyPiEvent(event));
-      } catch (error) {
-        debugLog(`OpenPets Pi event ignored error: ${sanitizeDebugError(error)}`);
-      }
+    handleEvent() {
+      // Compatibility no-op. Pi is not a registered automatic lifecycle adapter;
+      // only explicit /openpets commands may call pet.say or pet.react.
     },
     async handleCommand(args, ctx) {
       try {
@@ -257,28 +207,6 @@ function validateReaction(value: string): OpenPetsReaction {
 
 function notify(ctx: OpenPetsPiCommandContext | undefined, message: string, type: "info" | "warning" | "error"): void {
   ctx?.ui?.notify?.(message, type);
-}
-
-function defaultSchedule(work: () => Promise<void>): void {
-  void Promise.resolve().then(work).catch(() => undefined);
-}
-
-function sanitizeDebugError(error: unknown): string {
-  if (!error) return "unknown";
-  if (isRecord(error) && typeof error.code === "string") return sanitizeKnownErrorCode(error.code);
-  if (error instanceof Error) return error.name.replace(/[^a-z0-9_-]/gi, "_").slice(0, 80) || "Error";
-  return "unknown";
-}
-
-function sanitizeKnownErrorCode(code: string): string {
-  const normalized = code.toLowerCase();
-  if (normalized.includes("enoent")) return "ENOENT";
-  if (normalized.includes("econnrefused")) return "ECONNREFUSED";
-  if (normalized.includes("connect_timeout")) return "connect_timeout";
-  if (normalized.includes("response_timeout")) return "response_timeout";
-  if (normalized.includes("connection_closed")) return "connection_closed";
-  if (normalized.includes("unavailable")) return "unavailable";
-  return "OpenPetsClientError";
 }
 
 function sanitizeUserError(error: unknown): string {

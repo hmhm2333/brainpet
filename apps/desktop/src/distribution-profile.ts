@@ -33,8 +33,8 @@ export function resolveDesktopDistributionSettings(
         : "openpets";
 
   return profile === "brainpet"
-    ? { profile, displayName: "BrainPet", appUserModelId: "dev.brainpet.app", seedBundledPlugins: true, bundledPluginIds: brainPetBundledPluginIds, bundledEnabledPluginIds: brainPetBundledPluginIds, brainPetEnabled: true }
-    : { profile, displayName: "OpenPets", appUserModelId: "dev.openpets.app", seedBundledPlugins: true, bundledPluginIds: openPetsBundledPluginIds, bundledEnabledPluginIds: openPetsBundledEnabledPluginIds, brainPetEnabled: false };
+    ? { profile, displayName: "BrainPet", appUserModelId: targetProductDefinitions.brainpet.appId, seedBundledPlugins: true, bundledPluginIds: brainPetBundledPluginIds, bundledEnabledPluginIds: brainPetBundledPluginIds, brainPetEnabled: true }
+    : { profile, displayName: "OpenPets", appUserModelId: targetProductDefinitions.openpets.appId, seedBundledPlugins: true, bundledPluginIds: openPetsBundledPluginIds, bundledEnabledPluginIds: openPetsBundledEnabledPluginIds, brainPetEnabled: false };
 }
 
 export function isBrainPetFeatureEnabled(settings: DesktopDistributionSettings, override?: string): boolean {
@@ -54,5 +54,6 @@ export function resolveDistributionUpdateRepository(
 ): string {
   const developmentOverride = options.packaged ? undefined : override?.trim();
   if (developmentOverride && /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i.test(developmentOverride)) return developmentOverride;
-  return settings.profile === "brainpet" ? "hmhm2333/brainpet" : "alvinunreal/openpets";
+  return targetProductDefinitions[settings.profile].updateChannel;
 }
+import { targetProductDefinitions } from "@open-pets/adapter-core";

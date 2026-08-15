@@ -16,7 +16,7 @@ Provides comprehensive OpenCode editor integration including: MCP server configu
 **Plugin Runtime** (`opencode-plugin-runtime.ts`):
 - Event hooks: `event`, `chat.message`, `tool.execute.before`, `tool.execute.after`
 - Event mapping: recognized OpenCode events become privacy-minimal `agent.activity`
-- Delivery: exactly one ordered lifecycle request; failure is a bounded no-op
+- Delivery: bounded 32-session latest-state queue, same-session coalescing, absolute generated deadline, and no stale replay
 - Automatic lease, reaction, and speech transports are absent
 - Async scheduling via `queueMicrotask`
 
@@ -37,7 +37,7 @@ Provides comprehensive OpenCode editor integration including: MCP server configu
 - Similar to project setup but for `~/.config/opencode/`
 - Setup cleanup writes: Removes managed duplicate entries from other config files
 - Remove support: `prepareOpenCodeGlobalRemove()` / `writePreparedOpenCodeGlobalRemove()` remove managed MCP, instruction, and plugin entries plus the managed instruction block
-- Doctor command: `doctorOpenCodeGlobalSetup()` for status checking
+- Doctor command: `doctorOpenCodeGlobalSetup()` compares the exact product/version/pet/command profile and reports opposite-product entries as `needs_update`
 - Config precedence handling: chooses the effective config file across `config.json`, `opencode.json`, and `opencode.jsonc`, preserving existing user arrays when safe
 
 **Status Classification** (`opencode-status.ts`):

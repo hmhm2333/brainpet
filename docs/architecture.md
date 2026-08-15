@@ -26,8 +26,9 @@ There are three runtime worlds. Keep them distinct in your head.
    This is the only long-lived process; remote control is disabled by default.
 2. **Agent-side integrations** (`packages/*`) - short-lived code that runs
    inside or alongside a coding agent (Claude Code hooks, the MCP server,
-   OpenCode plugin, Cursor config, Pi extension, the CLI). They translate agent
-   activity into pet commands and send them over local IPC unless an explicit
+   OpenCode plugin, Cursor config, Pi extension, the CLI). Registered automatic
+   adapters translate agent activity into `agent.activity`; Pi and MCP expose
+   explicit user/model commands only. They send over local IPC unless an explicit
    remote endpoint/token configuration selects the separate remote protocol.
 3. **The public web origin** (`openpets.dev`, source in `web/`) - static
    catalogs and asset hosting. The app fetches pet/plugin catalogs and downloads
@@ -84,8 +85,9 @@ is `config/brainpet-release-capabilities.json`; the generated provider matrix is
 The dependency spine starts at `@open-pets/adapter-core`; the client re-exports
 its product-target resolver, and automatic integrations share the generated
 lifecycle schema from `agent-events`. The
-`cli` composes `claude`, `opencode`, `cursor`, and `mcp`; `claude`/`opencode`/`pi`
-depend on `agent-events` for bounded event fields.
+`cli` composes `claude`, `opencode`, `cursor`, and `mcp`; `claude` and `opencode`
+depend on `agent-events` for bounded automatic event fields, while Pi consumes
+only the shared manual speech validator.
 
 ## End-to-end flows
 

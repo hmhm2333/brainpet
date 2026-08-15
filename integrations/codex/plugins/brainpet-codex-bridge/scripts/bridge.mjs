@@ -5,11 +5,10 @@ import net from "node:net";
 import { homedir } from "node:os";
 
 import { selectLifecycleEvent, shouldWriteJsonResult } from "./bridge-core.mjs";
-import { agentActivityMethod, brainPetTarget, ipcProtocolVersion } from "./generated-contract.mjs";
+import { agentActivityMethod, brainPetTarget, ipcProtocol, ipcProtocolVersion, maxIpcMessageBytes } from "./generated-contract.mjs";
 import { connectAttemptMs, getRuntimePaths, hookDeadlineMs, remainingDeadlineMs, runtimePollIntervalMs, shouldWakeRuntime, validateInstallMarker } from "./runtime-core.mjs";
 
 const maxHookInputBytes = 8 * 1024 * 1024;
-const maxIpcMessageBytes = 16 * 1024;
 const hookDeadline = Date.now() + hookDeadlineMs;
 
 let hookInput = null;
@@ -80,7 +79,7 @@ async function readDiscovery(path) {
   const raw = await readFile(path, "utf8");
   if (Buffer.byteLength(raw, "utf8") > maxIpcMessageBytes) throw new Error("Invalid discovery file.");
   const value = JSON.parse(raw);
-  if (!value || value.protocol !== "openpets-ipc" || value.protocolVersion !== ipcProtocolVersion || value.product !== "brainpet" || value.appId !== brainPetTarget.appId || typeof value.endpoint !== "string" || typeof value.token !== "string" || value.token.length < 16 || value.token.length > 256) {
+  if (!value || value.protocol !== ipcProtocol || value.protocolVersion !== ipcProtocolVersion || value.product !== "brainpet" || value.appId !== brainPetTarget.appId || typeof value.endpoint !== "string" || typeof value.token !== "string" || value.token.length < 16 || value.token.length > 256) {
     throw new Error("Invalid discovery file.");
   }
   return { endpoint: value.endpoint, token: value.token };

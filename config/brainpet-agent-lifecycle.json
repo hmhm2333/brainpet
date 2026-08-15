@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "ipcMethod": "agent.activity",
+  "deliveryDeadlineMs": 1000,
   "states": ["working", "waiting", "ready", "blocked", "idle"],
   "requiredFields": ["schemaVersion", "agent", "sessionId", "state", "occurredAt", "capabilities"],
   "optionalFields": ["turnId", "request"],

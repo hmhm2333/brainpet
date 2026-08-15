@@ -1,10 +1,10 @@
-import { agentActivitySchemaVersion, normalizedAgentLifecycleStates } from "@open-pets/agent-events";
+import { agentActivitySchemaVersion, companionIpcConnectTimeoutMs, companionIpcMaxMessageBytes, companionIpcProtocol, companionIpcResponseTimeoutMs, companionIpcVersion, normalizedAgentLifecycleStates } from "@open-pets/agent-events";
 
-export const openPetsIpcProtocol = "openpets-ipc";
-export const openPetsIpcVersion = 1;
-export const maxIpcMessageBytes = 16 * 1024;
-export const connectTimeoutMs = 2_000;
-export const responseTimeoutMs = 3_000;
+export const openPetsIpcProtocol = companionIpcProtocol;
+export const openPetsIpcVersion = companionIpcVersion;
+export const maxIpcMessageBytes = companionIpcMaxMessageBytes;
+export const connectTimeoutMs = companionIpcConnectTimeoutMs;
+export const responseTimeoutMs = companionIpcResponseTimeoutMs;
 
 export const allowedReactions = [
   "idle",
@@ -88,8 +88,8 @@ export function validateAgentLifecycleState(value: string): AgentLifecycleState 
   return value as AgentLifecycleState;
 }
 
-export function validateAgentCompanionCapabilities(value: readonly string[] | undefined): readonly AgentCompanionCapability[] {
-  if (value === undefined) return ["observeLifecycle"];
+export function validateAgentCompanionCapabilities(value: readonly string[]): readonly AgentCompanionCapability[] {
+  if (!Array.isArray(value)) throw new OpenPetsClientError("invalid_params", "Agent companion capabilities must be an array.");
   if (value.length > allowedAgentCompanionCapabilities.length) throw new OpenPetsClientError("invalid_params", "Too many Agent companion capabilities.");
   const capabilities: AgentCompanionCapability[] = [];
   for (const entry of value) {

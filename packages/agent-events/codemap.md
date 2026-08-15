@@ -8,6 +8,10 @@ Provides the canonical automatic lifecycle states, schema/method constants,
 privacy rejected-field list, normalized event builder, and categorized manual
 speech pools. Automatic adapters use only the lifecycle contract.
 
+`assertAgentActivityContract()` is the shared strict client/server gate. It
+requires every generated required field and rejects privacy fields before any
+consumer-specific capability/request validation.
+
 ## Design
 
 **Category-Based Pools**: Four speech categories with curated message pools:
@@ -44,3 +48,4 @@ Agent Event → pickHookSpeech(category, randomFn) → validateHookSpeech(messag
 - `HookSpeechCategory` - Type union for categories
 - `normalizedAgentLifecycleStates` / `agentActivityMethod` - generated protocol facts
 - `agentActivityPrivacyRejectedFields` - shared privacy boundary
+- `assertAgentActivityContract()` - strict generated required-field/privacy envelope validation
