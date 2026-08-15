@@ -66,88 +66,121 @@ export class BrainPetStageWindowController {
       return;
     }
 
-    this.options.authority.beginOpen();
-    const rig = this.options.rigController.start(resolvedAnchor);
-    const bounds = rig.overlayBoundsScreen;
-    const window = this.createWindow({
-      title: "BrainPet Training Stage",
-      ...bounds,
-      useContentSize: true,
-      show: false,
-      frame: false,
-      transparent: true,
-      resizable: false,
-      maximizable: false,
-      minimizable: false,
-      fullscreenable: false,
-      skipTaskbar: true,
-      alwaysOnTop: true,
-      focusable: true,
-      hasShadow: false,
-      backgroundColor: "#00000000",
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-        spellcheck: false,
-        webgl: false,
-        partition: "persist:brainpet-stage",
-        preload: join(this.getAppPath(), "brainpet-preload.cjs"),
-      },
-    });
+    try {
+      this.options.authority.beginOpen();
+    } catch (error) {
+      logError("brainpet.host", "stage open transition rejected", error);
+      return;
+    }
 
-    const stageSession = window.webContents.session;
-    this.stageWindow = window;
-    resolvedAnchor.webContents.send("openpets:brainpet-stage-state", { open: true });
-    this.rendererRequestedInteractive = false;
-    this.mouseInteractive = false;
-    window.setIgnoreMouseEvents(true, { forward: true });
-    this.hardenSession(stageSession);
-    window.setMenu(null);
-    window.setAlwaysOnTop(true, process.platform === "darwin" ? "floating" : "normal");
-    window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-    window.webContents.on("will-navigate", (event) => event.preventDefault());
-    window.webContents.on("will-redirect", (event) => event.preventDefault());
-    window.webContents.on("did-fail-load", (_event, errorCode, errorDescription) => {
-      logError("brainpet.host", "stage load failed", { errorCode, errorDescription });
-      this.close("load-failed");
-    });
-    window.webContents.on("render-process-gone", (_event, details) => {
-      logError("brainpet.host", "stage renderer gone", { reason: details.reason, exitCode: details.exitCode });
-      this.close("renderer-gone");
-    });
-    window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-      const fields = { level, message, line, sourceId };
-      if (level >= 3) logError("brainpet.stage", "renderer console", fields);
-      else if (level === 2) warn("brainpet.stage", "renderer console", fields);
-      else debug("brainpet.stage", "renderer console", fields);
-    });
-    window.once("ready-to-show", () => {
-      if (window.isDestroyed()) return;
-      this.options.rigController.synchronizeFromPet();
-      window.show();
-      window.focus();
-    });
-    window.on("closed", () => {
-      if (this.stageWindow === window) this.stageWindow = null;
+    let window: BrowserWindow | null = null;
+    let stageSession: Session | null = null;
+    let anchorNotified = false;
+    let normalCloseEligible = false;
+    let closeHandled = false;
+    const handleClosed = () => {
+      if (closeHandled) return;
+      closeHandled = true;
+      if (window && this.stageWindow === window) this.stageWindow = null;
+      if (anchorNotified) {
+        const currentAnchor = this.options.rigController.anchorWindow;
+        if (!resolvedAnchor.isDestroyed()) resolvedAnchor.webContents.send("openpets:brainpet-stage-state", { open: false });
+        if (currentAnchor && currentAnchor !== resolvedAnchor && !currentAnchor.isDestroyed()) currentAnchor.webContents.send("openpets:brainpet-stage-state", { open: false });
+      }
       this.options.rigController.disposeStage();
       this.stopHitTestTimer();
       this.options.authority.stageClosed();
-      void stageSession.clearCache().catch((error: unknown) => debug("brainpet.host", "stage cache release failed", { error: error instanceof Error ? error.message : String(error) }));
-      if (!this.disposed) void this.options.onClosed?.();
-      info("brainpet.host", "stage closed");
-    });
+      if (stageSession) void stageSession.clearCache().catch((error: unknown) => debug("brainpet.host", "stage cache release failed", { error: error instanceof Error ? error.message : String(error) }));
+      if (!this.disposed && normalCloseEligible) void this.options.onClosed?.();
+      info("brainpet.host", "stage closed", { openingFailed: !normalCloseEligible });
+    };
 
-    this.startHitTestTimer();
-    const devUrl = getSafeRendererDevUrl(this.options.rendererUrl ?? process.env.OPENPETS_RENDERER_URL);
-    const load = devUrl
-      ? window.loadURL(new URL("brainpet.html", devUrl).toString())
-      : window.loadFile(join(this.getAppPath(), "dist", "renderer", "brainpet.html"));
-    void load.catch((error: unknown) => {
-      logError("brainpet.host", "stage load rejected", error);
-      this.close("load-rejected");
-    });
-    info("brainpet.host", "stage opening", { bounds, mode: this.getMode() });
+    try {
+      const rig = this.options.rigController.start(resolvedAnchor);
+      const bounds = rig.overlayBoundsScreen;
+      window = this.createWindow({
+        title: "BrainPet Training Stage",
+        ...bounds,
+        useContentSize: true,
+        show: false,
+        frame: false,
+        transparent: true,
+        resizable: false,
+        maximizable: false,
+        minimizable: false,
+        fullscreenable: false,
+        skipTaskbar: true,
+        alwaysOnTop: true,
+        focusable: true,
+        hasShadow: false,
+        backgroundColor: "#00000000",
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true,
+          sandbox: true,
+          spellcheck: false,
+          webgl: false,
+          partition: "persist:brainpet-stage",
+          preload: join(this.getAppPath(), "brainpet-preload.cjs"),
+        },
+      });
+
+      stageSession = window.webContents.session;
+      this.stageWindow = window;
+      window.on("closed", handleClosed);
+      resolvedAnchor.webContents.send("openpets:brainpet-stage-state", { open: true });
+      anchorNotified = true;
+      this.rendererRequestedInteractive = false;
+      this.mouseInteractive = false;
+      window.setIgnoreMouseEvents(true, { forward: true });
+      this.hardenSession(stageSession);
+      window.setMenu(null);
+      window.setAlwaysOnTop(true, process.platform === "darwin" ? "floating" : "normal");
+      window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+      window.webContents.on("will-navigate", (event) => event.preventDefault());
+      window.webContents.on("will-redirect", (event) => event.preventDefault());
+      window.webContents.on("did-fail-load", (_event, errorCode, errorDescription) => {
+        logError("brainpet.host", "stage load failed", { errorCode, errorDescription });
+        this.close("load-failed");
+      });
+      window.webContents.on("render-process-gone", (_event, details) => {
+        logError("brainpet.host", "stage renderer gone", { reason: details.reason, exitCode: details.exitCode });
+        this.close("renderer-gone");
+      });
+      window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+        const fields = { level, message, line, sourceId };
+        if (level >= 3) logError("brainpet.stage", "renderer console", fields);
+        else if (level === 2) warn("brainpet.stage", "renderer console", fields);
+        else debug("brainpet.stage", "renderer console", fields);
+      });
+      window.once("ready-to-show", () => {
+        if (!window || window.isDestroyed()) return;
+        this.options.rigController.synchronizeFromPet();
+        window.show();
+        window.focus();
+      });
+
+      this.startHitTestTimer();
+      const devUrl = getSafeRendererDevUrl(this.options.rendererUrl ?? process.env.OPENPETS_RENDERER_URL);
+      const load = devUrl
+        ? window.loadURL(new URL("brainpet.html", devUrl).toString())
+        : window.loadFile(join(this.getAppPath(), "dist", "renderer", "brainpet.html"));
+      normalCloseEligible = true;
+      void load.catch((error: unknown) => {
+        logError("brainpet.host", "stage load rejected", error);
+        this.close("load-rejected");
+      });
+      info("brainpet.host", "stage opening", { bounds, mode: this.getMode() });
+    } catch (error) {
+      logError("brainpet.host", "stage open failed and was rolled back", error);
+      try {
+        if (window && !window.isDestroyed()) window.destroy();
+      } catch (destroyError) {
+        debug("brainpet.host", "failed stage window destroy also failed", { error: destroyError instanceof Error ? destroyError.message : String(destroyError) });
+      } finally {
+        handleClosed();
+      }
+    }
   }
 
   close(reason = "requested"): void {
@@ -158,8 +191,6 @@ export class BrainPetStageWindowController {
     }
     this.options.authority.beginClose();
     info("brainpet.host", "stage close requested", { reason });
-    const anchor = this.options.rigController.anchorWindow;
-    if (anchor && !anchor.isDestroyed()) anchor.webContents.send("openpets:brainpet-stage-state", { open: false });
     window.close();
   }
 

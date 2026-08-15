@@ -61,14 +61,20 @@ lazy `OptionalOpenPetsServices`, and the profile-injected `BrainPetFeature`.
 BrainPet registers training directly and neither bundles nor starts the plugin
 platform. OpenPets keeps its existing feature surface, but loads Control Center,
 plugin, LAN, remote, and voice graphs only when requested or already explicitly
-enabled. The machine-readable current snapshot is
+enabled. Composition shutdown is terminal even when it races an async service
+start: later factories are skipped, in-flight lazy operations are drained, and
+created services are released exactly once. HostCore reaches LAN pet reclamping
+through a no-op port, so the LAN implementation is not evaluated on the cold
+path. The machine-readable current snapshot is
 `config/brainpet-release-capabilities.json`; the generated provider matrix is
 `integrations/brainpet-provider-support.json`.
 
 Inside `BrainPetFeature`, `brainpet/host.ts` is a thin composition/IPC aggregate.
 Training registration, hardened Stage window ownership, Host-authoritative
 session/scoring state, and interaction-rig geometry are owned by four disposable,
-Node-testable controllers instead of one Host monolith.
+Node-testable controllers instead of one Host monolith. Stage creation is
+transactional: synchronous window/configuration/load failures restore the
+session authority and interaction rig to idle before another open is accepted.
 
 ## The packages, and what each is for
 

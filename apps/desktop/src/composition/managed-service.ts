@@ -19,8 +19,10 @@ export type DesktopServiceFactory = () => DesktopManagedService | Promise<Deskto
 export class DesktopServiceLifecycle {
   readonly #factories: readonly DesktopServiceFactory[];
   readonly #services: DesktopManagedService[] = [];
+  readonly #disposedServices = new WeakSet<DesktopManagedService>();
   #startPromise: Promise<void> | null = null;
   #disposePromise: Promise<void> | null = null;
+  #disposeRequested = false;
 
   public constructor(factories: readonly DesktopServiceFactory[]) {
     this.#factories = factories;
@@ -28,13 +30,15 @@ export class DesktopServiceLifecycle {
 
   public start(): Promise<void> {
     if (this.#startPromise) return this.#startPromise;
+    if (this.#disposeRequested) return Promise.resolve();
     this.#startPromise = this.#startAll();
     return this.#startPromise;
   }
 
   public dispose(): Promise<void> {
     if (this.#disposePromise) return this.#disposePromise;
-    this.#disposePromise = this.#disposeAll();
+    this.#disposeRequested = true;
+    this.#disposePromise = this.#disposeAfterStart();
     return this.#disposePromise;
   }
 
@@ -49,20 +53,30 @@ export class DesktopServiceLifecycle {
   async #startAll(): Promise<void> {
     try {
       for (const factory of this.#factories) {
+        if (this.#disposeRequested) return;
         const service = await factory();
         this.#services.push(service);
+        if (this.#disposeRequested) return;
         await service.start();
+        if (this.#disposeRequested) return;
       }
     } catch (error) {
-      this.#disposePromise ??= this.#disposeAll();
-      await this.#disposePromise;
+      this.#disposeRequested = true;
+      await this.#disposeAll();
       throw error;
     }
+  }
+
+  async #disposeAfterStart(): Promise<void> {
+    await this.#startPromise?.catch(() => undefined);
+    await this.#disposeAll();
   }
 
   async #disposeAll(): Promise<void> {
     const failures: unknown[] = [];
     for (const service of [...this.#services].reverse()) {
+      if (this.#disposedServices.has(service)) continue;
+      this.#disposedServices.add(service);
       try {
         await service.dispose();
       } catch (error) {

@@ -52,6 +52,7 @@ class FakeWindow extends EventEmitter {
   loadFile(): Promise<void> { return Promise.resolve(); }
   loadURL(): Promise<void> { return Promise.resolve(); }
   close(): void { this.destroyed = true; this.emit("closed"); }
+  destroy(): void { this.close(); }
 }
 
 test("StageWindowController owns secure stage lifecycle, sender identity, and disposal", async () => {
@@ -133,4 +134,112 @@ test("StageWindowController owns secure stage lifecycle, sender identity, and di
   shutdownController.open();
   shutdownController.dispose();
   assert.deepEqual(shutdownEvents, [], "app shutdown must not recreate the pet renderer");
+});
+
+test("StageWindowController rolls back synchronous window creation failure and can reopen", () => {
+  const rig: BrainPetInteractionRigSnapshot = {
+    apiVersion: 1,
+    rigId: "rig-failure",
+    petWindowId: 11,
+    displayId: "display-1",
+    scaleFactor: 1,
+    overlayBoundsScreen: { x: 0, y: 0, width: 640, height: 480 },
+    petBoundsScreen: { x: 100, y: 100, width: 160, height: 160 },
+    stageBoundsScreen: { x: 0, y: 0, width: 640, height: 320 },
+    reactionBoundsScreen: { x: 0, y: 320, width: 640, height: 160 },
+    throwOriginScreen: { x: 180, y: 180 },
+    throwOriginOverlay: { x: 180, y: 180 },
+    dragging: false,
+    sequence: 1,
+    atMs: 1,
+  };
+  const lifecycle: string[] = [];
+  const anchor = new FakeWindow(11, rig.petBoundsScreen);
+  const recovered = new FakeWindow(12, rig.overlayBoundsScreen);
+  let attempts = 0;
+  const controller = new BrainPetStageWindowController({
+    authority: {
+      beginOpen: () => lifecycle.push("begin-open"),
+      beginClose: () => lifecycle.push("begin-close"),
+      stageClosed: () => lifecycle.push("stage-closed"),
+    } as unknown as BrainPetSessionAuthority,
+    rigController: {
+      anchorWindow: anchor as unknown as BrowserWindow,
+      snapshot: rig,
+      start: () => { lifecycle.push("rig-start"); return rig; },
+      synchronizeFromPet: () => undefined,
+      disposeStage: () => lifecycle.push("rig-dispose"),
+    } as unknown as BrainPetInteractionRigController,
+    resolveDefaultAnchor: () => anchor as unknown as BrowserWindow,
+    createWindow: () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("window-create-failed");
+      return recovered as unknown as BrowserWindow;
+    },
+    getAppPath: () => "C:\\brainpet-test",
+    getCursorScreenPoint: () => ({ x: 0, y: 0 }),
+  });
+
+  assert.doesNotThrow(() => controller.open());
+  assert.equal(controller.isOpen, false);
+  assert.deepEqual(lifecycle, ["begin-open", "rig-start", "rig-dispose", "stage-closed"]);
+
+  controller.open();
+  assert.equal(controller.window, recovered as unknown as BrowserWindow);
+  assert.equal(controller.isOpen, true);
+  controller.close("recovered");
+});
+
+test("StageWindowController rolls back initialization and synchronous load failures", () => {
+  const rig: BrainPetInteractionRigSnapshot = {
+    apiVersion: 1,
+    rigId: "rig-setup-failure",
+    petWindowId: 21,
+    displayId: "display-1",
+    scaleFactor: 1,
+    overlayBoundsScreen: { x: 0, y: 0, width: 640, height: 480 },
+    petBoundsScreen: { x: 100, y: 100, width: 160, height: 160 },
+    stageBoundsScreen: { x: 0, y: 0, width: 640, height: 320 },
+    reactionBoundsScreen: { x: 0, y: 320, width: 640, height: 160 },
+    throwOriginScreen: { x: 180, y: 180 },
+    throwOriginOverlay: { x: 180, y: 180 },
+    dragging: false,
+    sequence: 1,
+    atMs: 1,
+  };
+
+  for (const failure of ["initialize", "load"] as const) {
+    const lifecycle: string[] = [];
+    const anchor = new FakeWindow(21, rig.petBoundsScreen);
+    const stage = new FakeWindow(failure === "initialize" ? 22 : 23, rig.overlayBoundsScreen);
+    if (failure === "initialize") stage.setMenu = () => { throw new Error("set-menu-failed"); };
+    else stage.loadFile = () => { throw new Error("load-file-failed"); };
+    const controller = new BrainPetStageWindowController({
+      authority: {
+        beginOpen: () => lifecycle.push("begin-open"),
+        beginClose: () => lifecycle.push("begin-close"),
+        stageClosed: () => lifecycle.push("stage-closed"),
+      } as unknown as BrainPetSessionAuthority,
+      rigController: {
+        anchorWindow: anchor as unknown as BrowserWindow,
+        snapshot: rig,
+        start: () => { lifecycle.push("rig-start"); return rig; },
+        synchronizeFromPet: () => undefined,
+        disposeStage: () => lifecycle.push("rig-dispose"),
+      } as unknown as BrainPetInteractionRigController,
+      resolveDefaultAnchor: () => anchor as unknown as BrowserWindow,
+      createWindow: () => stage as unknown as BrowserWindow,
+      getAppPath: () => "C:\\brainpet-test",
+      getCursorScreenPoint: () => ({ x: 0, y: 0 }),
+    });
+
+    assert.doesNotThrow(() => controller.open(), failure);
+    assert.equal(controller.isOpen, false, failure);
+    assert.equal(stage.isDestroyed(), true, failure);
+    assert.deepEqual(lifecycle, ["begin-open", "rig-start", "rig-dispose", "stage-closed"], failure);
+    assert.deepEqual(anchor.webContents.sent, [
+      ["openpets:brainpet-stage-state", { open: true }],
+      ["openpets:brainpet-stage-state", { open: false }],
+    ], failure);
+  }
 });

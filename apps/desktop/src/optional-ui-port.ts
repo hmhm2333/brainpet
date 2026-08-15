@@ -17,9 +17,12 @@ export function configureOptionalUiPort(port: OptionalUiPort | null): void {
 }
 
 export function openOptionalControlCenter(route?: OptionalControlCenterRoute): void {
-  void Promise.resolve(activePort.openControlCenter(route));
+  void Promise.resolve(activePort.openControlCenter(route)).catch((error: unknown) => {
+    logError("app", "control center open failed", error);
+  });
 }
 
 export function focusOptionalTaskWindows(): void {
   activePort.focusOpenTasks();
 }
+import { error as logError } from "./logger.js";

@@ -54,6 +54,9 @@ assert.equal(releaseCapabilities.runtimeSnapshots.brainpetRollback.agentLifecycl
 const compositionSource = readFileSync(join(desktop, "src", "composition", "desktop-composition.ts"), "utf8");
 const mainSource = readFileSync(join(desktop, "src", "main.ts"), "utf8");
 const lifecycleSource = readFileSync(join(desktop, "src", "lifecycle.ts"), "utf8");
+const managedServiceSource = readFileSync(join(desktop, "src", "composition", "managed-service.ts"), "utf8");
+const optionalServicesSource = readFileSync(join(desktop, "src", "composition", "openpets-runtime.ts"), "utf8");
+const defaultPetControllerSource = readFileSync(join(desktop, "src", "default-pet-controller.ts"), "utf8");
 const brainPetHostSource = readFileSync(join(desktop, "src", "brainpet", "host.ts"), "utf8");
 const brainPetControllerSources = Object.fromEntries([
   "training-entry",
@@ -66,6 +69,9 @@ assert.match(compositionSource, /layers: enabled \? \["hostCore", "brainPetFeatu
 assert.match(mainSource, /import\("\.\/composition\/openpets-runtime\.js"\)/, "Optional OpenPets services must be dynamically loaded.");
 assert.match(mainSource, /if \(distribution\.profile === "brainpet"\) app\.disableHardwareAcceleration\(\);/, "BrainPet must avoid the dedicated hardware compositor working set without changing OpenPets.");
 assert.doesNotMatch(lifecycleSource, /plugin-service|brainpet\/host|remote-control-service|lan-controller|local-ipc|windows\.js/, "App lifecycle must only call the composition disposer.");
+assert.match(managedServiceSource, /#disposeRequested/, "Composition lifecycle must stop factory creation once disposal begins.");
+assert.match(optionalServicesSource, /AsyncOperationGate/, "Optional OpenPets services must drain lazy work before disposal completes.");
+assert.doesNotMatch(defaultPetControllerSource, /^import .*lan-pet-controller/m, "HostCore must not statically load the LAN pet implementation.");
 assert.doesNotMatch(brainPetHostSource, /brainpet\.training|plugin-service|plugin-runtime|plugin-events-source/, "BrainPet TrainingEntry must not use the removed plugin facade.");
 for (const [name, source] of Object.entries(brainPetControllerSources)) {
   assert.match(source, /\bdispose\(\)/, `BrainPet ${name} must expose an independent disposer.`);
@@ -76,6 +82,7 @@ assert.doesNotMatch(distributionSource, /brainpet\.training/, "BrainPet must not
 assert.doesNotMatch(baseConfig, /plugins\/official|plugin-sdk-preload|plugin-command-form-preload|panel-preload/, "BrainPet package must not bundle plugin renderer payloads.");
 assert.match(readFileSync(join(desktop, "build", "brainpet-installer.nsh"), "utf8"), /runtime-install\.json/);
 assert.ok(existsSync(join(desktop, "scripts", "validate-brainpet-package.mjs")));
+assert.match(JSON.parse(readFileSync(join(desktop, "package.json"), "utf8")).scripts["test:brainpet-openpets-isolation"], /BRAINPET_EXPECT_OPENPETS_ISOLATION=1/);
 
 const bridgeRoot = join(root, "integrations", "codex", "plugins", "brainpet-codex-bridge");
 const bridgeContract = JSON.parse(readFileSync(join(bridgeRoot, "brainpet.bridge.json"), "utf8"));

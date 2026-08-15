@@ -11,7 +11,7 @@ import { clearTransientReaction, createDefaultPetWindow, getSafeDefaultPetPositi
 import { PetBubbleArbiter, type ActiveBubble, type PetBubbleSink } from "./plugin-bubble-arbiter.js";
 import { reclampAgentPetWindows } from "./agent-pet-controller.js";
 import { publishOptionalPluginPetEvent, reclampOptionalPluginPetWindows } from "./pet-plugin-port.js";
-import { reclampLanVisitingPetWindows } from "./lan-pet-controller.js";
+import { reclampOptionalLanPetWindows } from "./lan-pet-port.js";
 import type { AgentCompanionActivitySummary } from "./agent-companion-activity.js";
 import { primaryCompanionActionBroker, type PrimaryCompanionActionPrompt } from "./agent-companion-action-broker.js";
 
@@ -643,7 +643,7 @@ function reclampDefaultPetWindow(reason: DisplayChangeReason, changedDisplay?: D
 function reclampAllLivePetWindows(reason: DisplayChangeReason, changedDisplay?: Display): void {
   reclampDefaultPetWindow(reason, changedDisplay);
   reclampAgentPetWindows();
-  reclampLanVisitingPetWindows();
+  reclampOptionalLanPetWindows();
   reclampOptionalPluginPetWindows();
 }
 

@@ -89,6 +89,13 @@ working-set/private-memory snapshots and enforces budgets by default. The
 `foundation-probe` variant also loads a versioned fallback asset, renders the
 generic scene contract, clicks both generic input targets, crashes the renderer,
 then proves a fresh stage can open and close without an invalid Host transition.
+It also inspects the replacement pet renderer's computed background asset and
+animation, and verifies the next training request restores the full spritesheet.
+`test:brainpet-openpets-isolation` starts the real OpenPets composition and
+asserts that BrainPet's replacement/static-idle behavior never changes its pet
+renderer. Pure lifecycle tests inject deferred factory/start work and deferred
+optional operations to prove shutdown cannot create services or side effects
+after disposal begins.
 
 BrainPet's Agent bridge has a separate native release gate. Run the Rust unit
 tests from `native/brainpet-hook/`, build all six Windows/macOS/Linux target binaries,

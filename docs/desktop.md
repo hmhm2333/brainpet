@@ -336,7 +336,16 @@ lazy optional-service factories.
 The BrainPet main-process Host only composes IPC and injected Electron adapters.
 `TrainingEntry`, `StageWindowController`, `SessionAuthority`, and
 `InteractionRigController` own the four independent lifecycles; every controller
-has a direct Node test and an idempotent disposer.
+has a direct Node test and an idempotent disposer. Stage open is transactional:
+window creation, hardening, and synchronous load setup failures destroy any
+partial window, unlock the rig, restore Host session state, and permit a retry.
+
+The shared composition lifecycle treats shutdown as terminal even if it arrives
+while a factory or `start()` is pending. OpenPets lazy Control Center, plugin,
+LAN, remote, and voice work uses an async disposal gate; shutdown disables its
+ports, drains pending work, then releases any resource that reached a started
+state. HostCore's display-change path calls a narrow LAN reclamp port and never
+statically imports the LAN pet implementation.
 
 On BrainPet, Electron hardware acceleration is disabled before readiness. The
 two bounded transparent pixel surfaces use software composition, which avoids
@@ -349,7 +358,10 @@ and with the same controller state, so the old Renderer process and page
 resources actually exit. A built-in pet with no active Agent, bubble, or status
 then uses its matching static thumbnail instead of retaining the decoded 8x9
 spritesheet; the next training request or live state restores full animation.
-The OpenPets profile never installs this close callback.
+The Electron foundation smoke checks the replacement renderer's computed asset
+URL and animation state, then verifies the next training request restores the
+full spritesheet. A separate OpenPets-profile smoke verifies its renderer ID and
+normal animation remain unchanged; OpenPets never installs this close callback.
 
 BrainPet packaging uses base, private-test and public-release configs. Local
 Windows builds go to `dist-brainpet/private-test`; the unpacked runtime is

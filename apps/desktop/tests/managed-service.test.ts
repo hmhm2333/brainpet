@@ -47,3 +47,48 @@ test("a failed service start rolls back every created service", async () => {
   await assert.rejects(lifecycle.start(), /failed:optional/);
   assert.deepEqual(events, ["start:host", "start:optional", "dispose:optional", "dispose:host"]);
 });
+
+test("dispose during a pending start prevents later factories and disposes once", async () => {
+  const events: string[] = [];
+  let releaseStart: (() => void) | undefined;
+  const startGate = new Promise<void>((resolve) => { releaseStart = resolve; });
+  let laterFactoryCalls = 0;
+  const pendingService = service("pending", events);
+  pendingService.start = async () => {
+    events.push("start:pending");
+    await startGate;
+  };
+  const lifecycle = new DesktopServiceLifecycle([
+    () => pendingService,
+    () => {
+      laterFactoryCalls += 1;
+      return service("late", events);
+    },
+  ]);
+
+  const starting = lifecycle.start();
+  await Promise.resolve();
+  const disposing = lifecycle.dispose();
+  releaseStart?.();
+  await Promise.all([starting, disposing]);
+  await lifecycle.dispose();
+
+  assert.equal(laterFactoryCalls, 0);
+  assert.deepEqual(events, ["start:pending", "dispose:pending"]);
+  assert.equal(lifecycle.diagnostics()[0]?.state, "disposed");
+});
+
+test("dispose while a factory is pending disposes its result without starting it", async () => {
+  const events: string[] = [];
+  let releaseFactory: ((value: DesktopManagedService) => void) | undefined;
+  const factoryGate = new Promise<DesktopManagedService>((resolve) => { releaseFactory = resolve; });
+  const lifecycle = new DesktopServiceLifecycle([() => factoryGate]);
+
+  const starting = lifecycle.start();
+  await Promise.resolve();
+  const disposing = lifecycle.dispose();
+  releaseFactory?.(service("created", events));
+  await Promise.all([starting, disposing]);
+
+  assert.deepEqual(events, ["dispose:created"]);
+});

@@ -16,6 +16,8 @@ import { isLanPetAwayForLocalHost, LanCoordinator, countLanTopologyLinks, normal
 import { info, warn, error as logError } from "./logger.js";
 import type { OpenPetsReaction } from "./local-ipc-protocol.js";
 
+export { reclampLanVisitingPetWindows } from "./lan-pet-controller.js";
+
 export type LanStatusSnapshot = {
   readonly mode: LanMode;
   readonly localHost: string;

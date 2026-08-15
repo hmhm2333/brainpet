@@ -26,15 +26,18 @@ const lifecycleCycles = parsePositiveInteger(process.env.BRAINPET_LIFECYCLE_CYCL
 const soakMs = parseNonNegativeInteger(process.env.BRAINPET_SOAK_MS, 0);
 const startupTimeoutMs = parsePositiveInteger(process.env.BRAINPET_START_TIMEOUT_MS, 20_000);
 const expectDisabled = process.env.BRAINPET_EXPECT_DISABLED === "1";
+const verifyOpenPetsIsolation = process.env.BRAINPET_EXPECT_OPENPETS_ISOLATION === "1";
 const verifyCompletion = process.env.BRAINPET_VERIFY_COMPLETION === "1";
 const skipFocusPause = process.env.BRAINPET_SKIP_FOCUS_PAUSE === "1";
 const forcedTask = process.env.BRAINPET_SMOKE_TASK;
-const enforceResourceBudget = process.env.BRAINPET_ENFORCE_RESOURCE_BUDGET !== "0";
+const enforceResourceBudget = !verifyOpenPetsIsolation && process.env.BRAINPET_ENFORCE_RESOURCE_BUDGET !== "0";
 const videoPath = process.env.BRAINPET_VIDEO_PATH ? resolve(process.env.BRAINPET_VIDEO_PATH) : null;
 if (forcedTask && forcedTask !== "cargo-signal" && forcedTask !== "pack-refresh" && forcedTask !== "foundation-probe") throw new Error("BRAINPET_SMOKE_TASK must be cargo-signal, pack-refresh, or foundation-probe.");
+if (expectDisabled && verifyOpenPetsIsolation) throw new Error("Rollback and OpenPets isolation smoke modes are mutually exclusive.");
+if (verifyOpenPetsIsolation && process.env.OPENPETS_DISTRIBUTION_PROFILE !== "openpets") throw new Error("OpenPets isolation smoke requires OPENPETS_DISTRIBUTION_PROFILE=openpets.");
 
 const exerciserMode = !forcedTask || forcedTask === "foundation-probe";
-const petWindowTitle = "BrainPet Default Pet";
+const petWindowTitle = verifyOpenPetsIsolation ? "OpenPets Default Pet" : "BrainPet Default Pet";
 
 const child = spawn(electronPath, [".", `--user-data-dir=${userDataDir}`, `--remote-debugging-port=${port}`], {
   cwd: appDir,
@@ -59,7 +62,23 @@ try {
   const idleProcessMetrics = process.platform === "win32" ? await measureProcessesForUserDataDir(userDataDir) : null;
   if (idleProcessMetrics) process.stdout.write(`BRAINPET_RESOURCE_METRICS ${JSON.stringify({ phase: "cold-idle", metrics: idleProcessMetrics })}\n`);
   if (enforceResourceBudget && idleProcessMetrics) assertProcessBudget("idle", idleProcessMetrics, { processCount: 5, workingSetBytes: 400 * 1024 * 1024, privateBytes: 400 * 1024 * 1024 });
-  if (expectDisabled) {
+  if (verifyOpenPetsIsolation) {
+    const openPetsRender = await evaluate(petTarget, `(() => {
+      const sprite = document.querySelector('.sprite');
+      if (!(sprite instanceof HTMLElement)) return null;
+      const style = getComputedStyle(sprite);
+      return { backgroundImage: style.backgroundImage, animationName: style.animationName, triggerFound: Boolean(document.querySelector('[data-brainpet-trigger]')) };
+    })()`);
+    assert.match(openPetsRender?.backgroundImage ?? "", /default-pet-spritesheet\.webp/, "OpenPets must retain its normal animated spritesheet");
+    assert.notEqual(openPetsRender?.animationName, "none", "OpenPets must not enter BrainPet post-training static idle");
+    assert.equal(openPetsRender?.triggerFound, false, "OpenPets must not expose the BrainPet training trigger");
+    await delay(2_000);
+    const openPetsTargets = await listTargets(port);
+    assert.equal(openPetsTargets.some((target) => target.id === petTarget.id && target.title === petWindowTitle), true, "OpenPets pet renderer must not be replaced by BrainPet recovery behavior");
+    assert.equal(openPetsTargets.some((target) => target.title === "BrainPet"), false, "OpenPets must not create a BrainPet stage renderer");
+    process.stdout.write(`${JSON.stringify({ ok: true, openPetsProfileIsolation: true, animatedPetPreserved: true, rendererId: petTarget.id })}\n`);
+    process.exitCode = 0;
+  } else if (expectDisabled) {
     const disabledState = await evaluate(petTarget, `({ triggerFound: Boolean(document.querySelector('[data-brainpet-trigger]')) })`);
     assert.equal(disabledState.triggerFound, false, "feature flag must remove the BrainPet trigger");
     assert.equal((await listTargets(port)).some((target) => target.title === "BrainPet"), false, "feature flag must prevent the stage window");
@@ -422,6 +441,14 @@ try {
   const closedPetTargetId = togglePetTarget.id;
   togglePetTarget = await waitForTarget(port, (target) => target.title === petWindowTitle && target.id !== closedPetTargetId, 5_000);
   await waitForEvaluation(togglePetTarget, `document.documentElement.dataset.brainpetStageOpen !== 'true'`, 2_000);
+  const postTrainingIdle = await evaluate(togglePetTarget, `(() => {
+    const sprite = document.querySelector('.sprite');
+    if (!(sprite instanceof HTMLElement)) return null;
+    const style = getComputedStyle(sprite);
+    return { backgroundImage: style.backgroundImage, animationName: style.animationName };
+  })()`);
+  assert.match(postTrainingIdle?.backgroundImage ?? "", /default-pet-thumbnail\.png/, "normal stage close must release the full spritesheet in the replacement pet renderer");
+  assert.equal(postTrainingIdle?.animationName, "none", "post-training static idle must disable sprite animation");
   petToggleCloseVerified = true;
   await delay(15_000);
   const hotIdleProcessMetrics = process.platform === "win32"
@@ -438,6 +465,12 @@ try {
   await evaluate(togglePetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
   stageTarget = await waitForTarget(port, (target) => target.title === "BrainPet", 10_000);
   await waitForEvaluation(stageTarget, stageIdentityExpression, 5_000);
+  await waitForEvaluation(togglePetTarget, `(() => {
+    const sprite = document.querySelector('.sprite');
+    if (!(sprite instanceof HTMLElement)) return false;
+    const style = getComputedStyle(sprite);
+    return /default-pet-spritesheet\\.webp/.test(style.backgroundImage) && style.animationName !== 'none';
+  })()`, 5_000);
   await evaluate(stageTarget, `document.querySelector('[data-action="skip-intro"]')?.click()`);
   await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
 
