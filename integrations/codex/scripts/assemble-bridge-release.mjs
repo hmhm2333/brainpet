@@ -51,6 +51,7 @@ export function assembleBridgeRelease({ artifactsRoot, outputRoot }) {
       githubActions: process.env.GITHUB_ACTIONS === "true",
       workflow: process.env.GITHUB_WORKFLOW ?? null,
       runId: process.env.GITHUB_RUN_ID ?? null,
+      runAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
       runnerEnvironment: process.env.RUNNER_ENVIRONMENT ?? null,
     },
     createdAt: new Date().toISOString(),

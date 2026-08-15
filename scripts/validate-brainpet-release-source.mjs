@@ -90,7 +90,16 @@ assert.match(readFileSync(join(desktop, "scripts", "brainpet-package.mjs"), "utf
 assert.match(readFileSync(join(desktop, "scripts", "validate-brainpet-package.mjs"), "utf8"), /nativeBridgeHelpersBundled: true/);
 assert.ok(existsSync(join(desktop, "scripts", "brainpet-package-lifecycle.mjs")));
 assert.ok(existsSync(join(root, "scripts", "aggregate-brainpet-release-receipt.mjs")));
-assert.ok(existsSync(join(root, ".github", "workflows", "brainpet-public-release-gate.yml")));
+const sigstoreSource = readFileSync(join(root, "scripts", "brainpet-sigstore-provenance.mjs"), "utf8");
+assert.match(sigstoreSource, /--certificate-github-workflow-repository/);
+assert.match(sigstoreSource, /--certificate-github-workflow-sha/);
+assert.match(sigstoreSource, /RUNNER_ENVIRONMENT/);
+const publicReleaseWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-public-release-gate.yml"), "utf8");
+assert.match(publicReleaseWorkflow, /sigstore\/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6/);
+assert.match(publicReleaseWorkflow, /brainpet-public-provenance/);
+assert.doesNotMatch(publicReleaseWorkflow, /actions\/attest|gh attestation/, "Private-repository RC6 must not depend on GitHub Artifact Attestations.");
+assert.ok(existsSync(join(root, ".github", "workflows", "brainpet-physical-receipt-intake.yml")));
+assert.ok(existsSync(join(root, ".github", "workflows", "brainpet-public-release-finalize.yml")));
 assert.deepEqual(Object.fromEntries(brainPetDistributionContract.releaseTargets.map((target) => [target.id, target.supportLevel])), {
   "windows-x64": "stable",
   "windows-arm64": "preview",

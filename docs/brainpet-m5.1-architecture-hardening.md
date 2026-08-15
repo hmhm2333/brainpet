@@ -14,7 +14,7 @@
 | W3 单一契约 | 已实现 | 两个 `config/brainpet-*.json` 被源码与发行验证器校验 |
 | W4 Deadline / AppImage | 代码完成，跨平台 Rust 实编待 CI | Node/Rust 使用 2600ms 内部 deadline；非 TCP 写入有界；AppImage 持久路径测试通过 |
 | W5 安装状态 | 已实现 | runtime、Bridge 人工确认、与 Bridge 版本绑定的 lifecycle 证据分别持久化；升级会清除旧任务证据 |
-| W6 产物验证 | Windows x64 private-test 已验证；public gate 未完成 | Windows unpacked、NSIS、portable 已生成；runtime/installer/签名回执分离；跨目标 helper attestation 与 Linux provenance 验签仍待实现 |
+| W6 产物验证 | 本地发行门已实现；远端 public gate 未完成 | Windows unpacked、NSIS、portable 已生成；runtime/installer/签名回执分离；六目标 helper、四格式 lifecycle 与 GitHub OIDC/Sigstore provenance 已纳入候选工作流，仍待真实远端回执 |
 | W7 本机替换 | 待用户最终确认 | 安装包已就绪；尚未运行安装器、写 Codex 插件状态或收起原生宠物 |
 
 ## 1. 目标与完成口径
@@ -34,7 +34,7 @@ M5.1 把 M5 的“发行基础设施初版”收敛为可验证、可回退的�
 
 ### 1.1 独立审查问题的处理结果
 
-本轮独立审查提出的回退变量、打包身份、deadline 和安装证据四类 P1 已关闭：正式回退变量统一为 `BRAINPET_ENABLED`；打包后的发行身份与更新仓库忽略环境 override；Rust 的 pipe/socket 写入受 2600ms 总预算约束；安装证据绑定 Bridge 版本并验证 marker 与真实可执行文件。公开 runtime 回执也不再自行宣称整体 release ready。仍有两个只阻断 public release、不阻断当前 Windows private-test 的发行门：跨目标 Bridge helper 的 self-test 尚未绑定可信 CI attestation，Linux provenance JSON 尚未验签。四个 P2 中，Setup 回退隔离、协议字段漂移和 CI `config/**` 触发已修复；OpenPets 服务已迁移到动态 composition 模块，产物进一步做 source-level allowlist 仍留作公开发行前的体积优化。
+本轮独立审查提出的回退变量、打包身份、deadline 和安装证据四类 P1 已关闭：正式回退变量统一为 `BRAINPET_ENABLED`；打包后的发行身份与更新仓库忽略环境 override；Rust 的 pipe/socket 写入受 2600ms 总预算约束；安装证据绑定 Bridge 版本并验证 marker 与真实可执行文件。公开 runtime 回执也不再自行宣称整体 release ready。跨目标 Bridge helper、Linux provenance、四格式 lifecycle 与 Stable 物理回执现由同 commit 的候选、intake、finalize 三段门控制；在真实远端与物理回执通过前仍阻断 public release。四个 P2 中，Setup 回退隔离、协议字段漂移和 CI `config/**` 触发已修复；OpenPets 服务已迁移到动态 composition 模块，产物进一步做 source-level allowlist 仍留作公开发行前的体积优化。
 
 ### 1.2 本机验证回执
 

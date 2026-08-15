@@ -11,7 +11,7 @@ const repoRoot = resolve(desktopRoot, "../..");
 const intakeWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/brainpet-physical-receipt-intake.yml"), "utf8");
 const publicWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/brainpet-public-release-gate.yml"), "utf8");
 const finalizeWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/brainpet-public-release-finalize.yml"), "utf8");
-const subjectCollector = readFileSync(resolve(repoRoot, "scripts/collect-brainpet-subject-provenance.mjs"), "utf8");
+const sigstoreProvenance = readFileSync(resolve(repoRoot, "scripts/brainpet-sigstore-provenance.mjs"), "utf8");
 
 test("physical acceptance harness is receipt-driven and does not automate destructive system actions", () => {
   assert.match(script, /brainpet-physical-receipt\.json/);
@@ -45,10 +45,16 @@ test("physical evidence enters the public gate only through the dedicated intake
   assert.match(intakeWorkflow, /--require-trusted-ci/);
   assert.doesNotMatch(publicWorkflow, /physical_receipt_run_id/);
   assert.match(publicWorkflow, /brainpet-public-candidate-receipt/);
-  assert.match(publicWorkflow, /collect-brainpet-subject-provenance\.mjs/);
-  assert.doesNotMatch(publicWorkflow, /cat sha256-/);
-  assert.match(subjectCollector, /sha256\[-:\]/);
+  assert.match(publicWorkflow, /sigstore\/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6/);
+  assert.match(publicWorkflow, /brainpet-sigstore-provenance\.mjs/);
+  assert.match(publicWorkflow, /brainpet-public-provenance/);
+  assert.doesNotMatch(publicWorkflow, /actions\/attest|gh attestation/);
+  assert.match(sigstoreProvenance, /--oidc-provider", "github-actions/);
+  assert.match(sigstoreProvenance, /--certificate-github-workflow-repository/);
+  assert.match(sigstoreProvenance, /--certificate-github-workflow-sha/);
+  assert.match(sigstoreProvenance, /RUNNER_ENVIRONMENT/);
   assert.match(finalizeWorkflow, /download-brainpet-public-candidate\.mjs/);
   assert.match(finalizeWorkflow, /download-brainpet-physical-receipts\.mjs/);
+  assert.match(finalizeWorkflow, /--provenance output\/candidate\/provenance/);
   assert.match(finalizeWorkflow, /--expect-public-ready/);
 });

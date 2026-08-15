@@ -6,8 +6,6 @@ on:
 permissions:
   contents: read
   actions: read
-  id-token: write
-  attestations: write
 
 jobs:
   native-helper:
@@ -57,7 +55,6 @@ jobs:
       APPLE_ID: ${{ secrets.BRAINPET_APPLE_ID }}
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.BRAINPET_APPLE_APP_SPECIFIC_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.BRAINPET_APPLE_TEAM_ID }}
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -77,23 +74,6 @@ jobs:
         run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode public-release --helper output/helper/${{ matrix.file }}
       - if: matrix.platform == 'linux'
         run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode public-release --helper output/helper/${{ matrix.file }} --defer-trust
-      - if: matrix.platform == 'windows'
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: apps/desktop/dist-brainpet/public-release/*-setup.exe
-      - if: matrix.platform == 'macos'
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: apps/desktop/dist-brainpet/public-release/*.dmg
-      - if: matrix.platform == 'linux'
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: |
-            apps/desktop/dist-brainpet/public-release/*.AppImage
-            apps/desktop/dist-brainpet/public-release/*.deb
-      - run: node scripts/collect-brainpet-provenance.mjs apps/desktop/dist-brainpet/public-release/brainpet-package-receipt-${{ matrix.id }}.json apps/desktop/dist-brainpet/public-release/brainpet-github-attestations.jsonl
-      - if: matrix.platform == 'linux'
-        run: node apps/desktop/scripts/validate-brainpet-package.mjs --target ${{ matrix.id }} --mode public-release --package-target installer --provenance apps/desktop/dist-brainpet/public-release/brainpet-github-attestations.jsonl
       - uses: actions/upload-artifact@v4
         with:
           name: brainpet-public-runtime-current-${{ matrix.id }}
@@ -133,13 +113,6 @@ jobs:
       - if: runner.os == 'Linux'
         run: which xvfb-run
       - run: node apps/desktop/scripts/brainpet-package-lifecycle.mjs --target ${{ matrix.id }} --artifact-kind ${{ matrix.kind }} --current-output output/current --previous-output output/previous --receipt output/lifecycle/brainpet-install-lifecycle-receipt-${{ matrix.id }}-${{ matrix.kind }}.json
-      - uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: output/lifecycle/brainpet-install-lifecycle-receipt-${{ matrix.id }}-${{ matrix.kind }}.json
-      - name: Collect lifecycle provenance bundle
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/collect-brainpet-subject-provenance.mjs output/lifecycle/brainpet-install-lifecycle-receipt-${{ matrix.id }}-${{ matrix.kind }}.json output/lifecycle/brainpet-github-attestations.jsonl
       - uses: actions/upload-artifact@v4
         with:
           name: brainpet-public-lifecycle-${{ matrix.id }}-${{ matrix.kind }}
@@ -163,13 +136,6 @@ jobs:
           done
       - run: node integrations/codex/scripts/assemble-bridge-release.mjs --artifacts output/helpers --output output/bridge
       - run: node integrations/codex/scripts/validate-bridge-release.mjs --plugin-root output/bridge
-      - uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: output/bridge/brainpet-release.json
-      - name: Collect Bridge provenance bundle
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/collect-brainpet-subject-provenance.mjs output/bridge/brainpet-release.json output/bridge/brainpet-github-attestations.jsonl
       - uses: actions/upload-artifact@v4
         with:
           name: brainpet-public-bridge
@@ -179,10 +145,15 @@ jobs:
   aggregate-public-candidate-receipt:
     needs: [runtime-package, installer-lifecycle, assemble-bridge]
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
       - uses: actions/download-artifact@v4
         with:
           pattern: brainpet-public-runtime-current-*
@@ -196,11 +167,19 @@ jobs:
           name: brainpet-public-bridge
           path: output/bridge
       - run: mkdir -p output/aggregate
-      - run: node scripts/aggregate-brainpet-release-receipt.mjs --packages output/packages --lifecycle output/lifecycle --bridge output/bridge --output output/aggregate/brainpet-release-receipt.json --mode public-release
+      - run: node scripts/brainpet-sigstore-provenance.mjs --packages output/packages --lifecycle output/lifecycle --bridge output/bridge --output output/provenance
+      - run: node scripts/aggregate-brainpet-release-receipt.mjs --packages output/packages --lifecycle output/lifecycle --bridge output/bridge --provenance output/provenance --output output/aggregate/brainpet-release-receipt.json --mode public-release
       - run: node -e "const r=require('./output/aggregate/brainpet-release-receipt.json'); if(!r.rc6GatePassed||r.publicReleaseReady||!r.missingEvidence.every(value=>value.endsWith(':physical-acceptance'))) process.exit(1)"
+      - run: node scripts/brainpet-sigstore-provenance.mjs --subject output/aggregate/brainpet-release-receipt.json --output output/provenance
       - uses: actions/upload-artifact@v4
         with:
           name: brainpet-public-candidate-receipt
           path: output/aggregate/brainpet-release-receipt.json
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brainpet-public-provenance
+          path: output/provenance/
           if-no-files-found: error
           retention-days: 90

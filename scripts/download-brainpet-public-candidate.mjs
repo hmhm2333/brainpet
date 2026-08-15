@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract, brainPetReleaseTargets } from "./brainpet-release-contract.mjs";
+import { brainPetPublicReleaseWorkflow, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
 
 export function downloadBrainPetPublicCandidate(options) {
   assert.match(options.runId ?? "", /^\d{1,20}$/, "Public candidate run id is invalid.");
@@ -27,10 +28,12 @@ export function downloadBrainPetPublicCandidate(options) {
   const lifecycleRoot = join(outputRoot, "lifecycle");
   const bridgeRoot = join(outputRoot, "bridge");
   const receiptRoot = join(outputRoot, "candidate-receipt");
+  const provenanceRoot = join(outputRoot, "provenance");
   runGh(["run", "download", options.runId, "--repo", options.repository, "--pattern", "brainpet-public-runtime-current-*", "--dir", packagesRoot]);
   runGh(["run", "download", options.runId, "--repo", options.repository, "--pattern", "brainpet-public-lifecycle-*", "--dir", lifecycleRoot]);
   runGh(["run", "download", options.runId, "--repo", options.repository, "--name", "brainpet-public-bridge", "--dir", bridgeRoot]);
   runGh(["run", "download", options.runId, "--repo", options.repository, "--name", "brainpet-public-candidate-receipt", "--dir", receiptRoot]);
+  runGh(["run", "download", options.runId, "--repo", options.repository, "--name", "brainpet-public-provenance", "--dir", provenanceRoot]);
 
   assert.equal(findFiles(packagesRoot, /^brainpet-package-receipt-[a-z0-9-]+\.json$/).length, brainPetReleaseTargets.length, "Public candidate package evidence is incomplete.");
   assert.equal(findFiles(lifecycleRoot, /^brainpet-install-lifecycle-receipt-[a-z0-9-]+-[a-z0-9-]+\.json$/).length, 4, "Public candidate lifecycle evidence is incomplete.");
@@ -41,10 +44,21 @@ export function downloadBrainPetPublicCandidate(options) {
   assert.equal(candidate.product, "brainpet");
   assert.equal(candidate.releaseMode, "public-release");
   assert.equal(candidate.sourceCommit.toLowerCase(), options.sourceCommit.toLowerCase());
+  assert.equal(String(candidate.sourceRunId), options.runId, "Public candidate receipt does not bind the selected workflow run.");
   assert.equal(candidate.rc6GatePassed, true);
   assert.equal(candidate.publicReleaseReady, false);
   assert.deepEqual(candidate.missingEvidence.sort(), ["macos-arm64:physical-acceptance", "windows-x64:physical-acceptance"]);
-  return { runId: options.runId, packagesRoot, lifecycleRoot, bridgeRoot, receiptPath: candidatePaths[0] };
+  const provenanceVerifier = options.provenanceVerifier ?? verifyBrainPetSigstoreSubject;
+  provenanceVerifier({
+    subjectPath: candidatePaths[0],
+    bundlesRoot: provenanceRoot,
+    repository: options.repository,
+    workflowPath: brainPetPublicReleaseWorkflow.path,
+    workflowName: brainPetPublicReleaseWorkflow.name,
+    sourceCommit: options.sourceCommit,
+    label: "BrainPet public candidate receipt",
+  });
+  return { runId: options.runId, packagesRoot, lifecycleRoot, bridgeRoot, provenanceRoot, receiptPath: candidatePaths[0] };
 }
 
 function readJson(path) {

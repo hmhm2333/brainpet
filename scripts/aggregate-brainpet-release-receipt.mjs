@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
@@ -10,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { brainPetDistributionContract, brainPetReleaseTargets } from "./brainpet-release-contract.mjs";
 import { assertBrainPetBinary, inspectExecutableBinary } from "./brainpet-binary-format.mjs";
 import { validateBrainPetPhysicalReceipt, validateBrainPetPhysicalReceiptSet } from "./brainpet-physical-receipt-contract.mjs";
+import { brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
 
 const lifecycleRequirements = Object.freeze([
   { target: "windows-x64", kind: "nsis" },
@@ -20,24 +20,29 @@ const lifecycleRequirements = Object.freeze([
 
 export function aggregateBrainPetReleaseReceipt(options) {
   const releaseMode = options.releaseMode ?? "private-test";
-  const provenanceVerifier = options.provenanceVerifier ?? verifyGitHubAttestation;
+  const provenanceVerifier = options.provenanceVerifier ?? verifyBrainPetSigstoreSubject;
   assert.ok(["private-test", "public-release"].includes(releaseMode), "Invalid aggregate release mode.");
   const packagesRoot = resolve(options.packagesRoot);
   const lifecycleRoot = resolve(options.lifecycleRoot);
   const bridgeRoot = resolve(options.bridgeRoot);
+  const provenanceRoot = releaseMode === "public-release" ? resolve(options.provenanceRoot ?? "") : null;
+  if (releaseMode === "public-release") {
+    const provenanceStat = options.provenanceRoot && existsSync(provenanceRoot) ? lstatSync(provenanceRoot) : null;
+    assert.ok(provenanceStat?.isDirectory() && !provenanceStat.isSymbolicLink(), "Public release requires a regular Sigstore provenance bundle directory.");
+  }
   const packageReceipts = findFiles(packagesRoot, /^brainpet-package-receipt-[a-z0-9-]+\.json$/);
   const lifecycleReceipts = findFiles(lifecycleRoot, /^brainpet-install-lifecycle-receipt-[a-z0-9-]+-[a-z0-9-]+\.json$/);
   const physicalReceipts = options.physicalRoot && existsSync(resolve(options.physicalRoot))
     ? findFiles(resolve(options.physicalRoot), /^brainpet-physical-receipt\.json$/)
     : [];
 
-  const packages = brainPetReleaseTargets.map((target) => validatePackageReceipt(packageReceipts, packagesRoot, target, releaseMode, provenanceVerifier));
+  const packages = brainPetReleaseTargets.map((target) => validatePackageReceipt(packageReceipts, packagesRoot, target, releaseMode, provenanceRoot, provenanceVerifier));
   const appVersions = new Set(packages.map((entry) => entry.appVersion));
   assert.equal(appVersions.size, 1, "All runtime packages must use one exact app version.");
   const appVersion = [...appVersions][0];
-  const lifecycle = lifecycleRequirements.map((requirement) => validateLifecycleReceipt(lifecycleReceipts, requirement, packages, releaseMode, provenanceVerifier));
+  const lifecycle = lifecycleRequirements.map((requirement) => validateLifecycleReceipt(lifecycleReceipts, requirement, packages, releaseMode, provenanceRoot, provenanceVerifier));
   const bridge = validateBridgeReceipt(bridgeRoot);
-  if (releaseMode === "public-release") validateBridgeProvenance(bridgeRoot, bridge, provenanceVerifier);
+  if (releaseMode === "public-release") validateBridgeProvenance(bridgeRoot, bridge, provenanceRoot, provenanceVerifier);
   const physicalEvidence = physicalReceipts.map((path) => validatePhysicalReceipt(path));
   if (releaseMode === "public-release" && physicalEvidence.length > 0) validateBrainPetPhysicalReceiptSet(physicalEvidence.map((entry) => entry.receipt));
   const physical = physicalEvidence.map(({ receipt: _receipt, ...summary }) => summary);
@@ -46,6 +51,16 @@ export function aggregateBrainPetReleaseReceipt(options) {
   sourceCommits.add(bridge.source.commit);
   assert.equal(sourceCommits.size, 1, "Release evidence must bind one exact source commit.");
   const sourceCommit = [...sourceCommits][0];
+  let sourceRunId = null;
+  let sourceRunAttempt = null;
+  if (releaseMode === "public-release") {
+    const sourceRunIds = new Set([...packages, ...lifecycle, bridge].map((entry) => entry.source.runId));
+    const sourceRunAttempts = new Set([...packages, ...lifecycle, bridge].map((entry) => entry.source.runAttempt));
+    assert.equal(sourceRunIds.size, 1, "Public release evidence must come from one exact workflow run.");
+    assert.equal(sourceRunAttempts.size, 1, "Public release evidence must come from one exact workflow attempt.");
+    [sourceRunId] = sourceRunIds;
+    [sourceRunAttempt] = sourceRunAttempts;
+  }
   for (const entry of physical) {
     assert.equal(entry.sourceCommit, sourceCommit, `Physical receipt ${entry.target} is not bound to release commit ${sourceCommit}.`);
     const packageReceipt = packages.find((candidate) => candidate.target === entry.target);
@@ -75,6 +90,8 @@ export function aggregateBrainPetReleaseReceipt(options) {
     appVersion,
     releaseMode,
     sourceCommit,
+    sourceRunId,
+    sourceRunAttempt,
     packages,
     lifecycle,
     bridge,
@@ -95,7 +112,7 @@ export function aggregateBrainPetReleaseReceipt(options) {
   return receipt;
 }
 
-function validatePackageReceipt(paths, packagesRoot, target, releaseMode, provenanceVerifier) {
+function validatePackageReceipt(paths, packagesRoot, target, releaseMode, provenanceRoot, provenanceVerifier) {
   const candidates = paths.filter((path) => basename(path) === `brainpet-package-receipt-${target.id}.json`);
   assert.equal(candidates.length, 1, `Expected exactly one package receipt for ${target.id}.`);
   const path = candidates[0];
@@ -112,7 +129,6 @@ function validatePackageReceipt(paths, packagesRoot, target, releaseMode, proven
   assert.equal(receipt.bridgeMarketplaceBundled, true);
   assert.match(receipt.appVersion, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/, `Package receipt ${target.id} has an invalid app version.`);
   assert.equal(typeof receipt.runtimeReleaseReady, "boolean", `Package receipt ${target.id} lacks a runtime trust result.`);
-  if (releaseMode === "public-release") assert.equal(receipt.runtimeReleaseReady, true, `Public package ${target.id} did not pass its platform trust gate.`);
   assert.ok(Array.isArray(receipt.artifacts) && receipt.artifacts.length > 0);
   const receiptRoot = dirname(path);
   const requiredKinds = target.platform === "windows" ? ["nsis"] : target.platform === "macos" ? ["dmg"] : ["appimage", "deb"];
@@ -122,26 +138,36 @@ function validatePackageReceipt(paths, packagesRoot, target, releaseMode, proven
   assert.equal(sha256(executablePath), receipt.sha256, `Runtime executable hash mismatch for ${target.id}.`);
   assertBrainPetBinary(readFileSync(executablePath), target, `Aggregate runtime ${target.id}`);
   assert.ok(isRecord(receipt.source) && /^[a-f0-9]{40}$/i.test(receipt.source.commit), `Package receipt ${target.id} lacks an exact source commit.`);
-  if (releaseMode === "public-release") validateGitHubProvenance(receiptRoot, receipt, target, provenanceVerifier);
+  if (releaseMode === "public-release") {
+    assert.equal(receipt.source.workflow, brainPetPublicReleaseWorkflow.name, `Public package ${target.id} came from the wrong workflow.`);
+    assert.match(receipt.source.runId ?? "", /^\d{1,20}$/, `Public package ${target.id} lacks a workflow run id.`);
+    assert.match(receipt.source.runAttempt ?? "", /^\d{1,10}$/, `Public package ${target.id} lacks a workflow run attempt.`);
+    assert.equal(receipt.source.treeDirty, false, `Public package ${target.id} came from a dirty tracked tree.`);
+    assert.equal(receipt.installerValidated, true, `Public package ${target.id} did not pass its installer structure gate.`);
+    if (target.platform === "linux") {
+      assert.equal(typeof receipt.signatureValidated, "boolean", `Public Linux package ${target.id} lacks its deferred trust state.`);
+    } else {
+      assert.equal(receipt.signatureValidated, true, `Public package ${target.id} did not pass its platform signature gate.`);
+      assert.equal(receipt.runtimeReleaseReady, true, `Public package ${target.id} did not pass its platform trust gate.`);
+    }
+    validateSigstoreProvenance(receiptRoot, receipt, target, provenanceRoot, provenanceVerifier);
+  }
   assertUnderRoot(path, packagesRoot, "package receipt");
-  return receipt;
+  return releaseMode === "public-release" ? { ...receipt, signatureValidated: true, provenanceValidated: true, runtimeReleaseReady: true } : receipt;
 }
 
-function validateGitHubProvenance(receiptRoot, receipt, target, provenanceVerifier) {
+function validateSigstoreProvenance(receiptRoot, receipt, target, provenanceRoot, provenanceVerifier) {
   assert.equal(receipt.source.githubActions, true, `Public package ${target.id} must come from GitHub Actions.`);
   assert.equal(receipt.source.repository, brainPetDistributionContract.identity.repository);
   assert.equal(receipt.source.runnerEnvironment, "github-hosted", `Public package ${target.id} must come from a GitHub-hosted runner.`);
-  const bundle = join(receiptRoot, "brainpet-github-attestations.jsonl");
-  assert.ok(existsSync(bundle), `Public package ${target.id} is missing its GitHub provenance bundle.`);
   const repository = brainPetDistributionContract.identity.repository;
-  const signerWorkflow = `github.com/${repository}/.github/workflows/brainpet-public-release-gate.yml`;
   for (const artifact of receipt.artifacts) {
     const path = resolveSafeRelative(receiptRoot, artifact.path);
-    provenanceVerifier({ subjectPath: path, bundlePath: bundle, repository, signerWorkflow, sourceCommit: receipt.source.commit, label: `${target.id}/${artifact.kind}` });
+    provenanceVerifier(createProvenanceEvidence(path, provenanceRoot, repository, receipt.source.commit, `${target.id}/${artifact.kind}`));
   }
 }
 
-function validateLifecycleReceipt(paths, requirement, packages, releaseMode, provenanceVerifier) {
+function validateLifecycleReceipt(paths, requirement, packages, releaseMode, provenanceRoot, provenanceVerifier) {
   const expectedName = `brainpet-install-lifecycle-receipt-${requirement.target}-${requirement.kind}.json`;
   const candidates = paths.filter((path) => basename(path) === expectedName);
   assert.equal(candidates.length, 1, `Expected exactly one lifecycle receipt for ${requirement.target}/${requirement.kind}.`);
@@ -176,17 +202,16 @@ function validateLifecycleReceipt(paths, requirement, packages, releaseMode, pro
   assert.ok(artifact, `Lifecycle target has no ${requirement.kind} package artifact.`);
   assert.equal(receipt.currentArtifact.version, packageReceipt.appVersion, `Lifecycle version mismatch for ${requirement.target}/${requirement.kind}.`);
   assert.equal(receipt.currentArtifact.sha256, artifact.sha256, `Lifecycle artifact hash mismatch for ${requirement.target}/${requirement.kind}.`);
-  if (releaseMode === "public-release") validateLifecycleProvenance(candidates[0], receipt, provenanceVerifier);
+  if (releaseMode === "public-release") validateLifecycleProvenance(candidates[0], receipt, provenanceRoot, provenanceVerifier);
   return receipt;
 }
 
-function validateLifecycleProvenance(receiptPath, receipt, provenanceVerifier) {
-  assert.equal(receipt.source.workflow, "BrainPet public release gate");
-  const bundle = join(dirname(receiptPath), "brainpet-github-attestations.jsonl");
-  assert.ok(existsSync(bundle), `Public lifecycle ${receipt.target}/${receipt.artifactKind} is missing its GitHub provenance bundle.`);
+function validateLifecycleProvenance(receiptPath, receipt, provenanceRoot, provenanceVerifier) {
+  assert.equal(receipt.source.workflow, brainPetPublicReleaseWorkflow.name);
+  assert.match(receipt.source.runId ?? "", /^\d{1,20}$/, `Public lifecycle ${receipt.target}/${receipt.artifactKind} lacks a workflow run id.`);
+  assert.match(receipt.source.runAttempt ?? "", /^\d{1,10}$/, `Public lifecycle ${receipt.target}/${receipt.artifactKind} lacks a workflow run attempt.`);
   const repository = brainPetDistributionContract.identity.repository;
-  const signerWorkflow = `github.com/${repository}/.github/workflows/brainpet-public-release-gate.yml`;
-  provenanceVerifier({ subjectPath: receiptPath, bundlePath: bundle, repository, signerWorkflow, sourceCommit: receipt.source.commit, label: `lifecycle ${receipt.target}/${receipt.artifactKind}` });
+  provenanceVerifier(createProvenanceEvidence(receiptPath, provenanceRoot, repository, receipt.source.commit, `lifecycle ${receipt.target}/${receipt.artifactKind}`));
 }
 
 function validateBridgeReceipt(bridgeRoot) {
@@ -205,23 +230,30 @@ function validateBridgeReceipt(bridgeRoot) {
   return { bridgeVersion: receipt.bridgeVersion, targetCount: receipt.files.length, sha256: sha256(join(bridgeRoot, "brainpet-release.json")), source: receipt.source, releaseReady: true };
 }
 
-function validateBridgeProvenance(bridgeRoot, bridge, provenanceVerifier) {
+function validateBridgeProvenance(bridgeRoot, bridge, provenanceRoot, provenanceVerifier) {
   assert.equal(bridge.source.githubActions, true, "Public Bridge must come from GitHub Actions.");
   assert.equal(bridge.source.repository, brainPetDistributionContract.identity.repository);
   assert.equal(bridge.source.runnerEnvironment, "github-hosted", "Public Bridge must come from a GitHub-hosted runner.");
+  assert.equal(bridge.source.workflow, brainPetPublicReleaseWorkflow.name, "Public Bridge came from the wrong workflow.");
+  assert.match(bridge.source.runId ?? "", /^\d{1,20}$/, "Public Bridge lacks a workflow run id.");
+  assert.match(bridge.source.runAttempt ?? "", /^\d{1,10}$/, "Public Bridge lacks a workflow run attempt.");
   const receiptPath = join(bridgeRoot, "brainpet-release.json");
-  const bundle = join(bridgeRoot, "brainpet-github-attestations.jsonl");
-  assert.ok(existsSync(bundle), "Public Bridge is missing its GitHub provenance bundle.");
   const repository = brainPetDistributionContract.identity.repository;
-  const signerWorkflow = `github.com/${repository}/.github/workflows/brainpet-public-release-gate.yml`;
-  provenanceVerifier({ subjectPath: receiptPath, bundlePath: bundle, repository, signerWorkflow, sourceCommit: bridge.source.commit, label: "BrainPet Bridge receipt" });
+  provenanceVerifier(createProvenanceEvidence(receiptPath, provenanceRoot, repository, bridge.source.commit, "BrainPet Bridge receipt"));
 }
 
-function verifyGitHubAttestation(evidence) {
-  const verification = spawnSync("gh", ["attestation", "verify", evidence.subjectPath, "--bundle", evidence.bundlePath, "--repo", evidence.repository, "--signer-workflow", evidence.signerWorkflow, "--source-digest", evidence.sourceCommit, "--deny-self-hosted-runners", "--format", "json"], { encoding: "utf8" });
-  assert.equal(verification.status, 0, verification.error?.message || verification.stderr || `GitHub provenance failed for ${evidence.label}.`);
-  const result = JSON.parse(verification.stdout);
-  assert.ok(Array.isArray(result) && result.length > 0, `GitHub provenance returned no verified statement for ${evidence.label}.`);
+function createProvenanceEvidence(subjectPath, provenanceRoot, repository, sourceCommit, label) {
+  const digest = sha256(subjectPath);
+  return {
+    subjectPath,
+    bundlesRoot: provenanceRoot,
+    bundlePath: brainPetSigstoreBundlePath(provenanceRoot, digest),
+    repository,
+    workflowPath: brainPetPublicReleaseWorkflow.path,
+    workflowName: brainPetPublicReleaseWorkflow.name,
+    sourceCommit,
+    label,
+  };
 }
 
 function validatePhysicalReceipt(path) {
@@ -295,12 +327,13 @@ function parseArgs(argv) {
     else if (arg === "--lifecycle") options.lifecycleRoot = argv[++index];
     else if (arg === "--bridge") options.bridgeRoot = argv[++index];
     else if (arg === "--physical") options.physicalRoot = argv[++index];
+    else if (arg === "--provenance") options.provenanceRoot = argv[++index];
     else if (arg === "--output") options.outputPath = argv[++index];
     else if (arg === "--mode") options.releaseMode = argv[++index];
     else if (arg === "--expect-public-ready") options.expectPublicReady = true;
     else throw new Error(`Unknown aggregate receipt argument: ${arg}`);
   }
-  if (!options.packagesRoot || !options.lifecycleRoot || !options.bridgeRoot || !options.outputPath) throw new Error("Usage: aggregate-brainpet-release-receipt.mjs --packages <dir> --lifecycle <dir> --bridge <dir> --output <receipt.json> [--physical <dir>] [--mode private-test|public-release]");
+  if (!options.packagesRoot || !options.lifecycleRoot || !options.bridgeRoot || !options.outputPath) throw new Error("Usage: aggregate-brainpet-release-receipt.mjs --packages <dir> --lifecycle <dir> --bridge <dir> --output <receipt.json> [--physical <dir>] [--provenance <bundle-dir>] [--mode private-test|public-release]");
   options.receiptRoot = dirname(resolve(options.outputPath));
   return options;
 }

@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract, brainPetReleaseTargets } from "../../../scripts/brainpet-release-contract.mjs";
 import { assertBrainPetBinary, inspectExecutableBinary } from "../../../scripts/brainpet-binary-format.mjs";
+import { brainPetPublicReleaseWorkflow, verifyBrainPetSigstoreSubject } from "../../../scripts/brainpet-sigstore-provenance.mjs";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -212,16 +213,20 @@ function validatePublicTrust({ appRoot, executable, artifacts, target, provenanc
     }
     return true;
   }
-  assert.ok(provenancePath, "Public Linux release requires --provenance <GitHub attestation bundle>.");
+  assert.ok(provenancePath, "Public Linux release requires --provenance <Sigstore bundle directory>.");
   const sourceCommit = resolveBuildIdentity().commit;
   assert.match(sourceCommit, /^[a-f0-9]{40}$/i, "Public Linux provenance requires an exact source commit.");
   const repository = brainPetDistributionContract.identity.repository;
-  const signerWorkflow = `github.com/${repository}/.github/workflows/brainpet-public-release-gate.yml`;
   for (const artifact of artifacts) {
-    const verification = spawnSync("gh", ["attestation", "verify", artifact.path, "--bundle", resolve(provenancePath), "--repo", repository, "--signer-workflow", signerWorkflow, "--source-digest", sourceCommit, "--deny-self-hosted-runners", "--format", "json"], { encoding: "utf8" });
-    assert.equal(verification.status, 0, verification.stderr || `GitHub provenance validation failed for ${basename(artifact.path)}.`);
-    const verified = JSON.parse(verification.stdout);
-    assert.ok(Array.isArray(verified) && verified.length > 0, `GitHub returned no verified provenance for ${basename(artifact.path)}.`);
+    verifyBrainPetSigstoreSubject({
+      subjectPath: artifact.path,
+      bundlesRoot: resolve(provenancePath),
+      repository,
+      workflowPath: brainPetPublicReleaseWorkflow.path,
+      workflowName: brainPetPublicReleaseWorkflow.name,
+      sourceCommit,
+      label: basename(artifact.path),
+    });
   }
   return true;
 }

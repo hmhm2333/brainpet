@@ -16,7 +16,6 @@ permissions:
   contents: read
   actions: read
   id-token: write
-  attestations: write
 
 jobs:
   finalize:
@@ -25,16 +24,17 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
       - run: node scripts/download-brainpet-public-candidate.mjs --run-id "${{ inputs.candidate_run_id }}" --output output/candidate
       - run: node scripts/download-brainpet-physical-receipts.mjs --run-id "${{ inputs.physical_receipt_run_id }}" --output output/physical
       - run: mkdir -p output/final
-      - run: node scripts/aggregate-brainpet-release-receipt.mjs --packages output/candidate/packages --lifecycle output/candidate/lifecycle --bridge output/candidate/bridge --physical output/physical --output output/final/brainpet-release-receipt.json --mode public-release --expect-public-ready
-      - uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: output/final/brainpet-release-receipt.json
+      - run: node scripts/aggregate-brainpet-release-receipt.mjs --packages output/candidate/packages --lifecycle output/candidate/lifecycle --bridge output/candidate/bridge --physical output/physical --provenance output/candidate/provenance --output output/final/brainpet-release-receipt.json --mode public-release --expect-public-ready
+      - run: node scripts/brainpet-sigstore-provenance.mjs --subject output/final/brainpet-release-receipt.json --output output/final/provenance
       - uses: actions/upload-artifact@v4
         with:
           name: brainpet-public-release-receipt
-          path: output/final/brainpet-release-receipt.json
+          path: output/final/
           if-no-files-found: error
           retention-days: 90

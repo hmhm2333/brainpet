@@ -92,9 +92,13 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
   macOS arm64 DMG、Linux x64 AppImage/deb 运行真实安装、默认 discovery、包内 helper、
   Adapter 安装/升级/卸载、冷唤醒、状态保留升级和 runtime 卸载。
 - 公开 workflow 还要求 Windows Authenticode、macOS Developer ID + notarization ticket，
-  并用 GitHub OIDC/Sigstore 为所有 installer 生成 build provenance；聚合器会离线绑定
-  artifact hash，再通过 `gh attestation verify` 验证 repository、signer workflow、
-  source commit 和 GitHub-hosted runner。
+  并在 GitHub-hosted runner 上使用 GitHub OIDC 与 Sigstore keyless bundle 为所有
+  installer、lifecycle 和 Bridge 回执建立 provenance。聚合器先绑定 artifact hash，
+  再用 `cosign verify-blob` 校验 Fulcio/Rekor bundle 中的 repository、workflow 名称与
+  路径、触发事件和精确 source commit；该流程不依赖仅 Enterprise Cloud 私有仓库可用的
+  GitHub Artifact Attestations 服务。
+- Sigstore public-good 服务会把证书身份与 artifact digest 写入公开透明日志；该身份包含
+  repository、workflow/ref 和 commit 元数据，但不会上传安装包、源码、用户配置或人工回执正文。
 - `aggregate-brainpet-release-receipt.mjs` 聚合六目标 runtime、四种真实 installer
   lifecycle、六 helper Bridge、Adapter 和人工物理回执。Stable 目标仍缺任何签名、
   公证、安装或物理证据时，只列出 `missingEvidence`，绝不写公开就绪。
@@ -104,8 +108,8 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
 公开发行严格分成三次、同 commit 的可信运行，不能在验收后重新构建安装包：
 
 1. 手动运行 `BrainPet public release gate`。它构建并验证六目标签名/公证候选、四条
-   installer lifecycle、Bridge 和 provenance，只生成
-   `brainpet-public-candidate-receipt`；由于尚无物理回执，此时必须保持
+   installer lifecycle、Bridge 和 provenance，生成 `brainpet-public-candidate-receipt`
+   与配套 `brainpet-public-provenance`；由于尚无物理回执，此时必须保持
    `publicReleaseReady=false`。
 2. 从该候选 run 下载 Windows x64 NSIS 和 macOS arm64 DMG 原件，在两台 Stable
    物理机上运行对应验收脚本。intake 后的公开回执只保存平台、显示器摘要、安装包
@@ -114,8 +118,8 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
 3. 将两份 JSON 通过 `intake-brainpet-physical-receipts.mjs` 合并为最小 JSON 数组，
    在同 commit 上手动运行 `BrainPet physical receipt intake`。最后运行
    `BrainPet public release finalize`，传入候选 run id 与 intake run id。finalize 会
-   核对两个来源 workflow、成功状态、精确 commit 和候选 artifact hash，再写唯一可为
-   `publicReleaseReady=true` 的聚合回执。
+   核对两个来源 workflow、成功状态、精确 commit、候选 run id/attempt 和 artifact
+   hash，再写唯一可为 `publicReleaseReady=true` 的聚合回执及已自验签的 Sigstore bundle。
 
 Windows x64：
 
