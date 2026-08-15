@@ -56,13 +56,13 @@ router, or participates in LAN pet presence or leases. The v1 transport is raw
 unencrypted TCP and is intended only for a trusted private network or an
 encrypted overlay with its own ACLs; CGNAT addressing alone is not encryption.
 
-At the `0dacd88` implementation baseline, BrainPet selects a separate product
-identity and then starts the full OpenPets platform. Training still enters
-through the first-party `brainpet.training` command/bus facade. This is a
-documented migration baseline, not the release target: the active completion
-plan moves optional OpenPets services behind lazy factories and registers
-training directly in `BrainPetFeature`. The machine-readable current snapshot
-is `config/brainpet-release-capabilities.json`; the generated provider matrix is
+The desktop main process now composes three explicit layers: minimal `HostCore`,
+lazy `OptionalOpenPetsServices`, and the profile-injected `BrainPetFeature`.
+BrainPet registers training directly and neither bundles nor starts the plugin
+platform. OpenPets keeps its existing feature surface, but loads Control Center,
+plugin, LAN, remote, and voice graphs only when requested or already explicitly
+enabled. The machine-readable current snapshot is
+`config/brainpet-release-capabilities.json`; the generated provider matrix is
 `integrations/brainpet-provider-support.json`.
 
 ## The packages, and what each is for

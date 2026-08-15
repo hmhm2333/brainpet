@@ -49,8 +49,16 @@ try {
   const petTarget = await waitForTarget(port, (target) => target.title === petWindowTitle, startupTimeoutMs);
   const petReadyMs = Date.now() - spawnedAt;
   await delay(500);
+  const coldRendererTargets = (await listTargets(port)).filter((target) => target.type === "page");
+  assert.deepEqual(coldRendererTargets.map((target) => target.title), [petWindowTitle], `cold BrainPet must own only the pet renderer: ${JSON.stringify(coldRendererTargets.map(({ title, url }) => ({ title, url })))}`);
+  assert.equal(coldRendererTargets.some((target) => /plugin|control.?center/i.test(`${target.title} ${target.url}`)), false, "cold BrainPet must not create a Control Center or hidden plugin renderer");
+  // Cold idle is a steady-state budget. Give the visible pet enough time to
+  // fault in its animation/font pages before taking the baseline used by the
+  // later hot-idle delta; startup latency remains the earlier petReadyMs.
+  await delay(15_000);
   const idleProcessMetrics = process.platform === "win32" ? await measureProcessesForUserDataDir(userDataDir) : null;
-  if (enforceResourceBudget && idleProcessMetrics) assertProcessBudget("idle", idleProcessMetrics, { processCount: 5, workingSetBytes: 650 * 1024 * 1024, privateBytes: 450 * 1024 * 1024 });
+  if (idleProcessMetrics) process.stdout.write(`BRAINPET_RESOURCE_METRICS ${JSON.stringify({ phase: "cold-idle", metrics: idleProcessMetrics })}\n`);
+  if (enforceResourceBudget && idleProcessMetrics) assertProcessBudget("idle", idleProcessMetrics, { processCount: 5, workingSetBytes: 400 * 1024 * 1024, privateBytes: 400 * 1024 * 1024 });
   if (expectDisabled) {
     const disabledState = await evaluate(petTarget, `({ triggerFound: Boolean(document.querySelector('[data-brainpet-trigger]')) })`);
     assert.equal(disabledState.triggerFound, false, "feature flag must remove the BrainPet trigger");
@@ -402,23 +410,32 @@ try {
   if (soakMs >= 60_000) assert.equal(soak.heapGrowthBytes <= 32 * 1024 * 1024, true, `renderer heap grew by ${soak.heapGrowthBytes} bytes during soak`);
   const activeProcessMetrics = process.platform === "win32" ? await measureProcessesForUserDataDir(userDataDir) : null;
   if (enforceResourceBudget && activeProcessMetrics) {
-    assertProcessBudget("active", activeProcessMetrics, { processCount: (idleProcessMetrics?.processCount ?? 4) + 2, workingSetBytes: 900 * 1024 * 1024, privateBytes: 600 * 1024 * 1024 });
-    if (idleProcessMetrics) assert.equal(activeProcessMetrics.workingSetBytes - idleProcessMetrics.workingSetBytes <= 300 * 1024 * 1024, true, "opening the stage must add no more than 300 MiB working set");
+    assertProcessBudget("active", activeProcessMetrics, { processCount: (idleProcessMetrics?.processCount ?? 4) + 2, workingSetBytes: 650 * 1024 * 1024, privateBytes: 650 * 1024 * 1024 });
   }
   assert.doesNotMatch(logs.join(""), /invalid stage event rejected|stage event transition rejected/, "host must accept every validated session event during smoke and soak");
 
-  if (!petToggleCloseVerified) {
-    const togglePetTarget = await waitForTarget(port, (target) => target.title === petWindowTitle, 5_000);
-    await evaluate(togglePetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
-    await waitForTargetToDisappear(port, stageTarget.id, 10_000);
-    await waitForEvaluation(togglePetTarget, `document.documentElement.dataset.brainpetStageOpen !== 'true'`, 2_000);
-    petToggleCloseVerified = true;
-    await evaluate(togglePetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
-    stageTarget = await waitForTarget(port, (target) => target.title === "BrainPet", 10_000);
-    await waitForEvaluation(stageTarget, stageIdentityExpression, 5_000);
-    await evaluate(stageTarget, `document.querySelector('[data-action="skip-intro"]')?.click()`);
-    await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
+  const togglePetTarget = await waitForTarget(port, (target) => target.title === petWindowTitle, 5_000);
+  await evaluate(togglePetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
+  await waitForTargetToDisappear(port, stageTarget.id, 10_000);
+  await waitForEvaluation(togglePetTarget, `document.documentElement.dataset.brainpetStageOpen !== 'true'`, 2_000);
+  petToggleCloseVerified = true;
+  await delay(15_000);
+  const hotIdleProcessMetrics = process.platform === "win32"
+    ? await waitForProcessCount(userDataDir, (idleProcessMetrics?.processCount ?? 5) + 1, 5_000)
+    : null;
+  if (hotIdleProcessMetrics) process.stdout.write(`BRAINPET_RESOURCE_METRICS ${JSON.stringify({ phase: "hot-idle", metrics: hotIdleProcessMetrics })}\n`);
+  if (enforceResourceBudget && hotIdleProcessMetrics) {
+    assertProcessBudget("warmed idle", hotIdleProcessMetrics, { processCount: (idleProcessMetrics?.processCount ?? 5) + 1, workingSetBytes: 500 * 1024 * 1024, privateBytes: 500 * 1024 * 1024 });
+    if (idleProcessMetrics) {
+      const hotIdleGrowthBytes = hotIdleProcessMetrics.workingSetBytes - idleProcessMetrics.workingSetBytes;
+      assert.equal(hotIdleGrowthBytes <= 100 * 1024 * 1024, true, `normal stage close retained ${formatMiB(hotIdleGrowthBytes)} above cold idle: cold=${JSON.stringify(idleProcessMetrics.processes)} hot=${JSON.stringify(hotIdleProcessMetrics.processes)}`);
+    }
   }
+  await evaluate(togglePetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
+  stageTarget = await waitForTarget(port, (target) => target.title === "BrainPet", 10_000);
+  await waitForEvaluation(stageTarget, stageIdentityExpression, 5_000);
+  await evaluate(stageTarget, `document.querySelector('[data-action="skip-intro"]')?.click()`);
+  await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
 
   try {
     await sendCdp(stageTarget.webSocketDebuggerUrl, "Page.crash", {});
@@ -437,18 +454,16 @@ try {
   await waitForEvaluation(recoveredStageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
   await evaluate(recoveredStageTarget, closeStageExpression);
   await waitForTargetToDisappear(port, recoveredStageTarget.id, 10_000);
+  await delay(2_000);
   const recoveredIdleProcessMetrics = process.platform === "win32"
     ? await waitForProcessCount(userDataDir, (idleProcessMetrics?.processCount ?? 5) + 1, 5_000)
     : null;
   if (enforceResourceBudget && recoveredIdleProcessMetrics) {
-    // Chromium retains one warmed utility service after the first audio-enabled stage.
-    // The renderer must still disappear and the aggregate memory delta stays bounded.
-    assertProcessBudget("warmed idle", recoveredIdleProcessMetrics, { processCount: (idleProcessMetrics?.processCount ?? 5) + 1, workingSetBytes: 750 * 1024 * 1024, privateBytes: 500 * 1024 * 1024 });
-    if (idleProcessMetrics) assert.equal(recoveredIdleProcessMetrics.workingSetBytes - idleProcessMetrics.workingSetBytes <= 175 * 1024 * 1024, true, "stage crash recovery must retain no more than 175 MiB working set above cold idle");
+    assert.equal(recoveredIdleProcessMetrics.processCount <= (idleProcessMetrics?.processCount ?? 5) + 1, true, `crash recovery left too many processes: ${JSON.stringify(recoveredIdleProcessMetrics.processes)}`);
   }
   assert.doesNotMatch(logs.join(""), /invalid stage event rejected|stage event transition rejected/, "crash recovery must leave the Host lifecycle valid");
 
-  process.stdout.write(`${JSON.stringify({ ok: true, outputPath, introOutputPath, companionOutputPath, pixelUiOutputPath, resultOutputPath, videoPath, petReadyMs, idleProcessMetrics, activeProcessMetrics, recoveredIdleProcessMetrics, companionVerified: true, pixelUiVerified: true, trigger, stage: { width: welcome.width, height: welcome.height, desktopOverlay: true }, prompt: welcome.prompt, introBufferMs, openingMs, petIndependentMove, rigIndependentDrag, trialVisualHiddenDuringDrag, restartedTrialProgress, rigAutoResume, focusPause, nativeReactionClickVerified, petThrowVerified, petToggleCloseVerified, completionVerified: Boolean(completion), completionQuality: completion?.quality ?? null, foundationInputVerified, lifecycleCycles, soak, crashIsolated: true, crashRecovered: true })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, outputPath, introOutputPath, companionOutputPath, pixelUiOutputPath, resultOutputPath, videoPath, petReadyMs, idleProcessMetrics, activeProcessMetrics, hotIdleProcessMetrics, recoveredIdleProcessMetrics, companionVerified: true, pixelUiVerified: true, trigger, stage: { width: welcome.width, height: welcome.height, desktopOverlay: true }, prompt: welcome.prompt, introBufferMs, openingMs, petIndependentMove, rigIndependentDrag, trialVisualHiddenDuringDrag, restartedTrialProgress, rigAutoResume, focusPause, nativeReactionClickVerified, petThrowVerified, petToggleCloseVerified, completionVerified: Boolean(completion), completionQuality: completion?.quality ?? null, foundationInputVerified, lifecycleCycles, soak, crashIsolated: true, crashRecovered: true })}\n`);
   }
 } catch (error) {
   process.stderr.write(`${logs.join("")}\n`);
@@ -611,15 +626,17 @@ async function closeElectronApp(debugPort) {
 async function stopProcessesForUserDataDir(directory) {
   const script = String.raw`
 $needle = '--user-data-dir=' + $env:BRAINPET_CLEANUP_USER_DATA
-$all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CommandLine)
+$all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine)
 $roots = @($all | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
 if ($roots.Count -eq 0) { exit 0 }
+$rootNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+foreach ($root in $roots) { [void]$rootNames.Add([string]$root.Name) }
 $ids = [System.Collections.Generic.HashSet[uint32]]::new()
 foreach ($root in $roots) { [void]$ids.Add([uint32]$root.ProcessId) }
 do {
   $changed = $false
   foreach ($process in $all) {
-    if ($ids.Contains([uint32]$process.ParentProcessId) -and $ids.Add([uint32]$process.ProcessId)) { $changed = $true }
+    if ($rootNames.Contains([string]$process.Name) -and $ids.Contains([uint32]$process.ParentProcessId) -and $ids.Add([uint32]$process.ProcessId)) { $changed = $true }
   }
 } while ($changed)
 foreach ($id in @($ids) | Sort-Object -Descending) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
@@ -635,12 +652,14 @@ async function measureProcessesForUserDataDir(directory) {
 $needle = '--user-data-dir=' + $env:BRAINPET_METRICS_USER_DATA
 $all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine, WorkingSetSize, PrivatePageCount)
 $roots = @($all | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+$rootNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+foreach ($root in $roots) { [void]$rootNames.Add([string]$root.Name) }
 $ids = [System.Collections.Generic.HashSet[uint32]]::new()
 foreach ($root in $roots) { [void]$ids.Add([uint32]$root.ProcessId) }
 do {
   $changed = $false
   foreach ($process in $all) {
-    if ($ids.Contains([uint32]$process.ParentProcessId) -and $ids.Add([uint32]$process.ProcessId)) { $changed = $true }
+    if ($rootNames.Contains([string]$process.Name) -and $ids.Contains([uint32]$process.ParentProcessId) -and $ids.Add([uint32]$process.ProcessId)) { $changed = $true }
   }
 } while ($changed)
 $selected = @($all | Where-Object { $ids.Contains([uint32]$_.ProcessId) })
@@ -648,7 +667,7 @@ $workingSet = ($selected | Measure-Object WorkingSetSize -Sum).Sum
 $privateBytes = ($selected | Measure-Object PrivatePageCount -Sum).Sum
 $processes = @($selected | ForEach-Object {
   $role = if ($_.CommandLine -match '--type=([^\s"]+)') { $Matches[1] } else { 'browser' }
-  [pscustomobject]@{ pid = [uint32]$_.ProcessId; parentPid = [uint32]$_.ParentProcessId; role = $role; workingSetBytes = [int64]$_.WorkingSetSize }
+  [pscustomobject]@{ pid = [uint32]$_.ProcessId; parentPid = [uint32]$_.ParentProcessId; role = $role; workingSetBytes = [int64]$_.WorkingSetSize; privateBytes = [int64]$_.PrivatePageCount }
 })
 [pscustomobject]@{
   processCount = $selected.Count
@@ -674,8 +693,9 @@ async function waitForProcessCount(directory, maximum, timeoutMs) {
 
 function assertProcessBudget(label, metrics, budget) {
   assert.equal(metrics.processCount <= budget.processCount, true, `${label} process count ${metrics.processCount} exceeds ${budget.processCount}: ${metrics.names.join(", ")} ${JSON.stringify(metrics.processes)}`);
-  assert.equal(metrics.workingSetBytes <= budget.workingSetBytes, true, `${label} working set ${formatMiB(metrics.workingSetBytes)} exceeds ${formatMiB(budget.workingSetBytes)}`);
-  assert.equal(metrics.privateBytes <= budget.privateBytes, true, `${label} private bytes ${formatMiB(metrics.privateBytes)} exceeds ${formatMiB(budget.privateBytes)}`);
+  const details = `${metrics.names.join(", ")} ${JSON.stringify(metrics.processes)}`;
+  assert.equal(metrics.workingSetBytes <= budget.workingSetBytes, true, `${label} working set ${formatMiB(metrics.workingSetBytes)} exceeds ${formatMiB(budget.workingSetBytes)}: ${details}`);
+  assert.equal(metrics.privateBytes <= budget.privateBytes, true, `${label} private bytes ${formatMiB(metrics.privateBytes)} exceeds ${formatMiB(budget.privateBytes)}: ${details}`);
 }
 
 function formatMiB(bytes) {

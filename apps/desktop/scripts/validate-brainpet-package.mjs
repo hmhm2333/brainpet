@@ -44,7 +44,7 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
   const appAsar = join(resources, "app.asar");
   assert.ok(existsSync(appAsar), "BrainPet app.asar is missing.");
   const appPackage = readAsarPackageJson(appAsar);
-  for (const preload of ["control-center-preload.cjs", "pet-preload.cjs", "brainpet-preload.cjs", "brainpet-setup-preload.cjs", "plugin-sdk-preload.cjs", "plugin-command-form-preload.cjs", "panel-preload.cjs"]) {
+  for (const preload of ["pet-preload.cjs", "brainpet-preload.cjs", "brainpet-setup-preload.cjs"]) {
     assertAsarFile(appAsar, preload, `BrainPet package is missing required host preload ${preload}.`);
   }
   assert.deepEqual(appPackage.brainpetDistribution, { profile: "brainpet", appId: "dev.brainpet.app" }, "Packaged runtime identity must be embedded in app.asar.");
@@ -55,12 +55,7 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
     assert.ok(existsSync(join(bridge, path)), `Bundled Codex Bridge source is missing: ${path}`);
   }
   const officialPluginsRoot = join(resources, "plugins", "official");
-  assert.ok(existsSync(join(officialPluginsRoot, "brainpet.training", "openpets.plugin.json")), "BrainPet training plugin is missing from the package.");
-  const bundledOfficialPlugins = readdirSync(officialPluginsRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
-  assert.deepEqual(bundledOfficialPlugins, ["brainpet.training"], "BrainPet packages may seed only the BrainPet training plugin.");
+  assert.equal(existsSync(officialPluginsRoot), false, "BrainPet packages must not bundle the removed training facade or any OpenPets plugin runtime payload.");
 
   const installerArtifacts = findInstallerArtifacts(resolvedOutput, target);
   const installerValidated = installerArtifacts.length > 0;

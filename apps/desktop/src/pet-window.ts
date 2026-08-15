@@ -12,7 +12,7 @@ import { getActiveLocale, getActiveLocaleLang, t } from "./i18n/index.js";
 import { defaultMediaDurationMs, type OpenPetsReaction } from "./local-ipc-protocol.js";
 import { pickReactionMessage } from "./reaction-messages.js";
 import { debug, error as logError, info, warn } from "./logger.js";
-import { executeDefaultPetPluginCommand, executeDefaultPetPluginMenuSelect, getDefaultPetPluginCommands, getDefaultPetPluginMenuItems } from "./plugin-service.js";
+import { executeDefaultPetPluginCommand, executeDefaultPetPluginMenuSelect, getDefaultPetPluginCommands, getDefaultPetPluginMenuItems } from "./pet-plugin-port.js";
 import type { ActiveBubble } from "./plugin-bubble-arbiter.js";
 import type { PluginBubbleIndicator, PluginCommandForm, PluginBubbleHud, PluginBubbleHudItem } from "./plugin-sdk-bridge.js";
 import { defaultPetSprite, getConfiguredSpriteCacheKey, getConfiguredSpriteStates, motionToSpriteState, resolveReactionSpriteState, type PetMotionState, type SpriteStateDefinition, type UniversalSpriteState } from "./reaction-animation-mapping.js";
@@ -105,10 +105,14 @@ interface PetContentRender {
 const petWindowRenderCache = new WeakMap<BrowserWindow, string>();
 let brainPetSurfaceEnabled = false;
 let petProductName = "OpenPets";
+let petControlCenterEnabled = true;
+let petPluginPlatformEnabled = true;
 
-export function configurePetWindowCapabilities(options: { readonly brainPetSurface: boolean; readonly productName: "OpenPets" | "BrainPet" }): void {
+export function configurePetWindowCapabilities(options: { readonly brainPetSurface: boolean; readonly productName: "OpenPets" | "BrainPet"; readonly controlCenter: boolean; readonly pluginPlatform: boolean }): void {
   brainPetSurfaceEnabled = options.brainPetSurface;
   petProductName = options.productName;
+  petControlCenterEnabled = options.controlCenter;
+  petPluginPlatformEnabled = options.pluginPlatform;
 }
 
 const windowLoadChains = new WeakMap<BrowserWindow, Promise<void>>();
@@ -252,7 +256,7 @@ async function buildPetContextMenuTemplate(window: BrowserWindow, action: { read
     template.push({ label: action.label, click: action.click });
     return template;
   }
-  const commands = await getDefaultPetPluginCommands();
+  const commands = petPluginPlatformEnabled ? await getDefaultPetPluginCommands() : [];
   const topLevel: Electron.MenuItemConstructorOptions[] = [];
   const plugins = new Map<string, { name: string; commands: Electron.MenuItemConstructorOptions[] }>();
   const sorted = [...commands].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
@@ -264,7 +268,7 @@ async function buildPetContextMenuTemplate(window: BrowserWindow, action: { read
     plugins.set(command.pluginId, group);
   }
   // Fully dynamic per-plugin menu sections (ui.menu.setItems).
-  const menuItems = await getDefaultPetPluginMenuItems();
+  const menuItems = petPluginPlatformEnabled ? await getDefaultPetPluginMenuItems() : [];
   for (const item of menuItems) {
     const group = plugins.get(item.pluginId) ?? { name: item.pluginName, commands: [] };
     group.commands.push({ label: item.title, enabled: item.enabled !== false, type: item.checked === true ? "checkbox" : "normal", checked: item.checked === true ? true : undefined, click: () => { executeDefaultPetPluginMenuSelect(item.pluginId, item.itemId).catch((error) => logError("pet.window", "plugin menu select failed", error)); } });
@@ -302,15 +306,13 @@ async function buildPetContextMenuTemplate(window: BrowserWindow, action: { read
     }, { type: "separator" });
   }
   const openControlCenter = (route: "dashboard" | "plugins"): void => {
-    import("./windows.js").then(({ openControlCenterWindow }) => openControlCenterWindow(route)).catch((error) => logError("pet.window", "open control center failed", error));
+    import("./optional-ui-port.js").then(({ openOptionalControlCenter }) => openOptionalControlCenter(route)).catch((error) => logError("pet.window", "open control center failed", error));
   };
   if (topLevel.length > 0) template.push(...topLevel.slice(0, 8), { type: "separator" });
   if (plugins.size > 0) template.push(...[...plugins.values()].map((plugin) => ({ label: plugin.name, submenu: plugin.commands })), { type: "separator" });
-  template.push(
-    { label: t("tray.plugins"), click: () => openControlCenter("plugins") },
-    { label: t("pet.menu.openControlCenter"), click: () => openControlCenter("dashboard") },
-    ...(!brainPetEnabled ? [{ label: action.label, click: action.click }] : []),
-  );
+  if (petPluginPlatformEnabled) template.push({ label: t("tray.plugins"), click: () => openControlCenter("plugins") });
+  if (petControlCenterEnabled) template.push({ label: t("pet.menu.openControlCenter"), click: () => openControlCenter("dashboard") });
+  if (!brainPetEnabled) template.push({ label: action.label, click: action.click });
   return template;
 }
 
@@ -759,6 +761,8 @@ function createBasePetWindow(title: string, position: Point, focusOptions: { rea
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      spellcheck: !brainPetSurfaceEnabled,
+      webgl: !brainPetSurfaceEnabled,
       preload: join(app.getAppPath(), "pet-preload.cjs"),
     },
   });

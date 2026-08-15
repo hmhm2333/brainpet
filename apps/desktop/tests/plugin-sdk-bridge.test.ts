@@ -53,11 +53,11 @@ await scenario("trusted host services receive bounded plugin bus messages and ca
   store.upsertRecord(record);
   const api = bridge.createApi(record, manifest({ permissions: ["bus"] }));
   const seen: unknown[] = [];
-  const disconnect = bridge.subscribeHostBus("brainpet.training/open", (payload) => seen.push(payload));
+  const disconnect = bridge.subscribeHostBus("host.feature/open", (payload) => seen.push(payload));
 
-  await api.bus.publish("brainpet.training/open", { source: "test" });
+  await api.bus.publish("host.feature/open", { source: "test" });
   disconnect();
-  await api.bus.publish("brainpet.training/open", { source: "ignored" });
+  await api.bus.publish("host.feature/open", { source: "ignored" });
 
   assert.deepEqual(seen, [{ source: "test" }]);
   assert.throws(() => bridge.subscribeHostBus("bad topic", () => undefined), /Invalid bus topic/);

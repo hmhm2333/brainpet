@@ -9,7 +9,7 @@
 - 本机 private-test 使用 Node fallback；公开发行仍要求六平台原生 helper。
 - BrainPet 3.4.0 已安装到 `%LOCALAPPDATA%\Programs\brainpet`；install marker 和 BrainPet discovery 均已验证。
 - 已安装包：`D:\Dev\Projects\products\brainpet\apps\desktop\dist-brainpet\private-test\BrainPet-PrivateTest-3.4.0-win-x64-setup.exe`；175,822,417 bytes；SHA-256 `103c60450de7e88c38e11700e67cfcf2f992a29b503c0f84dbb6226e5ea3d77c`；结构与 packaged preload 白名单验证通过，private-test 不具备公开发行资格。
-- packaged runtime 已验证 `brainpet.training` 正常启动；Codex、Claude、OpenCode 的标准化 lifecycle 均已通过本机 BrainPet IPC 实测。
+- packaged runtime 的历史回执曾验证旧训练 façade；当前 Release 已改为内建 TrainingEntry，需以新的 package/physical receipt 为准。Codex、Claude、OpenCode 的标准化 lifecycle 仍通过 BrainPet IPC 合同验证。
 
 ## 2. 已执行动作
 

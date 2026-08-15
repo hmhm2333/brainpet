@@ -1,3 +1,5 @@
+import { targetProductDefinitions } from "@open-pets/adapter-core";
+
 export type DesktopDistributionProfile = "openpets" | "brainpet";
 
 export interface DesktopDistributionSettings {
@@ -12,7 +14,7 @@ export interface DesktopDistributionSettings {
 
 const openPetsBundledPluginIds = ["openpets.reminders", "openpets.focus-buddy", "openpets.launch-buddy", "openpets.virtual-pet"] as const;
 const openPetsBundledEnabledPluginIds = ["openpets.reminders", "openpets.focus-buddy", "openpets.launch-buddy"] as const;
-const brainPetBundledPluginIds = ["brainpet.training"] as const;
+const noBundledPlugins = [] as const;
 
 export function resolveDesktopDistributionSettings(
   appName: string,
@@ -33,7 +35,7 @@ export function resolveDesktopDistributionSettings(
         : "openpets";
 
   return profile === "brainpet"
-    ? { profile, displayName: "BrainPet", appUserModelId: targetProductDefinitions.brainpet.appId, seedBundledPlugins: true, bundledPluginIds: brainPetBundledPluginIds, bundledEnabledPluginIds: brainPetBundledPluginIds, brainPetEnabled: true }
+    ? { profile, displayName: "BrainPet", appUserModelId: targetProductDefinitions.brainpet.appId, seedBundledPlugins: false, bundledPluginIds: noBundledPlugins, bundledEnabledPluginIds: noBundledPlugins, brainPetEnabled: true }
     : { profile, displayName: "OpenPets", appUserModelId: targetProductDefinitions.openpets.appId, seedBundledPlugins: true, bundledPluginIds: openPetsBundledPluginIds, bundledEnabledPluginIds: openPetsBundledEnabledPluginIds, brainPetEnabled: false };
 }
 
@@ -56,4 +58,3 @@ export function resolveDistributionUpdateRepository(
   if (developmentOverride && /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i.test(developmentOverride)) return developmentOverride;
   return targetProductDefinitions[settings.profile].updateChannel;
 }
-import { targetProductDefinitions } from "@open-pets/adapter-core";

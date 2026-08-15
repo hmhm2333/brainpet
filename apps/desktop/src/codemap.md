@@ -19,9 +19,9 @@ BrainPet adds an infrastructure-first training path under `brainpet/`: pure stag
 - **Plugin Runtimes**: Plugins use validated manifests, approved permissions, persisted config, safe path checks, declarative timer-triggered actions, or sandboxed JavaScript entry modules through the SDK bridge.
 - **Capability-Oriented SDK Surface**: The plugin bridge is split into focused SDK modules for audio, bus, config, events, quotas, routes, state, storage, types, and UI so permission checks and host effects stay localized.
 - **Host-Rendered Plugin UI**: Plugins describe bubbles, alerts, commands, panels, assets, and pet behavior; the host validates descriptors and renders them through pet windows, Control Center IPC, or sandboxed panel windows.
-- **Distribution Profiles**: `distribution-profile.ts` keeps normal OpenPets bundled-plugin defaults while giving BrainPet a separate identity and a one-plugin (`brainpet.training`) fresh-start policy.
-- **Composition Root**: `composition/desktop-composition.ts` keeps the full OpenPets host for both product identities; BrainPet adds lifecycle/training/install capabilities, and rollback removes only those BrainPet-specific layers.
-- **Host Bus Extensions**: trusted main-process consumers can subscribe to validated plugin bus topics; BrainPet Training uses this narrow bridge to request its host-owned overlay without giving plugin code Electron access.
+- **Distribution Profiles**: `distribution-profile.ts` keeps normal OpenPets bundled-plugin defaults while giving BrainPet a separate identity with no bundled plugins.
+- **Composition Root**: `main.ts` selects `HostCore`, lazy `OptionalOpenPetsServices`, and the injected `BrainPetFeature`; `lifecycle.ts` only invokes the composed disposer.
+- **Built-in Training Entry**: BrainPet registers training directly in its feature and opens the host-owned stage without a plugin command/bus facade or hidden plugin renderer.
 - **Sprite Timing**: `pet-animation-timing.ts` defines the testable held-idle/short-blink timeline used by pet renderers.
 - **Localized Runtime Content**: `i18n/` and plugin locale catalogs resolve host UI text, pet reaction messages, and plugin `$t:` strings through fallback-aware message catalogs.
 - **Motion Engine Abstraction**: Advanced pet movement uses a small physics/interpolation engine rather than embedding movement math in window or SDK routing code.
@@ -134,7 +134,7 @@ tray.ts → openControlCenterWindow(route) → windows.ts
 
 **Plugin Flow**:
 ```
-main.ts → initializePluginService(userData, defaultPluginPetApi, appVersion, ElectronPluginJsHost).start()
+first OpenPets plugin/Control Center request → OptionalOpenPetsServices → initializePluginService(userData, defaultPluginPetApi, appVersion, ElectronPluginJsHost).start()
 ├── plugin-state.ts reads/writes userData/openpets-plugin-state.json
 ├── plugin-platform-settings.ts gates audio, voice, speech, mic, quiet hours, and AI provider choices
 ├── plugin-assets.ts validates/resolves declared plugin assets for SDK refs and rendered UI
@@ -207,11 +207,15 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 ## Key Modules
 
 **Core**:
-- `main.ts`: Entry, single-instance lock, bootstrap sequence, JavaScript plugin host construction
-- `distribution-profile.ts`: Pure OpenPets/BrainPet identity and bundled-plugin seeding policy
-- `composition/desktop-composition.ts`: Pure capability matrix for OpenPets, enabled BrainPet, and full BrainPet rollback
+- `main.ts`: Single composition root, single-instance lock, platform switches, BrainPet-only software composition, and dynamic service factories
+- `distribution-profile.ts`: Pure OpenPets/BrainPet identity and OpenPets-only bundled-plugin seeding policy
+- `composition/desktop-composition.ts`: Pure capability/layer plan for OpenPets, enabled BrainPet, and BrainPet rollback
+- `composition/managed-service.ts`: Start/dispose/diagnostics lifecycle shared by every composition service
+- `composition/host-core.ts`: Minimal state, tray, pet, local IPC, and Agent lifecycle host
+- `composition/openpets-runtime.ts`: Lazy Control Center, plugin, LAN, remote, and voice service factory
+- `composition/brainpet-feature.ts`: Built-in training, install marker, setup, and onboarding feature factory
 - `brainpet-installation-state.ts`: Atomic BrainPet runtime/Bridge/lifecycle evidence store and Bridge-version reauthorization policy
-- `lifecycle.ts`: App event handlers (quit, window-all-closed, second-instance) with logging; stops plugin service, IPC, and pet windows on quit
+- `lifecycle.ts`: Generic app event handlers (quit, window-all-closed, second-instance); delegates focus and one composed disposer without importing concrete services
 - `state.ts`: Simple shell pause state
 - `app-state.ts`: Persistent JSON state with V1 normalization, unknown-field preservation, last-known-good recovery, atomic writes, reaction animation overrides, and the validated waiting animation duration preference
 - `app-state-core.ts`: Pet scale options, waiting-duration options/normalization, onboarding normalization

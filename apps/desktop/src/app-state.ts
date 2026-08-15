@@ -10,7 +10,7 @@ import { isSupportedLocale, type LocalePreference } from "./i18n/catalog.js";
 import { allowedReactions, type OpenPetsReaction } from "./local-ipc-protocol.js";
 import { assertSafePetId, getInstalledPetDir } from "./pet-paths.js";
 import { normalizePetPoolOrder } from "./pet-pool.js";
-import { publishPluginAgentActivity } from "./plugin-events-source.js";
+import { publishHostAgentActivity } from "./host-agent-activity.js";
 import { normalizeReactionAnimationOverrides, type ReactionAnimationOverrides } from "./reaction-animation-mapping.js";
 import { copyUnknownFields, preserveAppStateUnknownFields, readJsonFileWithBackup, writeJsonFileAtomically } from "./app-state-persistence.js";
 
@@ -287,7 +287,7 @@ export function setPetGravityEnabled(value: boolean): OpenPetsStateV1 {
 }
 
 export function recordOpenPetsActivity(activity: OpenPetsActivityRecord, now: number = Date.now()): OpenPetsStateV1 {
-  publishPluginAgentActivity({ kind: activity.kind, reaction: activity.reaction, petId: activity.petId, surface: activity.surface });
+  publishHostAgentActivity({ kind: activity.kind, reaction: activity.reaction, petId: activity.petId, surface: activity.surface });
   const state = getInitializedState();
   const current = state.activity;
   const reaction = activity.kind === "react" ? activity.reaction : activity.reaction;

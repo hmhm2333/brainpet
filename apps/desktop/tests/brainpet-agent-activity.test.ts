@@ -26,7 +26,7 @@ test("BrainPet completion policy ignores progress and failure reactions", () => 
 test("Host observes completion without routing it through close or pause", () => {
   const desktopRoot = process.env.OPENPETS_DESKTOP_ROOT ?? fileURLToPath(new URL("../..", import.meta.url));
   const host = readFileSync(resolve(desktopRoot, "src/brainpet/host.ts"), "utf8");
-  assert.match(host, /subscribePluginEvent\("agent:activity", handleAgentActivity\)/);
+  assert.match(host, /subscribeHostAgentActivity\(\(payload\) => handleAgentActivity/);
   const handler = host.slice(host.indexOf("function handleAgentActivity"), host.indexOf("export function getBrainPetRuntimeSnapshot"));
   assert.match(handler, /agent-completed/);
   assert.doesNotMatch(handler, /closeBrainPetStage|sendPauseEvent|transition\(/);

@@ -61,13 +61,10 @@ Those defaults are defined in `apps/desktop/src/plugin-service.ts`.
 Everything else is installable from the catalog, not preloaded into a fresh app
 install.
 
-The BrainPet distribution keeps the full plugin platform but uses a
-distribution-specific seed policy. A fresh BrainPet profile bundles and enables
-only **BrainPet Training** (`brainpet.training`); it does not start the three
-general-purpose OpenPets defaults. The plugin owns the user-facing `train`
-command and emits a permission-checked bus event, while the desktop host owns
-the transparent training window, pet anchoring and game runtime. The normal
-OpenPets distribution defaults above are unchanged.
+The BrainPet distribution does not bundle or initialize the plugin platform.
+Its training entry is owned directly by `BrainPetFeature`. The normal OpenPets
+bundled and enabled defaults above are unchanged and load through the lazy
+OpenPets optional-service boundary.
 
 The same file also defines `staleBundledPluginIds`, a cleanup list for old
 bundled plugins that should be removed during upgrade. Keep that list when old

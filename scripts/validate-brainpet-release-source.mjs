@@ -37,6 +37,32 @@ assert.deepEqual(releaseCapabilities.productIds, ["openpets", "brainpet"]);
 assert.deepEqual(Object.keys(releaseCapabilities.runtimeSnapshots.openpets), releaseCapabilities.capabilityIds);
 assert.deepEqual(Object.keys(releaseCapabilities.runtimeSnapshots.brainpetEnabled), releaseCapabilities.capabilityIds);
 assert.deepEqual(Object.keys(releaseCapabilities.runtimeSnapshots.brainpetRollback), releaseCapabilities.capabilityIds);
+assert.deepEqual(releaseCapabilities.runtimeSnapshots.brainpetEnabled, {
+  agentLifecycle: true,
+  brainPetHost: true,
+  brainPetInstallMarker: true,
+  brainPetOnboarding: true,
+  controlCenter: false,
+  lan: false,
+  localIpc: true,
+  openPetsAgentSetup: false,
+  pluginPlatform: false,
+  remoteControl: false,
+  voice: false,
+});
+assert.equal(releaseCapabilities.runtimeSnapshots.brainpetRollback.agentLifecycle, false);
+const compositionSource = readFileSync(join(desktop, "src", "composition", "desktop-composition.ts"), "utf8");
+const mainSource = readFileSync(join(desktop, "src", "main.ts"), "utf8");
+const lifecycleSource = readFileSync(join(desktop, "src", "lifecycle.ts"), "utf8");
+const brainPetHostSource = readFileSync(join(desktop, "src", "brainpet", "host.ts"), "utf8");
+const distributionSource = readFileSync(join(desktop, "src", "distribution-profile.ts"), "utf8");
+assert.match(compositionSource, /layers: enabled \? \["hostCore", "brainPetFeature"\] : \["hostCore"\]/, "BrainPet must not compose OptionalOpenPetsServices.");
+assert.match(mainSource, /import\("\.\/composition\/openpets-runtime\.js"\)/, "Optional OpenPets services must be dynamically loaded.");
+assert.match(mainSource, /if \(distribution\.profile === "brainpet"\) app\.disableHardwareAcceleration\(\);/, "BrainPet must avoid the dedicated hardware compositor working set without changing OpenPets.");
+assert.doesNotMatch(lifecycleSource, /plugin-service|brainpet\/host|remote-control-service|lan-controller|local-ipc|windows\.js/, "App lifecycle must only call the composition disposer.");
+assert.doesNotMatch(brainPetHostSource, /brainpet\.training|plugin-service|plugin-runtime|plugin-events-source/, "BrainPet TrainingEntry must not use the removed plugin facade.");
+assert.doesNotMatch(distributionSource, /brainpet\.training/, "BrainPet must not seed a training plugin.");
+assert.doesNotMatch(baseConfig, /plugins\/official|plugin-sdk-preload|plugin-command-form-preload|panel-preload/, "BrainPet package must not bundle plugin renderer payloads.");
 assert.match(readFileSync(join(desktop, "build", "brainpet-installer.nsh"), "utf8"), /runtime-install\.json/);
 assert.ok(existsSync(join(desktop, "scripts", "validate-brainpet-package.mjs")));
 

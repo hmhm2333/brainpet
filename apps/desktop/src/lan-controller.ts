@@ -1,5 +1,5 @@
 import { app, screen as ElectronScreen } from "electron";
-import { createServer, request } from "node:http";
+import { createServer, request, type Server } from "node:http";
 import { hostname } from "node:os";
 import { URL } from "node:url";
 
@@ -11,7 +11,7 @@ import { defaultLanRetryOptions, getLanRetryDelayMs, shouldHideLanPetAfterMisses
 import { createLanRequestHandler } from "./lan-http-controller.js";
 import { readPersistedLanState, writePersistedLanState } from "./lan-persistence.js";
 import { planLanWorkActivities, shouldPublishLanWorkSignal, shouldRetryLanWorkReturn } from "./lan-pet-activity.js";
-import { applyLanVisitingPetSay, getLanVisitingPetPosition, syncLanVisitingPets } from "./lan-pet-controller.js";
+import { applyLanVisitingPetSay, closeAllLanVisitingPets, getLanVisitingPetPosition, syncLanVisitingPets } from "./lan-pet-controller.js";
 import { isLanPetAwayForLocalHost, LanCoordinator, countLanTopologyLinks, normalizeLanHost, normalizeLanTopology, validateLanTopology, type LanEdge, type LanMode, type LanPoint, type LanState, type LanTopology, type LanTopologyIssue } from "./lan-state.js";
 import { info, warn, error as logError } from "./logger.js";
 import type { OpenPetsReaction } from "./local-ipc-protocol.js";
@@ -49,6 +49,7 @@ let coordinator = new LanCoordinator({ staleClientMs });
 let pollTimer: NodeJS.Timeout | null = null;
 let serverStarted = false;
 let serverStarting = false;
+let lanServer: Server | null = null;
 let missedPolls = 0;
 let lastPollWarningAt = 0;
 let multiPetEnabled = false;
@@ -132,11 +133,20 @@ function startLanServer(port: number, token: string | null): Promise<boolean> {
       }
     },
   }));
+  lanServer = server;
   server.requestTimeout = requestTimeoutMs;
   server.headersTimeout = requestTimeoutMs + 1_000;
 
   return new Promise((resolve) => {
     server.once("listening", () => {
+      if (!lanControllerStarted) {
+        server.close();
+        if (lanServer === server) lanServer = null;
+        serverStarting = false;
+        serverStarted = false;
+        resolve(false);
+        return;
+      }
       serverStarting = false;
       serverStarted = true;
       info("app", "lan server listening", { port });
@@ -145,11 +155,35 @@ function startLanServer(port: number, token: string | null): Promise<boolean> {
     server.once("error", (serverError) => {
       serverStarting = false;
       serverStarted = false;
+      if (lanServer === server) lanServer = null;
       logError("app", "lan server error", serverError);
       resolve(false);
     });
     server.listen(port, "0.0.0.0");
   });
+}
+
+export async function stopLanController(): Promise<void> {
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = null;
+  for (const timer of pendingWorkReturns.values()) clearTimeout(timer);
+  pendingWorkReturns.clear();
+  const server = lanServer;
+  lanServer = null;
+  if (server) {
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose())).catch(() => undefined);
+  }
+  serverStarted = false;
+  serverStarting = false;
+  lanControllerStarted = false;
+  lanControllerInitialized = false;
+  activeMode = "off";
+  activeServerUrl = "";
+  activeLocalHost = "";
+  activeToken = null;
+  activeSessionToken = null;
+  lastLanState = null;
+  closeAllLanVisitingPets();
 }
 
 function startLanClient(serverUrl: string, localHost: string, token: string | null): void {
@@ -183,10 +217,11 @@ async function registerLanClient(serverUrl: string, localHost: string, token: st
 }
 
 function scheduleLanPoll(serverUrl: string, localHost: string, token: string | null, delayMs: number): void {
+  if (!lanControllerStarted) return;
   pollTimer = setTimeout(() => {
     pollTimer = null;
     void pollLanServer(serverUrl, localHost, token).finally(() => {
-      scheduleLanPoll(serverUrl, localHost, token, getLanRetryDelayMs(missedPolls));
+      if (lanControllerStarted) scheduleLanPoll(serverUrl, localHost, token, getLanRetryDelayMs(missedPolls));
     });
   }, delayMs);
   pollTimer.unref?.();

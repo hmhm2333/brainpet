@@ -73,7 +73,8 @@ test("primary companion controls stay compact, pixel-styled, and capability hone
 test("V1 visual and sound states have explicit production behavior", () => {
   assert.match(petWindow, /brainpet-gem-ready 480ms/);
   for (const state of ["clear", "streak", "new-best"]) assert.match(petWindow, new RegExp(`brainpet-feedback="${state}"`));
-  assert.match(stageMain, /default-pet-spritesheet\.webp/);
+  assert.match(stageMain, /default-pet-thumbnail\.png/);
+  assert.doesNotMatch(stageMain, /default-pet-spritesheet\.webp/);
   for (const sound of ["start", "correct", "incorrect", "finish"]) assert.match(stageMain, new RegExp(`${sound}:`));
   assert.doesNotMatch(stageMain, /placeholder|lorem ipsum/i);
 });
@@ -120,7 +121,8 @@ test("cargo signal is rendered as a real overlay scene rather than a symbol card
   assert.match(stageMain, /点击 \/ SPACE 开始/);
   assert.match(stageMain, /setTimeout\(\(\) => \{ void startTask\(currentSession\); \}, 650\)/);
   assert.doesNotMatch(stageMain, /session\.level === 1/);
-  assert.match(stageHost, /toggleBrainPetStage\(anchor[\s\S]*"plugin-command"\)/);
+  assert.match(stageHost, /requestBrainPetTraining\(sourceWindow[\s\S]*toggleBrainPetStage\(sourceWindow, "built-in-training-entry"\)/);
+  assert.doesNotMatch(stageHost, /executeDefaultPetPluginCommand|connectBrainPetTrainingPluginRuntime|brainpet\.training|plugin-fallback/);
   assert.match(stageHost, /openpets:brainpet-stage-state/);
   assert.match(petPreload, /brainpetStageOpen/);
   assert.match(stageCss, /\.stage-input-surface\{[^}]*background:transparent/);

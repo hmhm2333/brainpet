@@ -5,9 +5,7 @@ import { applyExternalPetReaction, getDefaultPetWindowForPlugins } from "../defa
 import { getAppStateSnapshot } from "../app-state.js";
 import { debug, error as logError, info, warn } from "../logger.js";
 import { setBrainPetDragLifecycleHandler, setBrainPetTrainingRequestHandler, setPetWindowPositionLocked } from "../pet-window.js";
-import { subscribePluginEvent } from "../plugin-events-source.js";
-import { executeDefaultPetPluginCommand } from "../plugin-service.js";
-import type { PluginRuntime } from "../plugin-runtime.js";
+import { subscribeHostAgentActivity } from "../host-agent-activity.js";
 import { isBrainPetAgentCompletion, parseBrainPetAgentActivity } from "./agent-activity-policy.js";
 import { createBrainPetInteractionRig, isBrainPetPointInsideRectangle, reanchorBrainPetInteractionRig, reflowBrainPetInteractionRig, setBrainPetInteractionRigDragging, translateBrainPetStageInRig, type BrainPetInteractionRigSnapshot, type BrainPetRigEnvironment } from "./interaction-rig.js";
 import { chooseBrainPetTask, localDateKey } from "./progression.js";
@@ -29,9 +27,6 @@ const PET_THROW_CHANNEL = "brainpet:pet-throw";
 const RIG_DRAG_START_CHANNEL = "brainpet:rig-drag-start";
 const RIG_DRAG_MOVE_CHANNEL = "brainpet:rig-drag-move";
 const RIG_DRAG_END_CHANNEL = "brainpet:rig-drag-end";
-export const BRAINPET_TRAINING_PLUGIN_ID = "brainpet.training";
-export const BRAINPET_TRAINING_COMMAND_ID = "train";
-export const BRAINPET_TRAINING_OPEN_TOPIC = "brainpet.training/open";
 
 let stageWindow: BrowserWindow | null = null;
 let runtime: BrainPetRuntimeSnapshot = createBrainPetRuntimeSnapshot();
@@ -57,8 +52,6 @@ let removeStageAnchorListeners: (() => void) | null = null;
 let anchorSyncScheduled = false;
 let lastPetThrowAt = 0;
 let brainPetHostEnabled = false;
-let pendingTrainingAnchor: BrowserWindow | null = null;
-let disconnectTrainingPluginRuntime: (() => void) | null = null;
 
 export interface BrainPetStageBootstrap {
   readonly apiVersion: 1;
@@ -85,28 +78,8 @@ export function initializeBrainPetHost(): void {
   info("brainpet.host", "initialized");
 }
 
-export function connectBrainPetTrainingPluginRuntime(runtimeBridge: Pick<PluginRuntime, "subscribeHostBus">): void {
-  disconnectTrainingPluginRuntime?.();
-  disconnectTrainingPluginRuntime = runtimeBridge.subscribeHostBus(BRAINPET_TRAINING_OPEN_TOPIC, () => {
-    const anchor = pendingTrainingAnchor;
-    pendingTrainingAnchor = null;
-    toggleBrainPetStage(anchor && !anchor.isDestroyed() ? anchor : undefined, "plugin-command");
-  });
-  info("brainpet.host", "training plugin bridge connected", { topic: BRAINPET_TRAINING_OPEN_TOPIC });
-}
-
 function requestBrainPetTraining(sourceWindow: BrowserWindow): void {
-  pendingTrainingAnchor = sourceWindow;
-  void executeDefaultPetPluginCommand(BRAINPET_TRAINING_PLUGIN_ID, BRAINPET_TRAINING_COMMAND_ID).then((result) => {
-    if (result?.ok) return;
-    pendingTrainingAnchor = null;
-    warn("brainpet.host", "training plugin unavailable; using built-in stage fallback", { reason: result?.error ?? "plugin-runtime-not-ready" });
-    toggleBrainPetStage(sourceWindow, "plugin-fallback");
-  }).catch((error) => {
-    pendingTrainingAnchor = null;
-    warn("brainpet.host", "training plugin request failed; using built-in stage fallback", { reason: error instanceof Error ? error.message : String(error) });
-    toggleBrainPetStage(sourceWindow, "plugin-fallback");
-  });
+  toggleBrainPetStage(sourceWindow, "built-in-training-entry");
 }
 
 function toggleBrainPetStage(anchorWindow: BrowserWindow | undefined, reason: string): void {
@@ -163,17 +136,20 @@ export function openBrainPetStage(anchorWindow?: BrowserWindow): void {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      spellcheck: false,
+      webgl: false,
       partition: "persist:brainpet-stage",
       preload: join(app.getAppPath(), "brainpet-preload.cjs"),
     },
   });
 
+  const stageSession = window.webContents.session;
   stageWindow = window;
   resolvedAnchor.webContents.send("openpets:brainpet-stage-state", { open: true });
   rendererRequestedInteractive = false;
   stageMouseInteractive = false;
   window.setIgnoreMouseEvents(true, { forward: true });
-  hardenStageSession(window.webContents.session);
+  hardenStageSession(stageSession);
   window.setMenu(null);
   window.setAlwaysOnTop(true, process.platform === "darwin" ? "floating" : "normal");
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -213,6 +189,7 @@ export function openBrainPetStage(anchorWindow?: BrowserWindow): void {
       runtime = transition({ type: "closed", atMs: performance.now() });
     }
     issuedSession = null;
+    void stageSession.clearCache().catch((error: unknown) => debug("brainpet.host", "stage cache release failed", { error: error instanceof Error ? error.message : String(error) }));
     info("brainpet.host", "stage closed");
   });
 
@@ -243,6 +220,7 @@ export function closeBrainPetStage(reason = "requested"): void {
 }
 
 export async function shutdownBrainPetHost(): Promise<void> {
+  brainPetHostEnabled = false;
   setBrainPetTrainingRequestHandler(null);
   setBrainPetDragLifecycleHandler(null);
   closeBrainPetStage("app-shutdown");
@@ -265,7 +243,7 @@ function installBrainPetHostEvents(): void {
   screen.on("display-added", handleDisplayChange);
   screen.on("display-removed", handleDisplayChange);
   screen.on("display-metrics-changed", handleDisplayChange);
-  unsubscribeAgentActivity = subscribePluginEvent("agent:activity", handleAgentActivity);
+  unsubscribeAgentActivity = subscribeHostAgentActivity((payload) => handleAgentActivity(payload as unknown as Record<string, unknown>));
 }
 
 function removeBrainPetHostEvents(): void {

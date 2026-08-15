@@ -33,26 +33,26 @@
       "brainPetHost": true,
       "brainPetInstallMarker": true,
       "brainPetOnboarding": true,
-      "controlCenter": true,
-      "lan": true,
+      "controlCenter": false,
+      "lan": false,
       "localIpc": true,
-      "openPetsAgentSetup": true,
-      "pluginPlatform": true,
-      "remoteControl": true,
-      "voice": true
+      "openPetsAgentSetup": false,
+      "pluginPlatform": false,
+      "remoteControl": false,
+      "voice": false
     },
     "brainpetRollback": {
-      "agentLifecycle": true,
+      "agentLifecycle": false,
       "brainPetHost": false,
       "brainPetInstallMarker": false,
       "brainPetOnboarding": false,
-      "controlCenter": true,
-      "lan": true,
+      "controlCenter": false,
+      "lan": false,
       "localIpc": true,
-      "openPetsAgentSetup": true,
-      "pluginPlatform": true,
-      "remoteControl": true,
-      "voice": true
+      "openPetsAgentSetup": false,
+      "pluginPlatform": false,
+      "remoteControl": false,
+      "voice": false
     }
   }
 }

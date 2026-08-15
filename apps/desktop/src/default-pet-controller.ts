@@ -9,9 +9,8 @@ import { debug, info } from "./logger.js";
 import { transientDisplayMs, type OpenPetsReaction } from "./local-ipc-protocol.js";
 import { clearTransientReaction, createDefaultPetWindow, getSafeDefaultPetPosition, getTransientDisplayDurationMs, getTransientReactionAnimationMs, isPetWindowDragging, isPetWindowPositionLocked, loadDefaultPetContent, mergePetTransientDisplay, readWindowPosition, recoverPetMouseInterop, setPetReactionState, type PetPluginBubbles, type PetShowMediaOptions, type PetStatusBadgeReaction, type PetTransientDisplay } from "./pet-window.js";
 import { PetBubbleArbiter, type ActiveBubble, type PetBubbleSink } from "./plugin-bubble-arbiter.js";
-import { publishPluginPetEvent } from "./plugin-events-source.js";
 import { reclampAgentPetWindows } from "./agent-pet-controller.js";
-import { reclampPluginPetWindows } from "./plugin-pet-registry.js";
+import { publishOptionalPluginPetEvent, reclampOptionalPluginPetWindows } from "./pet-plugin-port.js";
 import { reclampLanVisitingPetWindows } from "./lan-pet-controller.js";
 import type { AgentCompanionActivitySummary } from "./agent-companion-activity.js";
 import { primaryCompanionActionBroker, type PrimaryCompanionActionPrompt } from "./agent-companion-action-broker.js";
@@ -410,7 +409,7 @@ function getOrCreateDefaultPetWindow(): BrowserWindow {
     onCompanionTrayToggled: setPrimaryCompanionTrayOpen,
     onCompanionActivityDismissed: dismissPrimaryCompanionActivity,
     onCompanionActionRequested: requestPrimaryCompanionAction,
-    onPetEvent: (name, payload) => publishPluginPetEvent("default", name, payload),
+    onPetEvent: (name, payload) => publishOptionalPluginPetEvent("default", name, payload),
   }, getCurrentDismissToken());
   const windowId = defaultPetWindow.id;
   info("pet.default", "created", { windowId, position, paused, petId: getAppStateSnapshot().preferences.defaultPetId });
@@ -610,7 +609,7 @@ function reclampAllLivePetWindows(reason: DisplayChangeReason, changedDisplay?: 
   reclampDefaultPetWindow(reason, changedDisplay);
   reclampAgentPetWindows();
   reclampLanVisitingPetWindows();
-  reclampPluginPetWindows();
+  reclampOptionalPluginPetWindows();
 }
 
 function recoverDefaultPetWindowAfterResume(): void {

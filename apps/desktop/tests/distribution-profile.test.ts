@@ -3,14 +3,14 @@ import test from "node:test";
 
 import { isBrainPetFeatureEnabled, resolveDesktopDistributionSettings, resolveDistributionUpdateRepository, shouldUseIsolatedBrainPetUserData } from "../src/distribution-profile.js";
 
-test("BrainPet distribution keeps its identity and seeds only the training plugin", () => {
+test("BrainPet distribution keeps its identity without seeding the removed training facade", () => {
   assert.deepEqual(resolveDesktopDistributionSettings("BrainPet"), {
     profile: "brainpet",
     displayName: "BrainPet",
     appUserModelId: "dev.brainpet.app",
-    seedBundledPlugins: true,
-    bundledPluginIds: ["brainpet.training"],
-    bundledEnabledPluginIds: ["brainpet.training"],
+    seedBundledPlugins: false,
+    bundledPluginIds: [],
+    bundledEnabledPluginIds: [],
     brainPetEnabled: true,
   });
 });

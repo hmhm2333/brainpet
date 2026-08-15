@@ -26,9 +26,10 @@ test("OpenPets composition preserves the full desktop platform", () => {
   assert.equal(composition.capabilities.remoteControl, true);
   assert.equal(composition.capabilities.agentLifecycle, true);
   assert.equal(composition.capabilities.brainPetHost, false);
+  assert.deepEqual(composition.layers, ["hostCore", "optionalOpenPetsServices"]);
 });
 
-test("BrainPet composition preserves the OpenPets host and adds the training surface", () => {
+test("BrainPet composition injects its feature without optional OpenPets services", () => {
   const composition = resolveDesktopComposition(resolveDesktopDistributionSettings("BrainPet"), true);
 
   assert.equal(composition.id, "brainpet");
@@ -37,25 +38,27 @@ test("BrainPet composition preserves the OpenPets host and adds the training sur
   assert.equal(composition.capabilities.agentLifecycle, true);
   assert.equal(composition.capabilities.brainPetHost, true);
   assert.equal(composition.capabilities.brainPetInstallMarker, true);
-  assert.equal(composition.capabilities.controlCenter, true);
-  assert.equal(composition.capabilities.pluginPlatform, true);
-  assert.equal(composition.capabilities.lan, true);
-  assert.equal(composition.capabilities.remoteControl, true);
-  assert.equal(composition.capabilities.voice, true);
-  assert.equal(composition.capabilities.openPetsAgentSetup, true);
+  assert.equal(composition.capabilities.controlCenter, false);
+  assert.equal(composition.capabilities.pluginPlatform, false);
+  assert.equal(composition.capabilities.lan, false);
+  assert.equal(composition.capabilities.remoteControl, false);
+  assert.equal(composition.capabilities.voice, false);
+  assert.equal(composition.capabilities.openPetsAgentSetup, false);
+  assert.deepEqual(composition.layers, ["hostCore", "brainPetFeature"]);
 });
 
-test("BrainPet rollback removes BrainPet features without disabling the OpenPets host", () => {
+test("BrainPet rollback keeps only HostCore and rejects lifecycle ingestion", () => {
   const composition = resolveDesktopComposition(resolveDesktopDistributionSettings("BrainPet"), false);
 
   assert.equal(composition.id, "brainpet");
   assert.deepEqual(composition.capabilities, releaseCapabilities.runtimeSnapshots.brainpetRollback);
   assert.equal(composition.capabilities.localIpc, true);
-  assert.equal(composition.capabilities.agentLifecycle, true);
+  assert.equal(composition.capabilities.agentLifecycle, false);
   assert.equal(composition.capabilities.brainPetHost, false);
   assert.equal(composition.capabilities.brainPetInstallMarker, false);
   assert.equal(composition.capabilities.brainPetOnboarding, false);
-  assert.equal(composition.capabilities.openPetsAgentSetup, true);
-  assert.equal(composition.capabilities.controlCenter, true);
-  assert.equal(composition.capabilities.pluginPlatform, true);
+  assert.equal(composition.capabilities.openPetsAgentSetup, false);
+  assert.equal(composition.capabilities.controlCenter, false);
+  assert.equal(composition.capabilities.pluginPlatform, false);
+  assert.deepEqual(composition.layers, ["hostCore"]);
 });

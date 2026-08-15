@@ -2,8 +2,8 @@ import { EventEmitter } from "node:events";
 
 import { net, powerMonitor, screen } from "electron";
 
-import { buildAgentActivityPayload } from "./agent-activity-payload.js";
 import { debug } from "./logger.js";
+import { subscribeHostAgentActivity } from "./host-agent-activity.js";
 
 /**
  * The senses bus host source (§3): a curated, read-only event stream fed by
@@ -23,6 +23,7 @@ let onlineTimer: NodeJS.Timeout | null = null;
 let userIsIdle = false;
 let lastOnline: boolean | null = null;
 let lastDayPart: string | null = null;
+let unsubscribeHostAgentActivity: (() => void) | null = null;
 
 const idleThresholdSeconds = 120;
 const idlePollMs = 15_000;
@@ -92,6 +93,7 @@ function currentDayPart(date = new Date()): "morning" | "afternoon" | "evening" 
 export function startPluginEventSources(): void {
   if (started) return;
   started = true;
+  unsubscribeHostAgentActivity = subscribeHostAgentActivity((payload) => emitPluginEvent("agent:activity", payload as unknown as Record<string, unknown>));
   debug("plugin", "event sources starting");
 
   powerMonitor.on("lock-screen", () => emitPluginEvent("screen:locked", {}));
@@ -144,10 +146,7 @@ export function stopPluginEventSources(): void {
   if (dayPartTimer) clearInterval(dayPartTimer);
   if (onlineTimer) clearInterval(onlineTimer);
   idleTimer = dayPartTimer = onlineTimer = null;
+  unsubscribeHostAgentActivity?.();
+  unsubscribeHostAgentActivity = null;
   started = false;
-}
-
-/** Agent reaction/speech activity mirror (`agent:activity`). */
-export function publishPluginAgentActivity(activity: { readonly kind: string; readonly reaction?: string; readonly petId?: string; readonly surface?: "default" | "agent" }): void {
-  emitPluginEvent("agent:activity", buildAgentActivityPayload(activity) as unknown as Record<string, unknown>);
 }

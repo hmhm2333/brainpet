@@ -11,6 +11,7 @@ import { shellState, togglePaused } from "./state.js";
 import { getUpdateStatus, openUpdateReleasePage } from "./update-checker.js";
 import { resolveDesktopDistributionSettings, type DesktopDistributionSettings } from "./distribution-profile.js";
 import type { DesktopCompositionCapabilities } from "./composition/desktop-composition.js";
+import { openOptionalControlCenter } from "./optional-ui-port.js";
 
 let distribution = resolveDesktopDistributionSettings(app.getName(), process.env.OPENPETS_DISTRIBUTION_PROFILE, basename(process.execPath), { packaged: app.isPackaged });
 let capabilities: DesktopCompositionCapabilities = {
@@ -30,6 +31,7 @@ let capabilities: DesktopCompositionCapabilities = {
 let tray: Tray | null = null;
 let voiceOperationSubscriptionInstalled = false;
 let createConfiguredVoiceMenuItems: (() => MenuItemConstructorOptions[]) | null = null;
+let disposeVoiceOperationSubscription: (() => void) | null = null;
 
 export function configureAppTray(options: {
   readonly distribution: DesktopDistributionSettings;
@@ -46,14 +48,6 @@ export function createAppTray(): Tray {
 
   tray = new Tray(createTrayIcon());
   tray.setToolTip(distribution.displayName);
-  if (capabilities.voice && !voiceOperationSubscriptionInstalled) {
-    voiceOperationSubscriptionInstalled = true;
-    void Promise.all([import("./plugin-voice.js"), import("./tray-voice-menu.js")]).then(([voice, menu]) => {
-      createConfiguredVoiceMenuItems = () => menu.createVoiceMenuItems(voice.getPluginVoiceOperation());
-      voice.subscribePluginVoiceOperation(() => refreshTrayMenu());
-      refreshTrayMenu();
-    });
-  }
   refreshTrayMenu();
   info("tray", "created");
   console.log(`${distribution.displayName} tray created.`);
@@ -149,8 +143,24 @@ export function refreshTrayMenu(): void {
   tray.setContextMenu(menu);
 }
 
+export async function installTrayVoiceMenu(): Promise<() => void> {
+  if (!capabilities.voice || voiceOperationSubscriptionInstalled) return () => undefined;
+  voiceOperationSubscriptionInstalled = true;
+  const [voice, menu] = await Promise.all([import("./plugin-voice.js"), import("./tray-voice-menu.js")]);
+  createConfiguredVoiceMenuItems = () => menu.createVoiceMenuItems(voice.getPluginVoiceOperation());
+  disposeVoiceOperationSubscription = voice.subscribePluginVoiceOperation(() => refreshTrayMenu());
+  refreshTrayMenu();
+  return () => {
+    disposeVoiceOperationSubscription?.();
+    disposeVoiceOperationSubscription = null;
+    createConfiguredVoiceMenuItems = null;
+    voiceOperationSubscriptionInstalled = false;
+    refreshTrayMenu();
+  };
+}
+
 function openControlCenter(section?: "pets" | "integrations" | "plugins" | "settings"): void {
-  void import("./windows.js").then(({ openControlCenterWindow }) => openControlCenterWindow(section));
+  openOptionalControlCenter(section);
 }
 
 function createUpdateMenuItems(): MenuItemConstructorOptions[] {

@@ -36,12 +36,12 @@ launching a second one.
 
 ## Startup sequence
 
-`main.ts` runs a deterministic bootstrap (see `src/codemap.md` for the exact
-order): install lifecycle handlers → initialize app state → initialize the
-logger → create the tray → start the local IPC server → start the persisted,
-opt-in remote-control service if enabled → initialize the plugin service (with
-the Electron JS host) → optionally show the default pet. Shutdown stops the
-plugin service, remote-control listener, local IPC server, and pet windows.
+`main.ts` is the only composition root. It installs generic lifecycle handlers,
+then starts `HostCore` before the selected product layer. HostCore initializes
+state and locale, creates the tray, starts local IPC and Agent lifecycle, and
+optionally shows the default pet. OpenPets registers lazy optional-service ports;
+BrainPet starts its built-in feature. Shutdown invokes the composition's single
+reverse-order disposer rather than naming concrete services in `lifecycle.ts`.
 
 Key files: `main.ts` (entry/bootstrap), `lifecycle.ts` (app events + cleanup),
 `state.ts` (shell pause flag).
@@ -326,11 +326,19 @@ a GitHub draft. See [Development](/development) for the release flow.
 
 BrainPet has a separate composition selected before service startup. Its normal
 profile keeps core pet rendering, the lean tray, local IPC, Agent lifecycle,
-training, update checks and logs. It does not initialize the OpenPets Control
-Center, plugin platform, LAN, remote control, voice, catalogs, or Agent setup
-writers. `BRAINPET_ENABLED=0` selects a rollback composition that also
+built-in training, update checks and logs. It does not initialize or bundle the
+OpenPets Control Center, plugin platform, LAN, remote control, voice, catalogs,
+or Agent setup writers. `BRAINPET_ENABLED=0` selects HostCore-only rollback,
 rejects `agent.activity`, omits Primary Companion/training UI, and does not
-refresh an install marker. OpenPets keeps its existing full composition.
+refresh an install marker. OpenPets keeps its existing feature surface through
+lazy optional-service factories.
+
+On BrainPet, Electron hardware acceleration is disabled before readiness. The
+two bounded transparent pixel surfaces use software composition, which avoids
+retaining a dedicated hardware compositor while the foundation smoke still
+enforces the interactive frame-quality floor. Stage WebGL and spellcheck are
+disabled, its isolated cache is released on close, and the short Web Audio
+context is closed after each tone.
 
 BrainPet packaging uses base, private-test and public-release configs. Local
 Windows builds go to `dist-brainpet/private-test`; the unpacked runtime is

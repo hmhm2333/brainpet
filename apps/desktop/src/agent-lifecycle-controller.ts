@@ -1,9 +1,8 @@
 import { applyPrimaryCompanionLifecycle, setPrimaryCompanionActivitySummary } from "./default-pet-controller.js";
 import { debug, info } from "./logger.js";
-import { publishPluginAgentActivity } from "./plugin-events-source.js";
+import { publishHostAgentActivity } from "./host-agent-activity.js";
 import { applyAgentLifecycleEvent, deriveAgentLifecyclePresentation, pruneStaleAgentLifecycleEntries, type AgentLifecycleEntry, type AgentLifecycleEvent, type AgentLifecyclePresentation } from "./agent-lifecycle.js";
 import { agentCompanionActivityKey, deriveAgentCompanionActivitySummary, type AgentCompanionActivitySummary } from "./agent-companion-activity.js";
-import { recordBrainPetLifecycleVerified } from "./brainpet-installation-state.js";
 
 const staleAfterMs = 30 * 60_000;
 const pruneIntervalMs = 60_000;
@@ -13,6 +12,7 @@ let currentPresentation: AgentLifecyclePresentation = deriveAgentLifecyclePresen
 let currentActivitySummary: AgentCompanionActivitySummary = deriveAgentCompanionActivitySummary(entries);
 let seenActivityKeys = new Set<string>();
 let pruneTimer: NodeJS.Timeout | null = null;
+let acceptedEventHandler: ((event: AgentLifecycleEvent) => void) | null = null;
 
 export function initializeAgentLifecycleController(): void {
   if (pruneTimer) return;
@@ -21,8 +21,12 @@ export function initializeAgentLifecycleController(): void {
   info("agent.lifecycle", "controller initialized", { staleAfterMs });
 }
 
+export function configureAgentLifecycleAcceptedHandler(handler: ((event: AgentLifecycleEvent) => void) | null): void {
+  acceptedEventHandler = handler;
+}
+
 export function ingestAgentLifecycleEvent(event: AgentLifecycleEvent): AgentLifecyclePresentation {
-  recordBrainPetLifecycleVerified();
+  acceptedEventHandler?.(event);
   entries = applyAgentLifecycleEvent(entries, event);
   compactSeenActivityKeys();
   const next = deriveAgentLifecyclePresentation(entries, event);
@@ -72,6 +76,13 @@ export function resetAgentLifecycleControllerForTests(): void {
   currentActivitySummary = deriveAgentCompanionActivitySummary(entries, 50, seenActivityKeys);
   if (pruneTimer) clearInterval(pruneTimer);
   pruneTimer = null;
+  acceptedEventHandler = null;
+}
+
+export function shutdownAgentLifecycleController(): void {
+  if (pruneTimer) clearInterval(pruneTimer);
+  pruneTimer = null;
+  acceptedEventHandler = null;
 }
 
 function pruneAgentLifecycleEntries(now: number): void {
@@ -89,7 +100,7 @@ function pruneAgentLifecycleEntries(now: number): void {
 
 function applyPresentation(presentation: AgentLifecyclePresentation): void {
   applyPrimaryCompanionLifecycle(currentActivitySummary, presentation.reaction, { sticky: presentation.sticky });
-  publishPluginAgentActivity({ kind: "react", reaction: presentation.reaction ?? "idle", surface: "default" });
+  publishHostAgentActivity({ kind: "react", reaction: presentation.reaction ?? "idle", surface: "default" });
 }
 
 function compactSeenActivityKeys(): void {

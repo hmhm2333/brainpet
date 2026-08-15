@@ -4,7 +4,7 @@ import { hasBrainPetRigDragStarted, type BrainPetRigPointer } from "../../../bra
 import { createTaskModule, type BrainPetTaskModule } from "./task-modules";
 import { LogicalSessionClock, StageQualityMonitor, loadStageSettings, saveStageSettings, type BrainPetStageSettings } from "./stage-runtime";
 import { StageAssetRegistry, type StageAssetStatus, type StageScene } from "./stage-services";
-import defaultPetSpritesheetUrl from "../../../../assets/default-pet-spritesheet.webp";
+import defaultPetThumbnailUrl from "../../../../assets/default-pet-thumbnail.png";
 import "./stage.css";
 
 const root = requireRoot();
@@ -64,6 +64,7 @@ async function initialize(): Promise<void> {
   document.addEventListener("pointerup", handleRigPointerEnd, true);
   document.addEventListener("pointercancel", handleRigPointerEnd, true);
   document.addEventListener("click", suppressClickAfterRigDrag, true);
+  window.addEventListener("beforeunload", releaseStageAudio);
   bridge.onHostEvent(handleHostEvent);
   applySettings();
   setPointerInteractive(false);
@@ -464,7 +465,10 @@ function escapeHtml(value: string): string {
 }
 
 function petSprite(state: "idle" | "celebrate"): string {
-  const source = bootstrap.petSpriteUrl ?? defaultPetSpritesheetUrl;
+  // This sprite appears only in the stage exerciser's static intro. Loading
+  // the full animation sheet here retained its decoded frames for the entire
+  // session even though the production focus stage never renders this image.
+  const source = bootstrap.petSpriteUrl ?? defaultPetThumbnailUrl;
   return `<img class="pet-sprite pet-sprite-${state}" src="${escapeHtml(source)}" alt="">`;
 }
 
@@ -613,9 +617,20 @@ function playSound(kind: "start" | "correct" | "incorrect" | "finish"): void {
     oscillator.connect(gain).connect(context.destination);
     oscillator.start();
     oscillator.stop(context.currentTime + 0.1);
+    window.setTimeout(() => {
+      if (audioContext !== context) return;
+      audioContext = null;
+      void context.close().catch(() => undefined);
+    }, 250);
   } catch {
     // Audio is optional feedback; the visual path remains complete when unavailable.
   }
+}
+
+function releaseStageAudio(): void {
+  const context = audioContext;
+  audioContext = null;
+  if (context && context.state !== "closed") void context.close().catch(() => undefined);
 }
 
 function qualityLabel(): string {

@@ -17,7 +17,10 @@ export interface DesktopCompositionCapabilities {
 export interface DesktopComposition {
   readonly id: "openpets" | "brainpet";
   readonly capabilities: DesktopCompositionCapabilities;
+  readonly layers: readonly DesktopCompositionLayer[];
 }
+
+export type DesktopCompositionLayer = "hostCore" | "optionalOpenPetsServices" | "brainPetFeature";
 
 const openPetsCapabilities: DesktopCompositionCapabilities = Object.freeze({
   agentLifecycle: true,
@@ -38,27 +41,27 @@ const brainPetEnabledCapabilities: DesktopCompositionCapabilities = Object.freez
   brainPetHost: true,
   brainPetInstallMarker: true,
   brainPetOnboarding: true,
-  controlCenter: true,
-  lan: true,
+  controlCenter: false,
+  lan: false,
   localIpc: true,
-  openPetsAgentSetup: true,
-  pluginPlatform: true,
-  remoteControl: true,
-  voice: true,
+  openPetsAgentSetup: false,
+  pluginPlatform: false,
+  remoteControl: false,
+  voice: false,
 });
 
 const brainPetRollbackCapabilities: DesktopCompositionCapabilities = Object.freeze({
-  agentLifecycle: true,
+  agentLifecycle: false,
   brainPetHost: false,
   brainPetInstallMarker: false,
   brainPetOnboarding: false,
-  controlCenter: true,
-  lan: true,
+  controlCenter: false,
+  lan: false,
   localIpc: true,
-  openPetsAgentSetup: true,
-  pluginPlatform: true,
-  remoteControl: true,
-  voice: true,
+  openPetsAgentSetup: false,
+  pluginPlatform: false,
+  remoteControl: false,
+  voice: false,
 });
 
 export function resolveDesktopComposition(
@@ -72,9 +75,13 @@ export function resolveDesktopComposition(
 }
 
 export function composeOpenPets(): DesktopComposition {
-  return { id: "openpets", capabilities: openPetsCapabilities };
+  return { id: "openpets", capabilities: openPetsCapabilities, layers: ["hostCore", "optionalOpenPetsServices"] };
 }
 
 export function composeBrainPet(enabled: boolean): DesktopComposition {
-  return { id: "brainpet", capabilities: enabled ? brainPetEnabledCapabilities : brainPetRollbackCapabilities };
+  return {
+    id: "brainpet",
+    capabilities: enabled ? brainPetEnabledCapabilities : brainPetRollbackCapabilities,
+    layers: enabled ? ["hostCore", "brainPetFeature"] : ["hostCore"],
+  };
 }

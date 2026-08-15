@@ -746,6 +746,13 @@ export function focusOpenTaskWindows(): void {
   }
 }
 
+export function disposeInternalUi(): void {
+  if (controlCenterWindow && !controlCenterWindow.isDestroyed()) controlCenterWindow.destroy();
+  controlCenterWindow = null;
+  pendingControlCenterRoute = null;
+  syncDockVisibilityForInternalUi();
+}
+
 function normalizeControlCenterRoute(route: unknown): ControlCenterRoute {
   return typeof route === "string" && controlCenterRoutes.has(route as ControlCenterRoute) ? route as ControlCenterRoute : "dashboard";
 }
