@@ -1,5 +1,9 @@
 # BrainPet Agent 平台方案：A / B / C 验证
 
+> 文档类型：历史原型 ADR，记录 `0dacd88` 基线的 A/B/C 验证。
+> 其中完整宿主、训练插件 façade 与 discovery fallback 不再代表目标架构；
+> 当前设计与退出门见 `brainpet-release-infrastructure-completion-plan.md`。
+
 ## 目标
 
 BrainPet 不抛弃 OpenPets，也不依赖注入 Agent 私有 UI。产品由一个可发行的
@@ -8,7 +12,7 @@ BrainPet 不抛弃 OpenPets，也不依赖注入 Agent 私有 UI。产品由一�
 
 ## A：完整 OpenPets 宿主 + BrainPet Training 插件
 
-实现状态：已完成代码、合同、packaged runtime 与 Electron smoke 测试。
+历史验证状态（`0dacd88`）：当时已完成代码、合同、packaged runtime 与 Electron smoke 测试。
 
 BrainPet 使用独立产品身份和数据目录，但保留 Control Center、插件平台、
 Agent 配置、LAN、远程控制和语音等 OpenPets 能力。新 profile 只默认启用
@@ -27,7 +31,7 @@ Electron/OpenPets 宿主的常驻内存仍偏高，属于后续性能里程碑�
 
 ## B：Codex 能力对齐
 
-实现状态：Bridge 0.3 已安装并按 Codex 当前实际解析器改用 `PreToolUse` 和
+历史验证状态（`0dacd88`）：Bridge 0.3 已安装并按 Codex 当时解析器改用 `PreToolUse` 和
 `ErrorOccurred`，移除不会注册的 Claude-only Hook 声明；缓存 Bridge 已通过
 working / blocked / idle 本机 IPC smoke。新 Hook 的真实任务测试须在新 Codex
 任务中完成，因为当前任务不会热重载插件。
@@ -42,7 +46,7 @@ Codex 暴露稳定 request id、结构化选项和可执行接口时，BrainPet 
 
 ## C：通用 Agent 适配器
 
-实现状态：Claude 与 OpenCode 已改用共享 lifecycle builder；通用客户端在
+历史验证状态（`0dacd88`）：Claude 与 OpenCode 已改用共享 lifecycle builder；通用客户端在
 OpenPets discovery 缺失时可回退发现 BrainPet，显式 discovery 仍严格优先。
 两者均已通过运行中的 packaged BrainPet IPC smoke；OpenCode 另加入串行发送
 队列，保证快速连续事件不会把 `idle` 与 `waiting` 乱序。

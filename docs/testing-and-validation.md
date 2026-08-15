@@ -29,6 +29,14 @@ Run the suite with `pnpm test` (builds first, then each package's tests) and
 `pnpm check` (per-package typecheck + build + contract checks). See
 [Development](/development) for the command surface.
 
+BrainPet release infrastructure additionally treats the machine contracts as a
+gate. `pnpm brainpet:providers:generate` derives the public provider matrix from
+`config/brainpet-adapter-registry.json` plus evidence receipts;
+`pnpm brainpet:providers:check` rejects drift; and
+`pnpm brainpet:release:validate-source` checks distribution targets, lifecycle
+states, provider IDs, privacy fields, runtime capability snapshots, and the
+generated matrix together.
+
 ## Desktop tests
 
 The desktop runner (`apps/desktop/scripts/run-tests.mjs`) orchestrates:

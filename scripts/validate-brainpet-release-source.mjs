@@ -6,10 +6,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract, brainPetReleaseTargetIds } from "./brainpet-release-contract.mjs";
+import { assertBrainPetProviderMatrixCurrent } from "./generate-brainpet-provider-matrix.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const desktop = join(root, "apps", "desktop");
 const lifecycleContract = JSON.parse(readFileSync(join(root, "config", "brainpet-agent-lifecycle.json"), "utf8"));
+const releaseCapabilities = JSON.parse(readFileSync(join(root, "config", "brainpet-release-capabilities.json"), "utf8"));
+const adapterRegistry = JSON.parse(readFileSync(join(root, "config", "brainpet-adapter-registry.json"), "utf8"));
 const baseConfig = readFileSync(join(desktop, "electron-builder.brainpet.base.yml"), "utf8");
 const privateConfig = readFileSync(join(desktop, "electron-builder.brainpet.private.yml"), "utf8");
 const publicConfig = readFileSync(join(desktop, "electron-builder.brainpet.public.yml"), "utf8");
@@ -25,6 +28,10 @@ assert.match(publicConfig, /hardenedRuntime: true/);
 assert.match(publicConfig, /verifyUpdateCodeSignature: true/);
 assert.equal(brainPetDistributionContract.identity.appId, "dev.brainpet.app");
 assert.equal(brainPetDistributionContract.identity.executableName, "brainpet");
+assert.deepEqual(releaseCapabilities.productIds, ["openpets", "brainpet"]);
+assert.deepEqual(Object.keys(releaseCapabilities.runtimeSnapshots.openpets), releaseCapabilities.capabilityIds);
+assert.deepEqual(Object.keys(releaseCapabilities.runtimeSnapshots.brainpetEnabled), releaseCapabilities.capabilityIds);
+assert.deepEqual(Object.keys(releaseCapabilities.runtimeSnapshots.brainpetRollback), releaseCapabilities.capabilityIds);
 assert.match(readFileSync(join(desktop, "build", "brainpet-installer.nsh"), "utf8"), /runtime-install\.json/);
 assert.ok(existsSync(join(desktop, "scripts", "validate-brainpet-package.mjs")));
 
@@ -57,13 +64,11 @@ assert.match(cargo, new RegExp(`^version = "${brainPetDistributionContract.bridg
 const installationStateSource = readFileSync(join(desktop, "src", "brainpet-installation-state.ts"), "utf8");
 assert.match(installationStateSource, new RegExp(`brainPetBridgeVersion = "${brainPetDistributionContract.bridge.version.replaceAll(".", "\\.")}"`));
 
-const providerMatrix = JSON.parse(readFileSync(join(root, "integrations", "brainpet-provider-support.json"), "utf8"));
-assert.deepEqual(providerMatrix.dimensions, ["lifecycle", "taskNavigation", "requestActions", "message", "voice"]);
-for (const provider of providerMatrix.providers) {
-  assert.deepEqual(Object.keys(provider.support), providerMatrix.dimensions);
-  for (const value of Object.values(provider.support)) assert.ok(providerMatrix.statuses.includes(value), `${provider.id} has an invalid support status.`);
-}
-const codex = providerMatrix.providers.find((provider) => provider.id === "codex");
-assert.equal(codex.support.lifecycle, "implemented");
-assert.equal(codex.support.requestActions, "unavailable");
-console.log(`BrainPet release source validation passed (${brainPetReleaseTargetIds.length} targets, ${providerMatrix.providers.length} providers).`);
+assertBrainPetProviderMatrixCurrent();
+const automaticProviderIds = adapterRegistry.providers.filter((provider) => provider.automaticLifecycle).map((provider) => provider.id);
+assert.deepEqual(automaticProviderIds, ["codex", "claude", "opencode"]);
+assert.equal(bridgeContract.provider, "codex");
+assert.match(bridgeCoreSource, /agent:\s*"codex"/);
+assert.match(readFileSync(join(root, "packages", "claude", "src", "hooks.ts"), "utf8"), /agent:\s*"claude"/);
+assert.match(readFileSync(join(root, "packages", "opencode", "src", "opencode-plugin-runtime.ts"), "utf8"), /agent:\s*"opencode"/);
+console.log(`BrainPet release source validation passed (${brainPetReleaseTargetIds.length} targets, ${adapterRegistry.providers.length} providers).`);

@@ -26,14 +26,14 @@ BrainPet additionally carries a privacy-minimized Codex desktop lifecycle plugin
 | `apps/desktop/` | User-facing Electron companion app: tray UX, pet windows, pet installation, plugin automation/runtime, agent setup, update checks, and local IPC server. | [View Map](apps/desktop/codemap.md) |
 | `apps/desktop/contracts/` | Desktop public-boundary contract tests for catalog fixtures, local IPC protocol behavior, and plugin manifest schema validation. | [View Map](apps/desktop/contracts/codemap.md) |
 | `apps/desktop/src/` | Main-process service layer for app lifecycle, state, tray/windows, IPC routing, lease-managed agent pets, catalog installation, SDK v3 plugin subsystem, i18n, and editor integration. | [View Map](apps/desktop/src/codemap.md) |
-| `config/` | Machine-readable BrainPet distribution, platform matrix, Bridge deadline, and Agent lifecycle privacy contracts. | `config/brainpet-*.json` |
+| `config/` | Machine-readable BrainPet distribution, platform matrix, Bridge deadline, Agent lifecycle privacy, AdapterRegistry/evidence receipts, and runtime capability snapshots. | `config/brainpet-*.json` |
 | `apps/desktop/src/i18n/` | Desktop host i18n catalogs and localized reaction speech pools. | [View Map](apps/desktop/src/i18n/codemap.md) |
 | `apps/desktop/src/i18n/locales/` | Host UI locale dictionaries keyed by BCP-47 locale. | [View Map](apps/desktop/src/i18n/locales/codemap.md) |
 | `apps/desktop/src/i18n/reactions/` | Localized pet reaction message pools. | [View Map](apps/desktop/src/i18n/reactions/codemap.md) |
 | `apps/desktop/src/renderer/` | Vite renderer workspace for the sandboxed React/Tailwind Control Center bundle. | [View Map](apps/desktop/src/renderer/codemap.md) |
 | `apps/desktop/src/renderer/src/` | React/Tailwind Control Center UI for Dashboard, Pets, Integrations, Plugins, and Settings via narrow preload APIs. | [View Map](apps/desktop/src/renderer/src/codemap.md) |
 | `apps/desktop/scripts/` | Desktop package cleanup and local release automation scripts. | [View Map](apps/desktop/scripts/codemap.md) |
-| `integrations/codex/` | BrainPet's local Codex lifecycle bridge plugin and installation notes. | `integrations/codex/README.md` |
+| `integrations/codex/` | BrainPet's local Codex lifecycle bridge plugin and installation notes; `integrations/brainpet-provider-support.json` is generated from the AdapterRegistry and receipts. | `integrations/codex/README.md` |
 | `native/brainpet-hook/` | Cross-platform, privacy-minimized native hook helper source shared by Codex, Claude Code, and compatible Claude-derived hosts. | `native/brainpet-hook/README.md` |
 | `packages/` | Publishable npm package workspace for shared protocol, CLI, MCP, and coding-agent integrations. | [View Map](packages/codemap.md) |
 | `packages/agent-events/` | Shared agent speech/event message pools and validation utilities. | [View Map](packages/agent-events/codemap.md) |

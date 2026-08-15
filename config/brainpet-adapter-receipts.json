@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "registryVersion": "1.0.0",
+  "baselineCommit": "0dacd881982b3198168f0c8bd34f6bc6d4abd844",
+  "providers": [
+    {
+      "providerId": "codex",
+      "verifiedPlatformLevels": { "windows": "beta", "macos": "beta", "linux": "unsupported" },
+      "evidence": [
+        { "kind": "contract", "status": "passed", "path": "integrations/codex/scripts/validate-bridge-release.mjs" },
+        { "kind": "packaged-runtime-smoke", "status": "passed", "path": "docs/brainpet-codex-local-install.md" },
+        { "kind": "real-agent-lifecycle", "status": "pending", "path": "docs/brainpet-codex-local-install.md" }
+      ]
+    },
+    {
+      "providerId": "claude",
+      "verifiedPlatformLevels": { "windows": "beta", "macos": "beta", "linux": "beta" },
+      "evidence": [
+        { "kind": "contract", "status": "passed", "path": "packages/claude/src/check-claude-hooks.ts" },
+        { "kind": "real-install-lifecycle", "status": "pending", "path": "docs/brainpet-release-infrastructure-completion-plan.md" }
+      ]
+    },
+    {
+      "providerId": "opencode",
+      "verifiedPlatformLevels": { "windows": "beta", "macos": "beta", "linux": "beta" },
+      "evidence": [
+        { "kind": "contract", "status": "passed", "path": "packages/opencode/src/check-opencode-plugin.ts" },
+        { "kind": "real-install-lifecycle", "status": "pending", "path": "docs/brainpet-release-infrastructure-completion-plan.md" }
+      ]
+    },
+    {
+      "providerId": "mcp",
+      "verifiedPlatformLevels": { "windows": "beta", "macos": "beta", "linux": "beta" },
+      "evidence": [
+        { "kind": "contract", "status": "passed", "path": "packages/mcp/src/check-mcp-contract.ts" },
+        { "kind": "packaged-command", "status": "pending", "path": "docs/brainpet-release-infrastructure-completion-plan.md" }
+      ]
+    }
+  ]
+}

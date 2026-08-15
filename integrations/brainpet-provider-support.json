@@ -1,32 +1,217 @@
 {
-  "schemaVersion": 1,
-  "dimensions": ["lifecycle", "taskNavigation", "requestActions", "message", "voice"],
-  "statuses": ["implemented", "planned", "unavailable"],
+  "schemaVersion": 2,
+  "generatedFrom": [
+    "config/brainpet-adapter-registry.json",
+    "config/brainpet-adapter-receipts.json",
+    "config/brainpet-agent-lifecycle.json"
+  ],
+  "adapterVersion": "1.0.0",
+  "lifecycleStates": [
+    "working",
+    "waiting",
+    "ready",
+    "blocked",
+    "idle"
+  ],
+  "capabilityDimensions": [
+    "lifecycle",
+    "taskNavigation",
+    "requestActions",
+    "message",
+    "voice"
+  ],
+  "capabilityStatuses": [
+    "implemented",
+    "unavailable"
+  ],
+  "stabilityLevels": [
+    "unsupported",
+    "experimental",
+    "beta",
+    "stable"
+  ],
   "providers": [
     {
       "id": "codex",
       "displayName": "Codex",
-      "delivery": ["native-hook", "node-development-fallback"],
-      "support": { "lifecycle": "implemented", "taskNavigation": "unavailable", "requestActions": "unavailable", "message": "unavailable", "voice": "unavailable" },
-      "evidence": "integrations/codex/plugins/brainpet-codex-bridge/hooks/hooks.json"
+      "kind": "automatic-lifecycle",
+      "supportedProducts": [
+        "brainpet"
+      ],
+      "automaticLifecycle": true,
+      "lifecycleMethod": "agent.activity",
+      "installerKind": "codex-plugin",
+      "capabilities": {
+        "lifecycle": "implemented",
+        "taskNavigation": "unavailable",
+        "requestActions": "unavailable",
+        "message": "unavailable",
+        "voice": "unavailable"
+      },
+      "targetPlatformLevels": {
+        "windows": "stable",
+        "macos": "stable",
+        "linux": "unsupported"
+      },
+      "verifiedPlatformLevels": {
+        "windows": "beta",
+        "macos": "beta",
+        "linux": "unsupported"
+      },
+      "evidence": [
+        {
+          "kind": "contract",
+          "status": "passed",
+          "path": "integrations/codex/scripts/validate-bridge-release.mjs"
+        },
+        {
+          "kind": "packaged-runtime-smoke",
+          "status": "passed",
+          "path": "docs/brainpet-codex-local-install.md"
+        },
+        {
+          "kind": "real-agent-lifecycle",
+          "status": "pending",
+          "path": "docs/brainpet-codex-local-install.md"
+        }
+      ]
     },
     {
-      "id": "claude-code",
+      "id": "claude",
       "displayName": "Claude Code",
-      "delivery": [],
-      "support": { "lifecycle": "planned", "taskNavigation": "planned", "requestActions": "planned", "message": "planned", "voice": "planned" }
+      "kind": "automatic-lifecycle",
+      "supportedProducts": [
+        "brainpet",
+        "openpets"
+      ],
+      "automaticLifecycle": true,
+      "lifecycleMethod": "agent.activity",
+      "installerKind": "claude-hooks",
+      "capabilities": {
+        "lifecycle": "implemented",
+        "taskNavigation": "unavailable",
+        "requestActions": "unavailable",
+        "message": "unavailable",
+        "voice": "unavailable"
+      },
+      "targetPlatformLevels": {
+        "windows": "stable",
+        "macos": "stable",
+        "linux": "stable"
+      },
+      "verifiedPlatformLevels": {
+        "windows": "beta",
+        "macos": "beta",
+        "linux": "beta"
+      },
+      "evidence": [
+        {
+          "kind": "contract",
+          "status": "passed",
+          "path": "packages/claude/src/check-claude-hooks.ts"
+        },
+        {
+          "kind": "real-install-lifecycle",
+          "status": "pending",
+          "path": "docs/brainpet-release-infrastructure-completion-plan.md"
+        }
+      ]
     },
+    {
+      "id": "opencode",
+      "displayName": "OpenCode",
+      "kind": "automatic-lifecycle",
+      "supportedProducts": [
+        "brainpet",
+        "openpets"
+      ],
+      "automaticLifecycle": true,
+      "lifecycleMethod": "agent.activity",
+      "installerKind": "opencode-plugin",
+      "capabilities": {
+        "lifecycle": "implemented",
+        "taskNavigation": "unavailable",
+        "requestActions": "unavailable",
+        "message": "unavailable",
+        "voice": "unavailable"
+      },
+      "targetPlatformLevels": {
+        "windows": "stable",
+        "macos": "stable",
+        "linux": "stable"
+      },
+      "verifiedPlatformLevels": {
+        "windows": "beta",
+        "macos": "beta",
+        "linux": "beta"
+      },
+      "evidence": [
+        {
+          "kind": "contract",
+          "status": "passed",
+          "path": "packages/opencode/src/check-opencode-plugin.ts"
+        },
+        {
+          "kind": "real-install-lifecycle",
+          "status": "pending",
+          "path": "docs/brainpet-release-infrastructure-completion-plan.md"
+        }
+      ]
+    },
+    {
+      "id": "mcp",
+      "displayName": "Generic MCP",
+      "kind": "explicit-command",
+      "supportedProducts": [
+        "brainpet",
+        "openpets"
+      ],
+      "automaticLifecycle": false,
+      "lifecycleMethod": null,
+      "installerKind": "mcp-server",
+      "capabilities": {
+        "lifecycle": "unavailable",
+        "taskNavigation": "unavailable",
+        "requestActions": "unavailable",
+        "message": "implemented",
+        "voice": "unavailable"
+      },
+      "targetPlatformLevels": {
+        "windows": "stable",
+        "macos": "stable",
+        "linux": "stable"
+      },
+      "verifiedPlatformLevels": {
+        "windows": "beta",
+        "macos": "beta",
+        "linux": "beta"
+      },
+      "evidence": [
+        {
+          "kind": "contract",
+          "status": "passed",
+          "path": "packages/mcp/src/check-mcp-contract.ts"
+        },
+        {
+          "kind": "packaged-command",
+          "status": "pending",
+          "path": "docs/brainpet-release-infrastructure-completion-plan.md"
+        }
+      ]
+    }
+  ],
+  "probeTargets": [
     {
       "id": "workbuddy",
       "displayName": "WorkBuddy",
-      "delivery": [],
-      "support": { "lifecycle": "planned", "taskNavigation": "planned", "requestActions": "planned", "message": "planned", "voice": "planned" }
+      "status": "unsupported",
+      "reason": "No verified public lifecycle event API."
     },
     {
       "id": "deepseek-harness",
       "displayName": "DeepSeek Harness",
-      "delivery": [],
-      "support": { "lifecycle": "planned", "taskNavigation": "planned", "requestActions": "planned", "message": "planned", "voice": "planned" }
+      "status": "unsupported",
+      "reason": "No verified public lifecycle event API."
     }
   ]
 }

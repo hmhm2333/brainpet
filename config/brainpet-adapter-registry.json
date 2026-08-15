@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "adapterVersion": "1.0.0",
+  "capabilityDimensions": ["lifecycle", "taskNavigation", "requestActions", "message", "voice"],
+  "capabilityStatuses": ["implemented", "unavailable"],
+  "stabilityLevels": ["unsupported", "experimental", "beta", "stable"],
+  "platforms": ["windows", "macos", "linux"],
+  "providers": [
+    {
+      "id": "codex",
+      "displayName": "Codex",
+      "kind": "automatic-lifecycle",
+      "supportedProducts": ["brainpet"],
+      "automaticLifecycle": true,
+      "lifecycleMethod": "agent.activity",
+      "installerKind": "codex-plugin",
+      "targetPlatformLevels": { "windows": "stable", "macos": "stable", "linux": "unsupported" },
+      "capabilities": { "lifecycle": "implemented", "taskNavigation": "unavailable", "requestActions": "unavailable", "message": "unavailable", "voice": "unavailable" },
+      "source": "integrations/codex/plugins/brainpet-codex-bridge"
+    },
+    {
+      "id": "claude",
+      "displayName": "Claude Code",
+      "kind": "automatic-lifecycle",
+      "supportedProducts": ["brainpet", "openpets"],
+      "automaticLifecycle": true,
+      "lifecycleMethod": "agent.activity",
+      "installerKind": "claude-hooks",
+      "targetPlatformLevels": { "windows": "stable", "macos": "stable", "linux": "stable" },
+      "capabilities": { "lifecycle": "implemented", "taskNavigation": "unavailable", "requestActions": "unavailable", "message": "unavailable", "voice": "unavailable" },
+      "source": "packages/claude/src/hooks.ts"
+    },
+    {
+      "id": "opencode",
+      "displayName": "OpenCode",
+      "kind": "automatic-lifecycle",
+      "supportedProducts": ["brainpet", "openpets"],
+      "automaticLifecycle": true,
+      "lifecycleMethod": "agent.activity",
+      "installerKind": "opencode-plugin",
+      "targetPlatformLevels": { "windows": "stable", "macos": "stable", "linux": "stable" },
+      "capabilities": { "lifecycle": "implemented", "taskNavigation": "unavailable", "requestActions": "unavailable", "message": "unavailable", "voice": "unavailable" },
+      "source": "packages/opencode/src/opencode-plugin-runtime.ts"
+    },
+    {
+      "id": "mcp",
+      "displayName": "Generic MCP",
+      "kind": "explicit-command",
+      "supportedProducts": ["brainpet", "openpets"],
+      "automaticLifecycle": false,
+      "lifecycleMethod": null,
+      "installerKind": "mcp-server",
+      "targetPlatformLevels": { "windows": "stable", "macos": "stable", "linux": "stable" },
+      "capabilities": { "lifecycle": "unavailable", "taskNavigation": "unavailable", "requestActions": "unavailable", "message": "implemented", "voice": "unavailable" },
+      "source": "packages/mcp/src/index.ts"
+    }
+  ],
+  "probeTargets": [
+    { "id": "workbuddy", "displayName": "WorkBuddy", "status": "unsupported", "reason": "No verified public lifecycle event API." },
+    { "id": "deepseek-harness", "displayName": "DeepSeek Harness", "status": "unsupported", "reason": "No verified public lifecycle event API." }
+  ]
+}

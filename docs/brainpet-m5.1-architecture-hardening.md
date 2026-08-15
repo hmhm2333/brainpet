@@ -1,6 +1,9 @@
 # BrainPet M5.1：产品边界与发行可靠性修复
 
-> 状态：代码实现与 Windows 私测产物验证完成；本机安装、Codex Bridge 信任、六平台 CI、公开签名与公证仍是外部验收门。M5.1 冻结新游戏、新 Agent adapter、联网天梯和商业化功能。
+> 文档类型：历史 ADR，记录 `0dacd88` 之前的 M5.1 决策与当时回执。
+> 本文中的“已实现／已完成”只描述该历史基线，不是当前 Release 完成声明。
+> 当前事实源与退出门以 `brainpet-release-infrastructure-completion-plan.md`、
+> `config/brainpet-*.json` 和生成的 `integrations/brainpet-provider-support.json` 为准。
 
 ## 0. 2026-08-15 实施回执
 

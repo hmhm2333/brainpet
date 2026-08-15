@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "productIds": ["openpets", "brainpet"],
+  "capabilityIds": [
+    "agentLifecycle",
+    "brainPetHost",
+    "brainPetInstallMarker",
+    "brainPetOnboarding",
+    "controlCenter",
+    "lan",
+    "localIpc",
+    "openPetsAgentSetup",
+    "pluginPlatform",
+    "remoteControl",
+    "voice"
+  ],
+  "runtimeSnapshots": {
+    "openpets": {
+      "agentLifecycle": true,
+      "brainPetHost": false,
+      "brainPetInstallMarker": false,
+      "brainPetOnboarding": false,
+      "controlCenter": true,
+      "lan": true,
+      "localIpc": true,
+      "openPetsAgentSetup": true,
+      "pluginPlatform": true,
+      "remoteControl": true,
+      "voice": true
+    },
+    "brainpetEnabled": {
+      "agentLifecycle": true,
+      "brainPetHost": true,
+      "brainPetInstallMarker": true,
+      "brainPetOnboarding": true,
+      "controlCenter": true,
+      "lan": true,
+      "localIpc": true,
+      "openPetsAgentSetup": true,
+      "pluginPlatform": true,
+      "remoteControl": true,
+      "voice": true
+    },
+    "brainpetRollback": {
+      "agentLifecycle": true,
+      "brainPetHost": false,
+      "brainPetInstallMarker": false,
+      "brainPetOnboarding": false,
+      "controlCenter": true,
+      "lan": true,
+      "localIpc": true,
+      "openPetsAgentSetup": true,
+      "pluginPlatform": true,
+      "remoteControl": true,
+      "voice": true
+    }
+  }
+}

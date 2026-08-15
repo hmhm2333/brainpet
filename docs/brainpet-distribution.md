@@ -1,6 +1,8 @@
 # BrainPet 安装与公开发行方案
 
-> 状态：M5.1 发行加固代码完成，Windows x64 私测安装包已生成并通过打包后 runtime smoke；签名、公证、公开目录提交、六平台 CI 和真实 Codex 信任仍是发布门。Node hook 仅是源码/私测回退，不是公开发行依赖。
+> 状态：`0dacd88` 的历史分发基线。该基线完成过 Windows x64 私测包与 packaged
+> runtime smoke，但不等于当前 Release 就绪；当前安装、目标路由、跨平台回执与
+> 公开发行门以 `brainpet-release-infrastructure-completion-plan.md` 为准。
 
 主宠替代层的分期、Codex 原生控件覆盖和本轮验收门见
 `docs/brainpet-primary-companion-plan.md`。
@@ -65,7 +67,7 @@ brainpet-codex-bridge/
 
 Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discovery 发送一次本机 IPC。每次连接尝试最多 350ms；热连接、冷启动轮询和最终发送共享 2600ms 内部 deadline，为 Codex 的 3 秒 Hook 预算保留启动与退出余量。若 runtime 未运行，helper 会读取 per-user 安装标记，验证它只指向当前平台的 BrainPet 可执行文件后再启动。Linux AppImage 记录原始 `APPIMAGE` 路径，而不是临时挂载目录。它不启动游戏、不访问网络、不写用户任务内容。
 
-## M5.1 发行合同
+## `0dacd88` 历史发行合同
 
 - `config/brainpet-distribution.json` 是产品身份、Bridge 版本、deadline 与六平台目标矩阵的机器事实源。
 - Electron builder 分为 `electron-builder.brainpet.base.yml`、`electron-builder.brainpet.private.yml` 和 `electron-builder.brainpet.public.yml`。私测包进入 `dist-brainpet/private-test`；公开包缺签名/公证凭据时 fail closed。
