@@ -4,14 +4,16 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { getDiscoveryFilePaths, parseIpcEndpoint, readDiscoveryFileFromPaths, validateDiscovery } from "../src/discovery.js";
-import { createOpenPetsClient, parsePetInstallResult, parsePetListResult } from "../src/index.js";
+import { getDiscoveryFilePaths, parseIpcEndpoint, readDiscoveryFile, readDiscoveryFileFromPaths, validateDiscovery } from "../src/discovery.js";
+import { createOpenPetsClient, isTargetProfile, parsePetInstallResult, parsePetListResult, resolveTargetProfile } from "../src/index.js";
 import { OpenPetsClientError, parseIpcResponse, validateAgentCompanionRequestOptions, validateReaction } from "../src/protocol.js";
 import { maxRemoteMessageBytes, parseRemoteEndpoint, validateRemoteMessage, validateRemoteToken } from "../src/remote-protocol.js";
 
 const baseDiscovery = {
   protocolVersion: 1,
   protocol: "openpets-ipc",
+  product: "openpets",
+  appId: "dev.openpets.app",
   endpoint: process.platform === "win32" ? "\\\\.\\pipe\\openpets-abc-123" : "/tmp/openpets-501/openpets-123.sock",
   token: "x".repeat(32),
   appVersion: "0.0.0",
@@ -22,22 +24,70 @@ const baseDiscovery = {
 validateDiscovery(baseDiscovery);
 validateDiscovery({
   ...baseDiscovery,
+  product: "brainpet",
+  appId: "dev.brainpet.app",
   endpoint: process.platform === "win32" ? "\\\\.\\pipe\\brainpet-abc-123" : "/tmp/brainpet-501/brainpet-123.sock",
 });
 validateDiscovery({ ...baseDiscovery, endpoint: "tcp://127.0.0.1:37645" });
 
-const discoveryRoot = mkdtempSync(join(tmpdir(), "openpets-discovery-fallback-"));
+const discoveryRoot = mkdtempSync(join(tmpdir(), "openpets-product-discovery-"));
 try {
-  const candidates = getDiscoveryFilePaths("win32", { APPDATA: discoveryRoot }, "C:\\Users\\test");
-  assert.equal(candidates.length, 2);
-  assert.match(candidates[0]!, /openpets/i);
-  assert.match(candidates[1]!, /brainpet/i);
-  mkdirSync(dirname(candidates[1]!), { recursive: true });
-  writeFileSync(candidates[1]!, JSON.stringify(baseDiscovery), "utf8");
-  assert.deepEqual(readDiscoveryFileFromPaths(candidates), validateDiscovery(baseDiscovery), "default discovery must fall back to BrainPet when OpenPets is absent");
-  assert.deepEqual(getDiscoveryFilePaths("win32", { OPENPETS_DISCOVERY_FILE: candidates[1]! }, "C:\\Users\\test"), [candidates[1]!], "an explicit discovery path must disable fallback probing");
+  const openPetsPath = getDiscoveryFilePaths("openpets", "win32", { APPDATA: discoveryRoot }, "C:\\Users\\test")[0];
+  const brainPetPath = getDiscoveryFilePaths("brainpet", "win32", { APPDATA: discoveryRoot }, "C:\\Users\\test")[0];
+  assert.match(openPetsPath, /openpets/i);
+  assert.match(brainPetPath, /brainpet/i);
+  mkdirSync(dirname(brainPetPath), { recursive: true });
+  const brainPetDiscovery = {
+    ...baseDiscovery,
+    product: "brainpet",
+    appId: "dev.brainpet.app",
+    endpoint: process.platform === "win32" ? "\\\\.\\pipe\\brainpet-abc-123" : "/tmp/brainpet-501/brainpet-123.sock",
+  };
+  writeFileSync(brainPetPath, JSON.stringify(brainPetDiscovery), "utf8");
+  assert.deepEqual(readDiscoveryFileFromPaths([brainPetPath], "brainpet"), validateDiscovery(brainPetDiscovery, "brainpet"));
+  assert.throws(() => readDiscoveryFileFromPaths([brainPetPath], "openpets"), /does not match/);
+  assert.throws(() => readDiscoveryFile("openpets", openPetsPath), /unavailable/, "an absent explicit target must not fall through to another product");
+  assert.deepEqual(getDiscoveryFilePaths("brainpet", "win32", { OPENPETS_DISCOVERY_FILE: brainPetPath }, "C:\\Users\\test"), [brainPetPath]);
+  const profile = resolveTargetProfile("brainpet", "win32", { APPDATA: discoveryRoot, LOCALAPPDATA: discoveryRoot }, "C:\\Users\\test");
+  assert.equal(profile.appId, "dev.brainpet.app");
+  assert.equal(isTargetProfile(profile), true);
+  assert.equal(isTargetProfile({ ...profile, appId: "dev.openpets.app" }), false);
+  assert.equal(isTargetProfile({ ...profile, updateChannel: "alvinunreal/openpets" }), false);
 } finally {
   rmSync(discoveryRoot, { recursive: true, force: true });
+}
+
+const dualHostRoot = mkdtempSync(join(tmpdir(), "openpets-dual-host-"));
+const [openPetsHost, brainPetHost] = await Promise.all([
+  startLocalTargetServer("openpets", "dev.openpets.app"),
+  startLocalTargetServer("brainpet", "dev.brainpet.app"),
+]);
+try {
+  const openPetsDiscoveryPath = join(dualHostRoot, "openpets-ipc.json");
+  const brainPetDiscoveryPath = join(dualHostRoot, "brainpet-ipc.json");
+  writeFileSync(openPetsDiscoveryPath, JSON.stringify({
+    ...baseDiscovery,
+    endpoint: openPetsHost.endpoint,
+    token: openPetsHost.token,
+  }), "utf8");
+  writeFileSync(brainPetDiscoveryPath, JSON.stringify({
+    ...baseDiscovery,
+    product: "brainpet",
+    appId: "dev.brainpet.app",
+    endpoint: brainPetHost.endpoint,
+    token: brainPetHost.token,
+  }), "utf8");
+
+  const openPetsClient = createOpenPetsClient({ target: "openpets", discoveryPath: openPetsDiscoveryPath });
+  const brainPetClient = createOpenPetsClient({ target: "brainpet", discoveryPath: brainPetDiscoveryPath });
+  const [openPetsHello, brainPetHello] = await Promise.all([openPetsClient.hello(), brainPetClient.hello()]);
+  assert.deepEqual(openPetsHello, { ok: true, product: "openpets", appId: "dev.openpets.app" });
+  assert.deepEqual(brainPetHello, { ok: true, product: "brainpet", appId: "dev.brainpet.app" });
+  assert.deepEqual(openPetsHost.requests, [{ method: "hello", token: openPetsHost.token }]);
+  assert.deepEqual(brainPetHost.requests, [{ method: "hello", token: brainPetHost.token }]);
+} finally {
+  await Promise.all([openPetsHost.close(), brainPetHost.close()]);
+  rmSync(dualHostRoot, { recursive: true, force: true });
 }
 assert.deepEqual(parseIpcEndpoint("tcp://127.0.0.1:37645"), { kind: "tcp", host: "127.0.0.1", port: 37645 });
 
@@ -56,6 +106,8 @@ if (process.platform === "linux") {
 
 assertRejects(() => validateDiscovery({ ...baseDiscovery, protocol: "http" }));
 assertRejects(() => validateDiscovery({ ...baseDiscovery, protocolVersion: 2 }));
+assertRejects(() => validateDiscovery({ ...baseDiscovery, product: "brainpet" }));
+assertRejects(() => validateDiscovery({ ...baseDiscovery, appId: "dev.brainpet.app" }));
 assertRejects(() => validateDiscovery({ ...baseDiscovery, endpoint: "127.0.0.1:1234" }));
 assertRejects(() => validateDiscovery({ ...baseDiscovery, endpoint: "tcp://localhost:37645" }));
 assertRejects(() => validateDiscovery({ ...baseDiscovery, endpoint: "tcp://0.0.0.0:37645" }));
@@ -158,7 +210,7 @@ await withRemoteServer("success", async (endpoint) => {
   process.env.OPENPETS_REMOTE_TOKEN = "x".repeat(43);
   delete process.env.OPENPETS_REMOTE_CLIENT_ID;
   process.env.OPENPETS_DISCOVERY_FILE = "/path-that-must-not-be-read/openpets-ipc.json";
-  assert.deepEqual(await createOpenPetsClient().say("Environment selected"), { shown: true });
+  assert.deepEqual(await createOpenPetsClient({ target: "openpets" }).say("Environment selected"), { shown: true });
 });
 restoreEnvironment("OPENPETS_REMOTE_ENDPOINT", previousRemoteEnvironment.endpoint);
 restoreEnvironment("OPENPETS_REMOTE_TOKEN", previousRemoteEnvironment.token);
@@ -177,6 +229,45 @@ await withRemoteServer("oversize", async (endpoint) => {
 console.log("Remote client operation validation passed.");
 
 type RemoteFixtureMode = "success" | "forbidden" | "timeout" | "oversize";
+
+async function startLocalTargetServer(product: "brainpet" | "openpets", appId: string): Promise<{
+  readonly endpoint: string;
+  readonly token: string;
+  readonly requests: Array<{ readonly method: string; readonly token: string }>;
+  close(): Promise<void>;
+}> {
+  const token = `${product}-`.padEnd(32, "x");
+  const requests: Array<{ method: string; token: string }> = [];
+  const sockets = new Set<net.Socket>();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    socket.setEncoding("utf8");
+    socket.once("data", (chunk: string) => {
+      const request = JSON.parse(chunk.slice(0, chunk.indexOf("\n"))) as { readonly id: string; readonly method: string; readonly token: string };
+      requests.push({ method: request.method, token: request.token });
+      const response = request.token === token
+        ? { id: request.id, ok: true, result: { ok: true, product, appId } }
+        : { id: request.id, ok: false, error: { code: "invalid_token", message: "Invalid token." } };
+      socket.end(`${JSON.stringify(response)}\n`);
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen({ host: "127.0.0.1", port: 0 }, () => resolve());
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Local target fixture did not bind.");
+  return {
+    endpoint: `tcp://127.0.0.1:${address.port}`,
+    token,
+    requests,
+    close: async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
 
 async function withRemoteServer(mode: RemoteFixtureMode, run: (endpoint: string) => Promise<void>): Promise<void> {
   const sockets = new Set<net.Socket>();

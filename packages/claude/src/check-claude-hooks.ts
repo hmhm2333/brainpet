@@ -111,6 +111,7 @@ const customNodeHookCommand = createOpenPetsHookCommand("bundled", "fixer", "/Us
 assert.ok(customNodeHookCommand.startsWith('"/Users/test/Library/Application Support/Herd/config/nvm/versions/node/v22.22.2/bin/node"'));
 assert.ok(customNodeHookCommand.includes("--pet fixer"));
 assert.ok(createOpenPetsHookCommand("published", "fixer").endsWith("--openpets-managed --pet fixer"));
+assert.ok(createOpenPetsHookCommand("published", "fixer", "node", undefined, "brainpet").endsWith("--openpets-managed --product brainpet --pet fixer"));
 const petPreview = createOpenPetsHookSettingsPreview("published", "fixer");
 const petHook = (((petPreview.hooks as Record<string, unknown>).UserPromptSubmit as Array<{ hooks: Array<{ command: string }> }>)[0]?.hooks[0]);
 assert.ok(petHook?.command.includes("--pet fixer"));
@@ -156,20 +157,20 @@ delete process.env.OPENPETS_DISABLE_CLAUDE_ASYNC_HOOKS;
 
 const isolatedEnv = { ...process.env, OPENPETS_DISCOVERY_FILE: join(dir, "missing-ipc.json") };
 const hookCliPath = fileURLToPath(new URL("./cli.js", import.meta.url));
-const normalHook = spawnSync(process.execPath, [hookCliPath, "hook", "--openpets-managed"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
+const normalHook = spawnSync(process.execPath, [hookCliPath, "hook", "--openpets-managed", "--product", "openpets"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
 assert.equal(normalHook.status, 0);
 assert.equal(normalHook.stdout, "");
 
-const petHookRun = spawnSync(process.execPath, [hookCliPath, "hook", "--openpets-managed", "--pet", "fixer"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
+const petHookRun = spawnSync(process.execPath, [hookCliPath, "hook", "--openpets-managed", "--product", "brainpet", "--pet", "fixer"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
 assert.equal(petHookRun.status, 0);
 assert.equal(petHookRun.stdout, "");
 
-const invalidPetHook = spawnSync(process.execPath, [hookCliPath, "hook", "--openpets-managed", "--pet", "bad/pet"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
+const invalidPetHook = spawnSync(process.execPath, [hookCliPath, "hook", "--openpets-managed", "--product", "openpets", "--pet", "bad/pet"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
 assert.equal(invalidPetHook.status, 1);
-const missingPetHook = spawnSync(process.execPath, [hookCliPath, "hook", "--openpets-managed", "--pet"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
+const missingPetHook = spawnSync(process.execPath, [hookCliPath, "hook", "--openpets-managed", "--product", "openpets", "--pet"], { input: JSON.stringify({ hook_event_name: "Notification", message: "safe" }), encoding: "utf8", env: isolatedEnv });
 assert.equal(missingPetHook.status, 1);
 
-const malformedHook = spawnSync(process.execPath, [hookCliPath, "hook", "--openpets-managed"], { input: "not json", encoding: "utf8", env: isolatedEnv });
+const malformedHook = spawnSync(process.execPath, [hookCliPath, "hook", "--openpets-managed", "--product", "openpets"], { input: "not json", encoding: "utf8", env: isolatedEnv });
 assert.equal(malformedHook.status, 0);
 assert.equal(malformedHook.stdout, "");
 

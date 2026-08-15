@@ -77,7 +77,7 @@ is `config/brainpet-release-capabilities.json`; the generated provider matrix is
 | `@open-pets/pi` | Pi coding-agent extension + `/openpets` commands | [Agent integrations](/agent-integrations) |
 | `@open-pets/agent-events` | Shared, validated speech pools for agent feedback | [Agent integrations](/agent-integrations) |
 | `@open-pets/plugin-sdk` | Public SDK v3 type contract + deterministic test harness | [Plugin SDK v3](/sdk) |
-| `install-pet` | Standalone pet installer (works with or without the running app) | [Pets](/pets) |
+| `install-pet` | Product-targeted installer client; the selected desktop host must be running | [Pets](/pets) |
 | `pet-format` | Tiny marker/identity type for pet packages | - |
 
 The dependency spine: every integration depends on `@open-pets/client`; the

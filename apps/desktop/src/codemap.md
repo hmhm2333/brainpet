@@ -213,7 +213,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `brainpet-installation-state.ts`: Atomic BrainPet runtime/Bridge/lifecycle evidence store and Bridge-version reauthorization policy
 - `lifecycle.ts`: App event handlers (quit, window-all-closed, second-instance) with logging; stops plugin service, IPC, and pet windows on quit
 - `state.ts`: Simple shell pause state
-- `app-state.ts`: Persistent JSON state with V1 schema, atomic writes, reaction animation overrides, and the validated waiting animation duration preference
+- `app-state.ts`: Persistent JSON state with V1 normalization, unknown-field preservation, last-known-good recovery, atomic writes, reaction animation overrides, and the validated waiting animation duration preference
 - `app-state-core.ts`: Pet scale options, waiting-duration options/normalization, onboarding normalization
 - `logger.ts`: Structured logging with scopes (including agent.lifecycle and BrainPet scopes), log rotation, redaction
 - `agent-lifecycle.ts`: Pure multi-session lifecycle aggregation, priority, stale-event, and timeout policy
@@ -245,6 +245,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `local-ipc.ts`: net.Server implementation, request routing, discovery file management, network security (loopback/private address filtering), logging
 - `local-ipc-protocol.ts`: Protocol constants, request/response types, validation functions
 - `local-ipc-paths.ts`: Platform-specific, distribution-isolated OpenPets/BrainPet socket paths and discovery locations
+- `app-state-persistence.ts`: Unknown-field-preserving migration helpers and same-directory atomic JSON replacement
 - `brainpet-install-marker.ts`: Validated per-user packaged-runtime marker used by Agent bridges for bounded cold wake
 - `lease-manager.ts`: Lease lifecycle (acquire, heartbeat, release, cleanup), target resolution
 
@@ -318,7 +319,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 |--------|-------------|------|
 | Catalog API | `catalog.ts` | `CatalogV2/V3` JSON with pagination |
 | ZIP Download | `pet-installation.ts` | Extracted to `userData/pets/{id}/` |
-| `app-state.ts` | `userData/openpets-state.json` | Atomic JSON writes with reaction animation overrides |
+| `app-state.ts` | `userData/openpets-state.json` | Unknown-field-preserving V1 migration, `.bak` recovery and atomic JSON writes |
 | CLI via IPC | `local-ipc.ts` | `pet.react`, `pet.say`, `lease.*` |
 | `lease-manager.ts` | `agent-pet-controller.ts` | Show/close agent pets |
 | `windows.ts` | Renderer | State snapshots via IPC invoke |

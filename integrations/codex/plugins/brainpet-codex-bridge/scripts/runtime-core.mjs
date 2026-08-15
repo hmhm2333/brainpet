@@ -14,7 +14,7 @@ export function shouldWakeRuntime(event) {
 
 export function getRuntimePaths(platform, environment, homeDirectory) {
   if (environment.OPENPETS_DISCOVERY_FILE) {
-    return { explicitDiscovery: environment.OPENPETS_DISCOVERY_FILE, brainPetDiscovery: null, openPetsDevelopmentDiscovery: null, installMarker: null };
+    return { explicitDiscovery: environment.OPENPETS_DISCOVERY_FILE, brainPetDiscovery: null, installMarker: null };
   }
   if (platform === "win32") {
     const roaming = environment.APPDATA ?? win32.join(homeDirectory, "AppData", "Roaming");
@@ -22,7 +22,6 @@ export function getRuntimePaths(platform, environment, homeDirectory) {
     return {
       explicitDiscovery: null,
       brainPetDiscovery: win32.join(roaming, "BrainPet", "runtime", "ipc.json"),
-      openPetsDevelopmentDiscovery: win32.join(roaming, "OpenPets", "runtime", "ipc.json"),
       installMarker: win32.join(local, "BrainPet", "runtime-install.json"),
     };
   }
@@ -30,7 +29,6 @@ export function getRuntimePaths(platform, environment, homeDirectory) {
     return {
       explicitDiscovery: null,
       brainPetDiscovery: posix.join(homeDirectory, "Library", "Application Support", "BrainPet", "runtime", "ipc.json"),
-      openPetsDevelopmentDiscovery: posix.join(homeDirectory, "Library", "Application Support", "OpenPets", "runtime", "ipc.json"),
       installMarker: posix.join(homeDirectory, "Library", "Application Support", "BrainPet", "runtime-install.json"),
     };
   }
@@ -39,7 +37,6 @@ export function getRuntimePaths(platform, environment, homeDirectory) {
   return {
     explicitDiscovery: null,
     brainPetDiscovery: runtime ? posix.join(runtime, "brainpet", "ipc.json") : posix.join(config, "BrainPet", "runtime", "ipc.json"),
-    openPetsDevelopmentDiscovery: runtime ? posix.join(runtime, "openpets", "ipc.json") : posix.join(config, "OpenPets", "runtime", "ipc.json"),
     installMarker: posix.join(config, "BrainPet", "runtime-install.json"),
   };
 }

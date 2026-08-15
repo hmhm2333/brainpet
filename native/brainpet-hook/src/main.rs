@@ -146,12 +146,7 @@ fn send_event(event: &Value, deadline: Instant) -> io::Result<()> {
     }
 
     if event.get("state").and_then(Value::as_str) == Some("idle") {
-        let discovery = paths
-            .openpets_development_discovery
-            .as_deref()
-            .and_then(read_discovery_at)
-            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
-        return send_event_to_discovery(event, &discovery, deadline);
+        return Err(io::Error::from(io::ErrorKind::NotFound));
     }
 
     match paths.install_marker.as_deref().map(launch_installed_runtime) {
@@ -173,15 +168,10 @@ fn send_event(event: &Value, deadline: Instant) -> io::Result<()> {
         Some(LaunchStatus::Invalid) => {
             return Err(io::Error::from(io::ErrorKind::InvalidData));
         }
-        Some(LaunchStatus::Missing) | None => {}
+        Some(LaunchStatus::Missing) | None => {
+            return Err(io::Error::from(io::ErrorKind::NotFound));
+        }
     }
-
-    let discovery = paths
-        .openpets_development_discovery
-        .as_deref()
-        .and_then(read_discovery_at)
-        .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
-    send_event_to_discovery(event, &discovery, deadline)
 }
 
 fn send_event_to_discovery(event: &Value, discovery: &Discovery, deadline: Instant) -> io::Result<()> {
@@ -218,6 +208,8 @@ fn read_discovery_at(path: &Path) -> Option<Discovery> {
     let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
     if value.get("protocol")?.as_str()? != "openpets-ipc"
         || value.get("protocolVersion")?.as_u64()? != 1
+        || value.get("product")?.as_str()? != "brainpet"
+        || value.get("appId")?.as_str()? != "dev.brainpet.app"
     {
         return None;
     }
@@ -232,7 +224,6 @@ fn read_discovery_at(path: &Path) -> Option<Discovery> {
 struct RuntimePaths {
     explicit_discovery: Option<PathBuf>,
     brainpet_discovery: Option<PathBuf>,
-    openpets_development_discovery: Option<PathBuf>,
     install_marker: Option<PathBuf>,
 }
 
@@ -241,7 +232,6 @@ fn runtime_paths() -> Option<RuntimePaths> {
         return Some(RuntimePaths {
             explicit_discovery: Some(PathBuf::from(path)),
             brainpet_discovery: None,
-            openpets_development_discovery: None,
             install_marker: None,
         });
     }
@@ -252,7 +242,6 @@ fn runtime_paths() -> Option<RuntimePaths> {
         return Some(RuntimePaths {
             explicit_discovery: None,
             brainpet_discovery: Some(PathBuf::from(&roaming).join("BrainPet/runtime/ipc.json")),
-            openpets_development_discovery: Some(PathBuf::from(roaming).join("OpenPets/runtime/ipc.json")),
             install_marker: Some(PathBuf::from(local).join("BrainPet/runtime-install.json")),
         });
     }
@@ -262,7 +251,6 @@ fn runtime_paths() -> Option<RuntimePaths> {
         return Some(RuntimePaths {
             explicit_discovery: None,
             brainpet_discovery: Some(PathBuf::from(&home).join("Library/Application Support/BrainPet/runtime/ipc.json")),
-            openpets_development_discovery: Some(PathBuf::from(&home).join("Library/Application Support/OpenPets/runtime/ipc.json")),
             install_marker: Some(PathBuf::from(home).join("Library/Application Support/BrainPet/runtime-install.json")),
         });
     }
@@ -276,14 +264,12 @@ fn runtime_paths() -> Option<RuntimePaths> {
             return Some(RuntimePaths {
                 explicit_discovery: None,
                 brainpet_discovery: Some(PathBuf::from(&runtime).join("brainpet/ipc.json")),
-                openpets_development_discovery: Some(PathBuf::from(runtime).join("openpets/ipc.json")),
                 install_marker: Some(config.join("BrainPet/runtime-install.json")),
             });
         }
         Some(RuntimePaths {
             explicit_discovery: None,
             brainpet_discovery: Some(config.join("BrainPet/runtime/ipc.json")),
-            openpets_development_discovery: Some(config.join("OpenPets/runtime/ipc.json")),
             install_marker: Some(config.join("BrainPet/runtime-install.json")),
         })
     }
@@ -581,6 +567,29 @@ mod tests {
         let mut invalid = marker;
         invalid["executablePath"] = json!(PathBuf::from(root).join(if cfg!(target_os = "windows") { "cmd.exe" } else { "sh" }));
         assert_eq!(validate_install_marker(&invalid), None);
+    }
+
+    #[test]
+    fn discovery_identity_must_match_brainpet() {
+        let root = env::temp_dir().join(format!("brainpet-hook-target-{}-{}", std::process::id(), now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let discovery_path = root.join("ipc.json");
+        let base = json!({
+            "protocol": "openpets-ipc",
+            "protocolVersion": 1,
+            "product": "brainpet",
+            "appId": "dev.brainpet.app",
+            "endpoint": "tcp://127.0.0.1:37645",
+            "token": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        });
+        fs::write(&discovery_path, serde_json::to_vec(&base).unwrap()).unwrap();
+        assert!(read_discovery_at(&discovery_path).is_some());
+        let mut wrong_product = base;
+        wrong_product["product"] = json!("openpets");
+        wrong_product["appId"] = json!("dev.openpets.app");
+        fs::write(&discovery_path, serde_json::to_vec(&wrong_product).unwrap()).unwrap();
+        assert!(read_discovery_at(&discovery_path).is_none());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

@@ -1,12 +1,14 @@
 #!/usr/bin/env node
+import { targetProducts, type TargetProduct } from "@open-pets/client";
 import { runClaudeHookFromStdin } from "./hooks.js";
 import { doctorClaudeHooks, findInstalledOpenPetsClaudeCli, installClaudeHooks, uninstallClaudeHooks } from "./hook-settings.js";
 import { validateOpenPetsPetArg } from "./claude-code.js";
 
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
+  const product = readProductArg(args);
   if (command === "hook") {
-    const code = await runClaudeHookFromStdin(process.stdin, { configuredPetId: readPetArg(args), projectLocal: hasProjectLocalArg(args), debug: process.env.OPENPETS_DEBUG === "1" });
+    const code = await runClaudeHookFromStdin(process.stdin, { product, configuredPetId: readPetArg(args), projectLocal: hasProjectLocalArg(args), debug: process.env.OPENPETS_DEBUG === "1" });
     process.exitCode = code;
     return;
   }
@@ -14,7 +16,7 @@ async function main(): Promise<void> {
     // Resolve the same bundled-CLI path install-hooks would use, so a correct
     // bundled install reports "installed" rather than a false "needs_update".
     const installedCliPath = resolveInstalledClaudeCliPath(args);
-    process.stderr.write(`${JSON.stringify(doctorClaudeHooks(readPathArg(args), undefined, readPetArg(args), "node", installedCliPath ?? undefined), null, 2)}\n`);
+    process.stderr.write(`${JSON.stringify(doctorClaudeHooks(readPathArg(args), undefined, readPetArg(args), "node", installedCliPath ?? undefined, product), null, 2)}\n`);
     return;
   }
   if (command === "install-hooks") {
@@ -23,15 +25,23 @@ async function main(): Promise<void> {
     // firing. Fall back to the `npx -y @open-pets/claude` published command when
     // no install is found or the user opts out with --prefer-npx.
     const installedCliPath = resolveInstalledClaudeCliPath(args);
-    process.stderr.write(`${JSON.stringify(installClaudeHooks(readPathArg(args), undefined, readPetArg(args), "node", installedCliPath ?? undefined), null, 2)}\n`);
+    process.stderr.write(`${JSON.stringify(installClaudeHooks(readPathArg(args), undefined, readPetArg(args), "node", installedCliPath ?? undefined, product), null, 2)}\n`);
     return;
   }
   if (command === "uninstall-hooks") {
-    process.stderr.write(`${JSON.stringify(uninstallClaudeHooks(readPathArg(args)), null, 2)}\n`);
+    process.stderr.write(`${JSON.stringify(uninstallClaudeHooks(readPathArg(args), undefined, product), null, 2)}\n`);
     return;
   }
-  process.stderr.write("Usage: open-pets-claude <hook|doctor-hooks|install-hooks|uninstall-hooks> [--settings <path>] [--pet <id>] [--prefer-npx]\n");
+  process.stderr.write("Usage: open-pets-claude <hook|doctor-hooks|install-hooks|uninstall-hooks> --product <brainpet|openpets> [--settings <path>] [--pet <id>] [--prefer-npx]\n");
   process.exitCode = 1;
+}
+
+function readProductArg(args: readonly string[]): TargetProduct {
+  const equals = args.find((arg) => arg.startsWith("--product="));
+  const index = args.indexOf("--product");
+  const value = equals ? equals.slice("--product=".length) : index >= 0 ? args[index + 1] : undefined;
+  if (!targetProducts.includes(value as TargetProduct)) throw new Error("Missing or invalid --product <brainpet|openpets> target.");
+  return value as TargetProduct;
 }
 
 function readPathArg(args: readonly string[]): string | undefined {

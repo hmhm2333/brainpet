@@ -1,6 +1,6 @@
 import { isAbsolute, join } from "node:path";
 
-import { allowedReactions, type OpenPetsReaction } from "@open-pets/client";
+import { allowedReactions, type OpenPetsReaction, type TargetProduct } from "@open-pets/client";
 
 export const openCodeMcpServerName = "openpets";
 export const openPetsCliPackageName = "@open-pets/cli";
@@ -14,6 +14,7 @@ export interface OpenCodeMcpEntry {
 }
 
 export interface OpenCodePreviewOptions {
+  readonly product?: TargetProduct;
   readonly cliVersion: string;
   readonly petId?: string;
   readonly commandMode?: OpenCodeCommandMode;
@@ -30,13 +31,14 @@ export function validateOpenPetsPetArg(value: string): string {
 
 export function buildOpenCodeMcpEntry(options: OpenCodePreviewOptions): OpenCodeMcpEntry {
   const petArgs = options.petId === undefined ? [] : ["--pet", validateOpenPetsPetArg(options.petId)];
+  const targetArgs = options.product ? ["--product", options.product] : [];
   const mode = options.commandMode ?? "published";
   const environment = options.environment && Object.keys(options.environment).length > 0 ? { environment: options.environment } : {};
   if (mode === "local" || mode === "bundled") {
     if (!options.cliEntryPath || !isAbsolute(options.cliEntryPath)) throw new Error("OpenCode local MCP preview requires an absolute CLI entry path.");
-    return { type: "local", command: ["node", options.cliEntryPath, "mcp", ...petArgs], enabled: true, ...environment };
+    return { type: "local", command: ["node", options.cliEntryPath, "mcp", ...targetArgs, ...petArgs], enabled: true, ...environment };
   }
-  return { type: "local", command: ["npx", "-y", `${openPetsCliPackageName}@${options.cliVersion}`, "mcp", ...petArgs], enabled: true, ...environment };
+  return { type: "local", command: ["npx", "-y", `${openPetsCliPackageName}@${options.cliVersion}`, "mcp", ...targetArgs, ...petArgs], enabled: true, ...environment };
 }
 
 export function buildOpenCodeInstructionPath(scope: "project" | "global", configDir?: string): string {
@@ -46,6 +48,7 @@ export function buildOpenCodeInstructionPath(scope: "project" | "global", config
 }
 
 export type OpenCodePluginSpecOptions = {
+  readonly product?: TargetProduct;
   readonly pet?: string;
   readonly excludeReactions?: readonly string[];
 };
@@ -53,6 +56,7 @@ export type OpenCodePluginSpecOptions = {
 export type OpenCodePluginSpec = string | readonly [string, OpenCodePluginSpecOptions];
 
 export interface BuildOpenCodePluginPreviewOptions {
+  readonly product?: TargetProduct;
   readonly petId?: string;
   readonly packageVersion?: string;
   readonly excludeReactions?: readonly string[];
@@ -66,10 +70,12 @@ export function sanitizeOpenCodeExcludedReactions(excludeReactions?: readonly st
 export function buildOpenCodePluginPreview(options?: BuildOpenCodePluginPreviewOptions): OpenCodePluginSpec {
   const spec = options?.packageVersion ? `@open-pets/opencode@${options.packageVersion}` : "@open-pets/opencode";
   const hasPet = options?.petId !== undefined;
+  const hasProduct = options?.product !== undefined;
   const excludeReactions = sanitizeOpenCodeExcludedReactions(options?.excludeReactions);
   const hasExclusions = excludeReactions.length > 0;
-  if (!hasPet && !hasExclusions) return spec;
+  if (!hasProduct && !hasPet && !hasExclusions) return spec;
   return [spec, {
+    ...(hasProduct ? { product: options!.product } : {}),
     ...(hasPet ? { pet: validateOpenPetsPetArg(options!.petId!) } : {}),
     ...(hasExclusions ? { excludeReactions } : {}),
   }];

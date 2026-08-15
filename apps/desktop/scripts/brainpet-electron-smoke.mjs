@@ -55,7 +55,7 @@ try {
     const disabledState = await evaluate(petTarget, `({ triggerFound: Boolean(document.querySelector('[data-brainpet-trigger]')) })`);
     assert.equal(disabledState.triggerFound, false, "feature flag must remove the BrainPet trigger");
     assert.equal((await listTargets(port)).some((target) => target.title === "BrainPet"), false, "feature flag must prevent the stage window");
-    const rollbackClient = createOpenPetsClient({ discoveryPath });
+    const rollbackClient = createOpenPetsClient({ target: "brainpet", discoveryPath });
     await assert.rejects(
       rollbackClient.reportAgentActivity({ agent: "codex", sessionId: "rollback-probe", state: "working", occurredAt: Date.now(), capabilities: ["observeLifecycle"] }),
       /disabled|unsupported/i,
@@ -66,7 +66,7 @@ try {
     process.stdout.write(`${JSON.stringify({ ok: true, featureFlagRollback: true, lifecycleRejected: true })}\n`);
     process.exitCode = 0;
   } else {
-  const companionClient = createOpenPetsClient({ discoveryPath });
+  const companionClient = createOpenPetsClient({ target: "brainpet", discoveryPath });
   const companionNow = Date.now();
   await companionClient.reportAgentActivity({ agent: "codex", sessionId: "smoke-working", turnId: "turn-working", state: "working", occurredAt: companionNow, capabilities: ["observeLifecycle"] });
   await companionClient.reportAgentActivity({ agent: "claude", sessionId: "smoke-review", turnId: "turn-review", state: "waiting", occurredAt: companionNow + 1, capabilities: ["observeLifecycle", "respondToRequest"], request: { kind: "permission", requestId: "smoke-request", options: [{ id: "once", label: "Allow once", intent: "runOnce" }, { id: "deny", label: "Deny", intent: "deny" }] } });

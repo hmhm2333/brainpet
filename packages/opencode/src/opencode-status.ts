@@ -1,4 +1,5 @@
 import { buildOpenCodeInstructionPath, buildOpenCodeMcpEntry, buildOpenCodePluginPreview, openCodeMcpServerName, type OpenCodePreviewOptions } from "./opencode-previews.js";
+import type { TargetProduct } from "@open-pets/client";
 
 export type OpenCodeEntryStatus = "not_installed" | "installed" | "needs_update" | "custom" | "conflict" | "error";
 
@@ -35,8 +36,8 @@ export function classifyOpenCodeInstructionsStatus(configs: readonly Record<stri
   return { status: "custom", message: "OpenCode has custom OpenPets-like instruction entries.", matches: customEntries.map((entry) => entry.source) };
 }
 
-export function classifyOpenCodePluginStatus(configs: readonly Record<string, unknown>[], petId?: string, packageVersion?: string, excludeReactions?: readonly string[]): OpenCodeStatusResult {
-  const expected = buildOpenCodePluginPreview({ petId, packageVersion, excludeReactions });
+export function classifyOpenCodePluginStatus(configs: readonly Record<string, unknown>[], petId?: string, packageVersion?: string, excludeReactions?: readonly string[], product?: TargetProduct): OpenCodeStatusResult {
+  const expected = buildOpenCodePluginPreview({ product, petId, packageVersion, excludeReactions });
   const pluginEntries = configs.flatMap((config, index) => Array.isArray(config.plugin) ? config.plugin.map((entry) => ({ source: String(index), entry })) : []);
   const current = pluginEntries.filter(({ entry }) => isExpectedPlugin(entry, expected));
   const recognizable = pluginEntries.filter(({ entry }) => isManagedOpenPetsPluginEntry(entry));
@@ -64,31 +65,34 @@ function isManagedOpenPetsMcpCommand(command: readonly unknown[], expectedComman
 }
 
 function isExpectedNodeOpenPetsMcpCommand(command: readonly string[], expected: readonly string[]): boolean {
-  return expected[0] === "node" && command.length >= 3 && command[0] === "node" && command[1] === expected[1] && command[2] === "mcp" && hasValidPetArgs(command.slice(3));
+  return expected[0] === "node" && command.length >= 3 && command[0] === "node" && command[1] === expected[1] && command[2] === "mcp" && hasValidManagedArgs(command.slice(3));
 }
 
 function isPublishedOpenPetsMcpCommand(command: readonly string[]): boolean {
-  return command.length >= 4 && command[0] === "npx" && command[1] === "-y" && /^@open-pets\/cli@\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?$/.test(command[2] ?? "") && command[3] === "mcp" && hasValidPetArgs(command.slice(4));
+  return command.length >= 4 && command[0] === "npx" && command[1] === "-y" && /^@open-pets\/cli@\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?$/.test(command[2] ?? "") && command[3] === "mcp" && hasValidManagedArgs(command.slice(4));
 }
 
 function isNodeOpenPetsMcpCommand(command: readonly string[]): boolean {
-  return command.length >= 3 && command[0] === "node" && isOpenPetsCliEntryPath(command[1] ?? "") && command[2] === "mcp" && hasValidPetArgs(command.slice(3));
+  return command.length >= 3 && command[0] === "node" && isOpenPetsCliEntryPath(command[1] ?? "") && command[2] === "mcp" && hasValidManagedArgs(command.slice(3));
 }
 
 function isOpenPetsCliEntryPath(path: string): boolean {
   return /(?:^|[\\/])node_modules[\\/]@open-pets[\\/]cli[\\/]dist[\\/]index\.js$/u.test(path) || /(?:^|[\\/])packages[\\/]cli[\\/]dist[\\/]index\.js$/u.test(path);
 }
 
-function hasValidPetArgs(args: readonly string[]): boolean {
+function hasValidManagedArgs(args: readonly string[]): boolean {
   if (args.length === 0) return true;
-  return args.length === 2 && args[0] === "--pet" && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(args[1] ?? "");
+  if (args.length === 2 && args[0] === "--pet") return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(args[1] ?? "");
+  if (args.length !== 2 && args.length !== 4) return false;
+  if (args[0] !== "--product" || (args[1] !== "brainpet" && args[1] !== "openpets")) return false;
+  return args.length === 2 || args[2] === "--pet" && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(args[3] ?? "");
 }
 
 function isSameCommand(command: readonly string[], expected: readonly string[]): boolean {
   return command.length === expected.length && command.every((part, index) => part === expected[index]);
 }
 
-function isExpectedPlugin(value: unknown, expected: string | readonly [string, { readonly pet?: string; readonly excludeReactions?: readonly string[] }]): boolean {
+function isExpectedPlugin(value: unknown, expected: string | readonly [string, { readonly product?: TargetProduct; readonly pet?: string; readonly excludeReactions?: readonly string[] }]): boolean {
   if (typeof expected === "string") return value === expected;
   return Array.isArray(value) && value.length === 2 && value[0] === expected[0] && isSamePluginOptions(value[1], expected[1]);
 }
@@ -104,14 +108,16 @@ export function isOpenPetsLikePluginEntry(value: unknown): boolean {
   return false;
 }
 
-function isPetPluginOptions(value: unknown): value is { readonly pet?: string; readonly excludeReactions?: readonly string[] } {
+function isPetPluginOptions(value: unknown): value is { readonly product?: TargetProduct; readonly pet?: string; readonly excludeReactions?: readonly string[] } {
   if (!isRecord(value)) return false;
   const keys = Object.keys(value).sort();
   const hasPet = keys.includes("pet");
   const hasExclusions = keys.includes("excludeReactions");
-  if (!hasPet && !hasExclusions) return false;
-  const expectedKeyCount = (hasPet ? 1 : 0) + (hasExclusions ? 1 : 0);
+  const hasProduct = keys.includes("product");
+  if (!hasPet && !hasExclusions && !hasProduct) return false;
+  const expectedKeyCount = (hasPet ? 1 : 0) + (hasExclusions ? 1 : 0) + (hasProduct ? 1 : 0);
   if (keys.length !== expectedKeyCount) return false;
+  if (hasProduct && value.product !== "brainpet" && value.product !== "openpets") return false;
   if (hasPet && (typeof value.pet !== "string" || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(value.pet))) return false;
   if (!hasExclusions) return true;
   return Array.isArray(value.excludeReactions) && value.excludeReactions.length > 0 && value.excludeReactions.every((reaction: unknown) => typeof reaction === "string");
@@ -135,8 +141,9 @@ function hasValidMcpEnvironment(value: unknown): boolean {
   return Object.entries(value).every(([key, envValue]) => /^[A-Z_][A-Z0-9_]*$/.test(key) && typeof envValue === "string");
 }
 
-function isSamePluginOptions(value: unknown, expected: { readonly pet?: string; readonly excludeReactions?: readonly string[] }): boolean {
+function isSamePluginOptions(value: unknown, expected: { readonly product?: TargetProduct; readonly pet?: string; readonly excludeReactions?: readonly string[] }): boolean {
   if (!isPetPluginOptions(value)) return false;
+  if (value.product !== expected.product) return false;
   if (value.pet !== expected.pet) return false;
   const expectedExclusions = new Set(expected.excludeReactions ?? []);
   const actualExclusions = new Set(value.excludeReactions ?? []);

@@ -29,10 +29,10 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "smoke": "pnpm build && node dist/smoke.js",
-    "smoke:status": "pnpm smoke status",
-    "smoke:react": "pnpm smoke react",
-    "smoke:say": "pnpm smoke say",
-    "smoke:invalid-token": "pnpm smoke invalid-token"
+    "smoke:status": "pnpm smoke --product openpets status",
+    "smoke:react": "pnpm smoke --product openpets react",
+    "smoke:say": "pnpm smoke --product openpets say",
+    "smoke:invalid-token": "pnpm smoke --product openpets invalid-token"
   },
   "devDependencies": {
     "@types/node": "^25.6.2",

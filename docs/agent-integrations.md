@@ -86,7 +86,8 @@ from the plugin bundle and the helper writes the same authenticated
 fallback for development only; published plugin packages must contain the
 matching native binary and never make a hook-time network download.
 BrainPet and OpenPets use separate discovery directories; the development
-fallback consults OpenPets only when no BrainPet install marker exists.
+bridge is also pinned to the BrainPet identity. A missing BrainPet discovery or
+install marker fails open and never sends Codex activity to OpenPets.
 
 ## Pet pool: multiple agents, multiple pets
 
@@ -180,7 +181,8 @@ eventual recovery lease. No new recovery acquisition starts after teardown
 begins, so an agent that replaces an MCP process cannot leave a temporary second
 pool pet behind. Errors are sanitized so IPC paths/tokens/sockets never leak
 into tool output. It is spawned by the CLI (`runMcp()`) which forwards stdio and
-signals. `--pet <id>` targets a specific pet.
+signals. `--product brainpet|openpets` selects the exact desktop product and is
+required for local runtime use; `--pet <id>` targets a pet within that product.
 
 > **Window confinement requires an installed pet.** Passing `--pet <id>` only
 > activates window confinement when the requested pet is actually installed. If
@@ -245,19 +247,22 @@ others. Commands:
 
 | Command | Does |
 |---------|------|
-| `configure` | Configure Claude / OpenCode / Cursor for a project (atomic, safe-path) |
-| `install <pet-id>` | Install a pet via the client |
-| `status` | Print app/pet status JSON over IPC |
-| `pets` | List installed pets |
-| `react <reaction>` / `say <message>` | Drive the active pet |
-| `mcp` | Launch the MCP stdio server |
-| `hook` | Run a Claude Code lifecycle hook |
+| `configure --product …` | Configure Claude / OpenCode / Cursor for one exact product (atomic, safe-path) |
+| `install --product … <pet-id>` | Install a pet through the selected running host |
+| `status --product …` | Print the selected host/pet status JSON over IPC |
+| `pets --product …` | List pets installed in the selected product |
+| `react --product …` / `say --product …` | Drive the selected product's active pet |
+| `mcp --product …` | Launch the product-targeted MCP stdio server |
+| `hook --product …` | Run a product-targeted Claude Code lifecycle hook |
 | `plugin validate <dir>` | Validate a plugin before install/release |
 | `plugin new <name> --template <t>` | Scaffold an SDK v3 plugin |
 
 The plugin subcommands are the author-side DX entry point - see
 [Plugin platform](/plugins), [Plugin SDK v3](/sdk), and [Development](/development).
-The CLI enforces safe project paths and atomic config writes throughout.
+Every host-contacting CLI command requires `--product brainpet|openpets`. The
+generated Claude, OpenCode, Cursor and MCP configuration persists that target,
+so simultaneous BrainPet/OpenPets hosts cannot split one Agent route. The CLI
+also enforces safe project paths and atomic config writes throughout.
 
 The CLI's `status`, `react`, and `say` commands also work with an explicitly
 configured remote client because they use the shared client factory. Remote

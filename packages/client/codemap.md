@@ -4,7 +4,7 @@ Core IPC client library for OpenPets desktop app communication.
 
 ## Responsibility
 
-Provides the foundational client library for all OpenPets integrations. Handles discovery file reading, TCP socket connections (including WSL cross-platform), request/response protocol, and high-level pet operations (status, list, install, lease, react, say).
+Provides the foundational client library for all OpenPets integrations. A local client requires an explicit `brainpet|openpets` target, validates product/app identity, and resolves exactly one product-specific discovery file. It also handles TCP socket connections (including WSL cross-platform), request/response protocol, and high-level pet operations (status, list, install, lease, react, say).
 
 ## Design/Patterns
 
@@ -15,7 +15,9 @@ Provides the foundational client library for all OpenPets integrations. Handles 
 - Custom `OpenPetsClientError` with error codes
 
 **Discovery Layer** (`discovery.ts`):
-- Cross-platform discovery file path resolution (macOS, Windows, Linux/XDG)
+- `TargetProfile`-driven product/app/discovery/runtime-marker/update identity
+- Cross-platform, product-specific discovery path resolution (macOS, Windows, Linux/XDG)
+- No opposite-product fallback; missing or mismatched targets fail open
 - File validation (size, permissions, symlink checks)
 - Endpoint validation: Unix sockets, Windows named pipes, TCP (IPv4)
 - TCP/WSL cross-platform support: Windows desktop → WSL client via private IPs
@@ -47,7 +49,7 @@ Provides the foundational client library for all OpenPets integrations. Handles 
 ```
 Client Method Call
     ↓
-readDiscoveryFile() → Parse ipc.json (token, endpoint)
+resolveTargetProfile() → read one matching discovery file (product, appId, token, endpoint)
     ↓
 sendRequest() → Build request (id, version, token, method, params)
     ↓
@@ -76,7 +78,7 @@ net.createConnection({ host, port }) → Windows desktop app
 - `@open-pets/mcp` - MCP tool implementations
 - `@open-pets/claude` - Hook execution
 - `@open-pets/opencode` - Plugin runtime
-- `@open-pets/install-pet` - Direct installation fallback
+- `install-pet` - Running-host installation request only
 
 **Desktop App**: Communicates with OpenPets desktop app via:
 - Unix domain socket (macOS/Linux)
@@ -84,7 +86,8 @@ net.createConnection({ host, port }) → Windows desktop app
 - TCP socket (WSL cross-platform)
 
 **Exports**:
-- `createOpenPetsClient()` - Main factory
+- `createOpenPetsClient({ target })` - Main local factory; target is required outside remote mode
+- `resolveTargetProfile()` - Shared BrainPet/OpenPets identity and path resolver
 - `sendRequest()` - Low-level request function
 - `readDiscoveryFile()`, `getDiscoveryFilePath()` - Discovery utilities
 - `parseIpcEndpoint()`, `validateEndpoint()` - Endpoint handling

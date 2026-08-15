@@ -1,12 +1,14 @@
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { randomUUID } from "node:crypto";
+import type { TargetProduct } from "@open-pets/client";
 
 import { executePlannedWrite, getProjectOpenCodeConfigPaths, parseOpenCodeConfig, planOpenCodeConfigWrite, readOpenCodeConfigFile, updateOpenCodeConfigText, type PlannedWrite } from "./opencode-config.js";
 import { buildOpenCodeInstructionPath, buildOpenCodeMcpEntry, buildOpenCodePluginPreview, validateOpenPetsPetArg, type OpenCodeCommandMode } from "./opencode-previews.js";
 import { classifyOpenCodeInstructionsStatus, classifyOpenCodeMcpStatus, classifyOpenCodePluginStatus, isManagedOpenPetsMcpEntry, isManagedOpenPetsPluginEntry } from "./opencode-status.js";
 
 export interface PrepareOpenCodeProjectSetupOptions {
+  readonly product?: TargetProduct;
   readonly projectDir: string;
   readonly petId: string;
   readonly cliVersion: string;
@@ -36,6 +38,7 @@ const openPetsStart = "<!-- OPENPETS:START -->";
 const openPetsEnd = "<!-- OPENPETS:END -->";
 
 export function prepareOpenCodeProjectSetup(options: PrepareOpenCodeProjectSetupOptions): PreparedOpenCodeProjectSetup {
+  const product = options.product;
   const petId = validateOpenPetsPetArg(options.petId);
   const paths = getProjectOpenCodeConfigPaths(options.projectDir);
   const existingConfigs = paths.candidates.flatMap((path) => {
@@ -50,9 +53,9 @@ export function prepareOpenCodeProjectSetup(options: PrepareOpenCodeProjectSetup
   const instructionPath = join(options.projectDir, instructionRelPath);
   assertSafeProjectLocalPath(options.projectDir, instructionPath, "OpenCode instruction");
   const instructionContent = existsSync(instructionPath) ? readSafeInstructionFile(instructionPath) : "";
-  const mcpStatus = classifyOpenCodeMcpStatus(configs, { cliVersion: options.cliVersion, petId, commandMode: options.commandMode, cliEntryPath: options.cliEntryPath });
+  const mcpStatus = classifyOpenCodeMcpStatus(configs, { product, cliVersion: options.cliVersion, petId, commandMode: options.commandMode, cliEntryPath: options.cliEntryPath });
   const instructionStatus = classifyOpenCodeInstructionsStatus(configs, "project", undefined, { [instructionRelPath]: instructionContent });
-  const pluginStatus = classifyOpenCodePluginStatus(configs, petId, options.cliVersion, options.excludeReactions);
+  const pluginStatus = classifyOpenCodePluginStatus(configs, petId, options.cliVersion, options.excludeReactions, product);
   for (const status of [mcpStatus, instructionStatus, pluginStatus]) {
     if (status.status === "custom" || status.status === "conflict" || status.status === "error") throw new Error(`${status.message} Edit or remove the custom OpenPets OpenCode entry, then rerun setup.`);
   }
@@ -85,10 +88,11 @@ export function createOpenPetsInstructionBlock(): string {
 
 function buildNextConfig(config: Record<string, unknown>, petId: string, options: PrepareOpenCodeProjectSetupOptions): { readonly mcp: Record<string, unknown>; readonly instructions: readonly string[]; readonly plugin: readonly unknown[] } {
   const mcp = isRecord(config.mcp) ? { ...config.mcp } : {};
-  mcp.openpets = buildOpenCodeMcpEntry({ cliVersion: options.cliVersion, petId, commandMode: options.commandMode, cliEntryPath: options.cliEntryPath });
+  const product = options.product;
+  mcp.openpets = buildOpenCodeMcpEntry({ product, cliVersion: options.cliVersion, petId, commandMode: options.commandMode, cliEntryPath: options.cliEntryPath });
   const instructionPath = buildOpenCodeInstructionPath("project");
   const instructions = [...new Set([...(Array.isArray(config.instructions) ? config.instructions.filter((entry): entry is string => typeof entry === "string") : []), instructionPath])];
-  const pluginSpec = buildOpenCodePluginPreview({ petId, packageVersion: options.cliVersion, excludeReactions: options.excludeReactions });
+  const pluginSpec = buildOpenCodePluginPreview({ product, petId, packageVersion: options.cliVersion, excludeReactions: options.excludeReactions });
   const plugin = [...(Array.isArray(config.plugin) ? config.plugin.filter((entry) => !isManagedOpenPetsPluginEntry(entry)) : []), pluginSpec];
   return { mcp, instructions, plugin };
 }

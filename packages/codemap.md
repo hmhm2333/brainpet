@@ -14,7 +14,7 @@ Provides modular, reusable components for the OpenPets ecosystem:
 - **claude**: Claude Code integration (hook execution, config management)
 - **cursor**: Cursor editor integration (MCP configuration, project rules)
 - **pi**: Pi coding-agent extension integration (event handling, slash commands)
-- **install-pet**: Standalone pet installer from gallery catalog
+- **install-pet**: Thin product-targeted installer client for a running desktop host
 - **sdk**: Public SDK v3 type definitions and deterministic testing harness for plugin authors (SuperPlugins)
 
 ## Design/Patterns
@@ -93,7 +93,7 @@ All packages ultimately communicate with the OpenPets desktop app via the IPC pr
 | `client/` | Desktop IPC discovery and client API package. | [View Map](client/codemap.md) |
 | `cli/` | User CLI for setup, pet commands, MCP launch, plugin scaffolding, and plugin validation. | [View Map](cli/codemap.md) |
 | `cursor/` | Cursor MCP/rules integration package. | [View Map](cursor/codemap.md) |
-| `install-pet/` | Standalone gallery pet installer package. | [View Map](install-pet/codemap.md) |
+| `install-pet/` | Product-targeted running-host installer package. | [View Map](install-pet/codemap.md) |
 | `mcp/` | OpenPets MCP stdio server package. | [View Map](mcp/codemap.md) |
 | `opencode/` | OpenCode plugin/config integration package. | [View Map](opencode/codemap.md) |
 | `pet-format/` | Pet package identity marker package. | [View Map](pet-format/codemap.md) |

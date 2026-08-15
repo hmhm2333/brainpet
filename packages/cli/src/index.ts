@@ -7,7 +7,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { allowedReactions, createOpenPetsClient, OpenPetsClientError, type OpenPetsPetListItem, type OpenPetsReaction } from "@open-pets/client";
+import { allowedReactions, createOpenPetsClient, OpenPetsClientError, targetProducts, type OpenPetsPetListItem, type OpenPetsReaction, type TargetProduct } from "@open-pets/client";
 import { claudeHookEvents, doctorClaudeHooks, openPetsHookMarker, removeOpenPetsHooks, runClaudeHookFromStdin, validateOpenPetsPetArg } from "@open-pets/claude";
 import { buildCursorRulesPreview, buildOpenPetsOnlyPreview, classifyCursorMcpStatus, classifyCursorRulesStatus, executeCursorMcpWrite, executeCursorRulesWrite, getCursorProjectMcpPath, getCursorProjectRulesPath, planCursorMcpInstall, planCursorMcpReplace, planCursorRulesInstall, planCursorRulesRemove, planCursorRulesReplace, readCursorMcpConfig, readCursorOpenPetsRules } from "@open-pets/cursor";
 import { prepareOpenCodeProjectSetup, writePreparedOpenCodeProjectSetup } from "@open-pets/opencode";
@@ -18,6 +18,7 @@ import { validatePluginFolder } from "./plugin-validate.js";
 export const cliPackageName = "@open-pets/cli";
 
 interface ConfigureOptions {
+  readonly product: TargetProduct;
   readonly agent: "claude" | "opencode" | "cursor";
   readonly petId?: string;
   readonly cwd: string;
@@ -28,21 +29,25 @@ interface ConfigureOptions {
 }
 
 interface InstallOptions {
+  readonly product: TargetProduct;
   readonly petId?: string;
   readonly fromZip?: string;
   readonly fromFolder?: string;
 }
 
 interface ReactOptions {
+  readonly product: TargetProduct;
   readonly reaction: OpenPetsReaction;
 }
 
 interface SayOptions {
+  readonly product: TargetProduct;
   readonly message: string;
   readonly reaction?: OpenPetsReaction;
 }
 
 interface DoctorOptions {
+  readonly product: TargetProduct;
   readonly cwd: string;
   readonly json: boolean;
 }
@@ -147,7 +152,8 @@ async function main(): Promise<void> {
       printHookUsage();
       return;
     }
-    const code = await runClaudeHookFromStdin(process.stdin, { configuredPetId: readPetArg(args), projectLocal: hasProjectLocalArg(args), debug: process.env.OPENPETS_DEBUG === "1" });
+    const { product } = parseTargetArgs(args);
+    const code = await runClaudeHookFromStdin(process.stdin, { product, configuredPetId: readPetArg(args), projectLocal: hasProjectLocalArg(args), debug: process.env.OPENPETS_DEBUG === "1" });
     process.exitCode = code;
     return;
   }
@@ -187,7 +193,7 @@ async function main(): Promise<void> {
 }
 
 async function installPetFromCatalog(options: InstallOptions): Promise<void> {
-  const client = createOpenPetsClient({ responseTimeoutMs: 60_000 });
+  const client = createOpenPetsClient({ target: options.product, responseTimeoutMs: 60_000 });
   if (options.petId !== undefined) {
     const result = await client.installPet(options.petId);
     process.stdout.write(`Installed OpenPets pet: ${sanitizeTerminalText(result.displayName)} (${result.petId})\n`);
@@ -203,23 +209,25 @@ async function installPetFromCatalog(options: InstallOptions): Promise<void> {
 }
 
 async function showStatus(args: readonly string[]): Promise<void> {
-  if (args.length !== 0) throw new CliError(`Unknown status option: ${args[0]}`);
-  const result = await createOpenPetsClient().status();
+  const { product, operands } = parseTargetArgs(args);
+  if (operands.length !== 0) throw new CliError(`Unknown status option: ${operands[0]}`);
+  const result = await createOpenPetsClient({ target: product }).status();
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (!result.ok || !result.appRunning) process.exitCode = 1;
 }
 
 export function parseDoctorArgs(args: readonly string[]): DoctorOptions {
+  const { product, operands } = parseTargetArgs(args);
   let cwd = process.cwd();
   let json = false;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
+  for (let index = 0; index < operands.length; index += 1) {
+    const arg = operands[index];
     if (arg === "--json") json = true;
-    else if (arg === "--cwd") { cwd = readRequiredArg(args, index, "--cwd"); index += 1; }
+    else if (arg === "--cwd") { cwd = readRequiredArg(operands, index, "--cwd"); index += 1; }
     else if (arg.startsWith("--cwd=")) cwd = arg.slice("--cwd=".length);
     else throw new CliError(`Unknown doctor option: ${arg}`);
   }
-  return { cwd, json };
+  return { product, cwd, json };
 }
 
 export async function runDoctor(options: DoctorOptions): Promise<void> {
@@ -230,7 +238,7 @@ export async function runDoctor(options: DoctorOptions): Promise<void> {
   const cursorRead = readCursorMcpConfig(cursorConfigPath);
   const cursor = classifyCursorMcpStatus(cursorRead, cursorConfigPath, { mcpVersion: getPackageVersion() });
 
-  const appStatus = await createOpenPetsClient().status();
+  const appStatus = await createOpenPetsClient({ target: options.product }).status();
   const app = { running: appStatus.appRunning, reason: appStatus.unavailableReason };
 
   if (options.json) {
@@ -249,8 +257,9 @@ export async function runDoctor(options: DoctorOptions): Promise<void> {
 }
 
 async function showPets(args: readonly string[]): Promise<void> {
-  if (args.length !== 0) throw new CliError(`Unknown pets option: ${args[0]}`);
-  const result = await createOpenPetsClient().listPets();
+  const { product, operands } = parseTargetArgs(args);
+  if (operands.length !== 0) throw new CliError(`Unknown pets option: ${operands[0]}`);
+  const result = await createOpenPetsClient({ target: product }).listPets();
   for (const pet of result.pets) {
     const flags = [pet.id === result.defaultPetId ? "default" : undefined, pet.broken ? "broken" : undefined].filter(Boolean).join(", ");
     process.stdout.write(`${sanitizeTerminalText(pet.displayName)} (${pet.id})${flags ? ` [${flags}]` : ""}\n`);
@@ -258,16 +267,18 @@ async function showPets(args: readonly string[]): Promise<void> {
 }
 
 async function sendReaction(options: ReactOptions): Promise<void> {
-  await createOpenPetsClient().react(options.reaction);
+  await createOpenPetsClient({ target: options.product }).react(options.reaction);
   process.stdout.write(`OpenPets reaction sent: ${options.reaction}\n`);
 }
 
 async function sendMessage(options: SayOptions): Promise<void> {
-  await createOpenPetsClient().say(options.message, options.reaction ? { reaction: options.reaction } : undefined);
+  await createOpenPetsClient({ target: options.product }).say(options.message, options.reaction ? { reaction: options.reaction } : undefined);
   process.stdout.write("OpenPets message sent.\n");
 }
 
 export async function configureProject(options: ConfigureOptions): Promise<void> {
+  const product = options.product ?? "openpets";
+  const productArgs = options.product ? ["--product", options.product] : [];
   const projectDir = resolveProjectDir(options.cwd);
   if (options.agent === "cursor") {
     await configureCursorProject(options, projectDir);
@@ -279,12 +290,12 @@ export async function configureProject(options: ConfigureOptions): Promise<void>
   }
   assertClaudeAvailable();
   assertSafeProjectHookPath(projectDir);
-  const client = createOpenPetsClient();
+  const client = createOpenPetsClient({ target: product });
   const selectedPet = await resolveConfiguredPet(client, options.petId);
   const petId = selectedPet.id;
   const packageVersion = getPackageVersion();
-  const mcpCommand = options.localDev ? createLocalDevCliCommand(["mcp", "--pet", petId]) : createVersionPinnedCliCommand(packageVersion, ["mcp", "--pet", petId]);
-  const hookCommand = formatShellCommand(options.localDev ? createLocalDevCliCommand(["hook", openPetsHookMarker, "--project-local", "--pet", petId]) : createVersionPinnedCliCommand(packageVersion, ["hook", openPetsHookMarker, "--project-local", "--pet", petId]));
+  const mcpCommand = options.localDev ? createLocalDevCliCommand(["mcp", ...productArgs, "--pet", petId]) : createVersionPinnedCliCommand(packageVersion, ["mcp", ...productArgs, "--pet", petId]);
+  const hookCommand = formatShellCommand(options.localDev ? createLocalDevCliCommand(["hook", openPetsHookMarker, "--project-local", ...productArgs, "--pet", petId]) : createVersionPinnedCliCommand(packageVersion, ["hook", openPetsHookMarker, "--project-local", ...productArgs, "--pet", petId]));
   const mcpConfig = { type: "stdio", command: mcpCommand.command, args: mcpCommand.args, env: {} };
   const preparedHooks = prepareProjectLocalHooks(projectDir, hookCommand);
   runClaudeMcpAddJson(projectDir, mcpConfig, options.force);
@@ -293,6 +304,7 @@ export async function configureProject(options: ConfigureOptions): Promise<void>
 }
 
 async function configureCursorProject(options: ConfigureOptions, projectDir: string): Promise<void> {
+  const product = options.product ?? "openpets";
   const configPath = getCursorProjectMcpPath(projectDir);
   const rulesPath = getCursorProjectRulesPath(projectDir);
 
@@ -306,10 +318,10 @@ async function configureCursorProject(options: ConfigureOptions, projectDir: str
     return;
   }
 
-  const client = createOpenPetsClient();
+  const client = createOpenPetsClient({ target: product });
   const selectedPet = await resolveConfiguredPet(client, options.petId);
   const packageVersion = getPackageVersion();
-  const previewOptions = { mcpVersion: packageVersion, petId: selectedPet.id, commandMode: options.localDev ? "local" as const : "published" as const, mcpEntryPath: options.localDev ? require.resolve("@open-pets/mcp") : undefined };
+  const previewOptions = { product: options.product, mcpVersion: packageVersion, petId: selectedPet.id, commandMode: options.localDev ? "local" as const : "published" as const, mcpEntryPath: options.localDev ? require.resolve("@open-pets/mcp") : undefined };
   const readResult = readCursorMcpConfig(configPath);
   const status = classifyCursorMcpStatus(readResult, configPath, previewOptions);
   process.stdout.write(`Cursor config: ${configPath}\nStatus: ${status.status} - ${status.message}\nOpenPets MCP preview:\n${JSON.stringify(buildOpenPetsOnlyPreview(previewOptions), null, 2)}\n`);
@@ -383,10 +395,11 @@ function removeCursorRulesOnly(projectDir: string, rulesPath: string): void {
 }
 
 async function configureOpenCodeProject(options: ConfigureOptions, projectDir: string): Promise<void> {
-  const client = createOpenPetsClient();
+  const product = options.product ?? "openpets";
+  const client = createOpenPetsClient({ target: product });
   const selectedPet = await resolveConfiguredPet(client, options.petId);
   const packageVersion = getPackageVersion();
-  const prepared = prepareOpenCodeProjectSetup({ projectDir, petId: selectedPet.id, cliVersion: packageVersion, commandMode: options.localDev ? "local" : "published", cliEntryPath: options.localDev ? fileURLToPath(import.meta.url) : undefined });
+  const prepared = prepareOpenCodeProjectSetup({ product: options.product, projectDir, petId: selectedPet.id, cliVersion: packageVersion, commandMode: options.localDev ? "local" : "published", cliEntryPath: options.localDev ? fileURLToPath(import.meta.url) : undefined });
   writePreparedOpenCodeProjectSetup(prepared);
   process.stdout.write(`OpenPets configured for OpenCode in ${projectDir}.\nPet: ${sanitizeTerminalText(selectedPet.displayName)} (${selectedPet.id})\nConfig: ${prepared.configPath}\nInstructions: ${prepared.instructionPath}\nWarning: .opencode config/instructions can be committed and include the selected pet id.\nRestart OpenCode in this project to load OpenPets.\n`);
 }
@@ -405,6 +418,7 @@ export async function resolveConfiguredPet(client: Pick<ReturnType<typeof create
 }
 
 export function parseConfigureArgs(args: readonly string[]): ConfigureOptions {
+  const { product, operands } = parseTargetArgs(args);
   let agent = "claude";
   let petId: string | undefined;
   let cwd = process.cwd();
@@ -412,25 +426,25 @@ export function parseConfigureArgs(args: readonly string[]): ConfigureOptions {
   let force = false;
   let localDev = false;
   let cursorRulesMode: ConfigureOptions["cursorRulesMode"];
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
+  for (let index = 0; index < operands.length; index += 1) {
+    const arg = operands[index];
     if (arg === "--yes" || arg === "-y") yes = true;
     else if (arg === "--force" || arg === "--replace") force = true;
     else if (arg === "--local-dev") localDev = true;
     else if (arg === "--with-rules") cursorRulesMode = setCursorRulesMode(cursorRulesMode, "with");
     else if (arg === "--rules-only") cursorRulesMode = setCursorRulesMode(cursorRulesMode, "only");
     else if (arg === "--remove-rules") cursorRulesMode = setCursorRulesMode(cursorRulesMode, "remove");
-    else if (arg === "--agent") { agent = readRequiredArg(args, index, "--agent"); index += 1; }
+    else if (arg === "--agent") { agent = readRequiredArg(operands, index, "--agent"); index += 1; }
     else if (arg.startsWith("--agent=")) agent = arg.slice("--agent=".length);
-    else if (arg === "--pet") { petId = validateOpenPetsPetArg(readRequiredArg(args, index, "--pet")); index += 1; }
+    else if (arg === "--pet") { petId = validateOpenPetsPetArg(readRequiredArg(operands, index, "--pet")); index += 1; }
     else if (arg.startsWith("--pet=")) petId = validateOpenPetsPetArg(arg.slice("--pet=".length));
-    else if (arg === "--cwd") { cwd = readRequiredArg(args, index, "--cwd"); index += 1; }
+    else if (arg === "--cwd") { cwd = readRequiredArg(operands, index, "--cwd"); index += 1; }
     else if (arg.startsWith("--cwd=")) cwd = arg.slice("--cwd=".length);
     else throw new CliError(`Unknown configure option: ${arg}`);
   }
   if (agent !== "claude" && agent !== "opencode" && agent !== "cursor") throw new CliError(`Unsupported agent: ${agent}. Supported agents: claude, opencode, cursor.`);
   if (cursorRulesMode && agent !== "cursor") throw new CliError("Cursor rules flags require --agent cursor.");
-  return { agent, petId, cwd, yes, force, localDev, cursorRulesMode };
+  return { product, agent, petId, cwd, yes, force, localDev, cursorRulesMode };
 }
 
 function setCursorRulesMode(current: ConfigureOptions["cursorRulesMode"], next: ConfigureOptions["cursorRulesMode"]): ConfigureOptions["cursorRulesMode"] {
@@ -439,18 +453,19 @@ function setCursorRulesMode(current: ConfigureOptions["cursorRulesMode"], next: 
 }
 
 export function parseInstallArgs(args: readonly string[]): InstallOptions {
+  const { product, operands } = parseTargetArgs(args);
   let petId: string | undefined;
   let fromZip: string | undefined;
   let fromFolder: string | undefined;
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
+  for (let i = 0; i < operands.length; i++) {
+    const arg = operands[i];
     if (arg === "--from-zip") {
       if (fromZip !== undefined) throw new CliError("Duplicate --from-zip option.");
-      if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+      if (i + 1 >= operands.length || operands[i + 1].startsWith("--")) {
         throw new CliError("Missing value for --from-zip.");
       }
-      fromZip = args[i + 1];
+      fromZip = operands[i + 1];
       i++;
     } else if (arg.startsWith("--from-zip=")) {
       if (fromZip !== undefined) throw new CliError("Duplicate --from-zip option.");
@@ -458,10 +473,10 @@ export function parseInstallArgs(args: readonly string[]): InstallOptions {
       if (!fromZip) throw new CliError("Missing value for --from-zip.");
     } else if (arg === "--from-folder") {
       if (fromFolder !== undefined) throw new CliError("Duplicate --from-folder option.");
-      if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+      if (i + 1 >= operands.length || operands[i + 1].startsWith("--")) {
         throw new CliError("Missing value for --from-folder.");
       }
-      fromFolder = args[i + 1];
+      fromFolder = operands[i + 1];
       i++;
     } else if (arg.startsWith("--from-folder=")) {
       if (fromFolder !== undefined) throw new CliError("Duplicate --from-folder option.");
@@ -491,12 +506,12 @@ export function parseInstallArgs(args: readonly string[]): InstallOptions {
   }
 
   if (petId !== undefined) {
-    return { petId: validateOpenPetsPetArg(petId) };
+    return { product, petId: validateOpenPetsPetArg(petId) };
   }
   if (fromZip !== undefined) {
-    return { fromZip };
+    return { product, fromZip };
   }
-  return { fromFolder };
+  return { product, fromFolder };
 }
 
 export function parsePluginNewArgs(args: readonly string[]): PluginNewOptions {
@@ -621,17 +636,19 @@ run its commands.
 }
 
 export function parseReactArgs(args: readonly string[]): ReactOptions {
-  if (args.length !== 1) throw new CliError("Usage: openpets react <reaction>");
-  return { reaction: parseReaction(args[0] ?? "") };
+  const { product, operands } = parseTargetArgs(args);
+  if (operands.length !== 1) throw new CliError("Usage: openpets react --product <brainpet|openpets> <reaction>");
+  return { product, reaction: parseReaction(operands[0] ?? "") };
 }
 
 export function parseSayArgs(args: readonly string[]): SayOptions {
+  const { product, operands } = parseTargetArgs(args);
   let reaction: OpenPetsReaction | undefined;
   const messageParts: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
+  for (let index = 0; index < operands.length; index += 1) {
+    const arg = operands[index];
     if (arg === "--reaction") {
-      reaction = parseReaction(readRequiredArg(args, index, "--reaction"));
+      reaction = parseReaction(readRequiredArg(operands, index, "--reaction"));
       index += 1;
     } else if (arg.startsWith("--reaction=")) {
       reaction = parseReaction(arg.slice("--reaction=".length));
@@ -643,7 +660,7 @@ export function parseSayArgs(args: readonly string[]): SayOptions {
   }
   const message = messageParts.join(" ").trim();
   if (!message) throw new CliError("Usage: openpets say <message> [--reaction <reaction>]");
-  return { message, reaction };
+  return { product, message, reaction };
 }
 
 function parseReaction(value: string): OpenPetsReaction {
@@ -708,6 +725,7 @@ function runClaudeMcpRemove(projectDir: string): void {
 }
 
 async function runMcp(args: readonly string[]): Promise<void> {
+  parseTargetArgs(args);
   const entry = require.resolve("@open-pets/mcp");
   await new Promise<void>((resolvePromise, rejectPromise) => {
     const child = spawn(process.execPath, [entry, ...args], { stdio: "inherit" });
@@ -820,6 +838,33 @@ function readPetArg(args: readonly string[]): string | undefined {
   return value && value.length > 0 ? validateOpenPetsPetArg(value) : undefined;
 }
 
+export function parseTargetArgs(args: readonly string[]): { readonly product: TargetProduct; readonly operands: readonly string[] } {
+  let product: TargetProduct | undefined;
+  const operands: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--product") {
+      if (product !== undefined) throw new CliError("Duplicate --product option.");
+      product = parseProduct(readRequiredArg(args, index, "--product"));
+      index += 1;
+    } else if (arg.startsWith("--product=")) {
+      if (product !== undefined) throw new CliError("Duplicate --product option.");
+      product = parseProduct(arg.slice("--product=".length));
+    } else {
+      operands.push(arg);
+    }
+  }
+  if (!product) throw new CliError("Missing required --product <brainpet|openpets> target.");
+  return { product, operands };
+}
+
+function parseProduct(value: string): TargetProduct {
+  if (!targetProducts.includes(value as TargetProduct)) {
+    throw new CliError(`Invalid product target: ${value}. Expected brainpet or openpets.`);
+  }
+  return value as TargetProduct;
+}
+
 function hasProjectLocalArg(args: readonly string[]): boolean {
   return args.includes("--project-local");
 }
@@ -847,7 +892,7 @@ function getPackageVersion(): string {
 }
 
 function printUsage(): void {
-  process.stdout.write("Usage:\n  openpets status\n  openpets doctor [--cwd <path>] [--json]\n  openpets pets\n  openpets react <reaction>\n  openpets say <message> [--reaction <reaction>]\n  openpets install <pet-id> | --from-zip <path> | --from-folder <path>\n  openpets configure [--agent claude|opencode|cursor] [--pet <id>] [--cwd <path>] [--yes] [--force] [--with-rules|--rules-only|--remove-rules]\n  openpets plugin new <name> [--id <id>] [--dir <path>] [--author <name>]\n  openpets mcp [--pet <id>]\n  openpets hook --openpets-managed [--pet <id>]\n\nRun `openpets <command> --help` for command options.\n");
+  process.stdout.write("Usage:\n  openpets status --product <brainpet|openpets>\n  openpets doctor --product <brainpet|openpets> [--cwd <path>] [--json]\n  openpets pets --product <brainpet|openpets>\n  openpets react --product <brainpet|openpets> <reaction>\n  openpets say --product <brainpet|openpets> <message> [--reaction <reaction>]\n  openpets install --product <brainpet|openpets> (<pet-id> | --from-zip <path> | --from-folder <path>)\n  openpets configure --product <brainpet|openpets> [--agent claude|opencode|cursor] [--pet <id>] [--cwd <path>] [--yes] [--force] [--with-rules|--rules-only|--remove-rules]\n  openpets plugin new <name> [--id <id>] [--dir <path>] [--author <name>]\n  openpets mcp --product <brainpet|openpets> [--pet <id>]\n  openpets hook --product <brainpet|openpets> --openpets-managed [--pet <id>]\n\nCommands that contact a host require an explicit product target. Run `openpets <command> --help` for details.\n");
 }
 
 function printPluginUsage(): void {
@@ -869,11 +914,11 @@ function printPluginUsage(): void {
 }
 
 function printInstallUsage(): void {
-  process.stdout.write("Usage:\n  openpets install <pet-id>\n  openpets install --from-zip <path>\n  openpets install --from-folder <path>\n\nDownloads and installs a gallery pet by ID, or installs a local pet from a zip file or a folder, through the running OpenPets desktop app.\n");
+  process.stdout.write("Usage:\n  openpets install --product <brainpet|openpets> <pet-id>\n  openpets install --product <brainpet|openpets> --from-zip <path>\n  openpets install --product <brainpet|openpets> --from-folder <path>\n\nInstalls through the explicitly selected running desktop host.\n");
 }
 
 function printStatusUsage(): void {
-  process.stdout.write("Usage:\n  openpets status\n\nChecks whether the OpenPets desktop app is reachable and prints the status response as JSON.\n");
+  process.stdout.write("Usage:\n  openpets status --product <brainpet|openpets>\n\nChecks the explicitly selected desktop host and prints its status response as JSON.\n");
 }
 
 function printDoctorUsage(): void {
@@ -897,11 +942,11 @@ function printConfigureUsage(): void {
 }
 
 function printMcpUsage(): void {
-  process.stdout.write("Usage:\n  openpets mcp [--pet <id>]\n\nStarts the OpenPets MCP server wrapper. This command is written into Claude MCP config by `openpets configure`.\n");
+  process.stdout.write("Usage:\n  openpets mcp --product <brainpet|openpets> [--pet <id>]\n\nStarts the product-targeted MCP server wrapper. This command is written into Claude MCP config by `openpets configure`.\n");
 }
 
 function printHookUsage(): void {
-  process.stdout.write("Usage:\n  openpets hook --openpets-managed [--pet <id>]\n\nRuns one Claude hook event from stdin. This command is written into Claude project hooks by `openpets configure`.\n");
+  process.stdout.write("Usage:\n  openpets hook --product <brainpet|openpets> --openpets-managed [--pet <id>]\n\nRuns one product-targeted Claude hook event from stdin. This command is written into Claude project hooks by `openpets configure`.\n");
 }
 
 function hasHelp(args: readonly string[]): boolean {

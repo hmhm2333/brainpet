@@ -1,4 +1,7 @@
+import { targetProducts, type TargetProduct } from "@open-pets/client";
+
 export interface McpCliOptions {
+  readonly product?: TargetProduct;
   readonly petId?: string;
   readonly help: boolean;
   readonly version: boolean;
@@ -6,6 +9,7 @@ export interface McpCliOptions {
 
 export function parseMcpArgs(argv: readonly string[]): McpCliOptions {
   let petId: string | undefined;
+  let product: TargetProduct | undefined;
   let help = false;
   let version = false;
 
@@ -26,6 +30,17 @@ export function parseMcpArgs(argv: readonly string[]): McpCliOptions {
       index += 1;
       continue;
     }
+    if (arg === "--product") {
+      const next = argv[index + 1];
+      if (!next) throw new Error("--product requires brainpet or openpets.");
+      product = validateProduct(next);
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--product=")) {
+      product = validateProduct(arg.slice("--product=".length));
+      continue;
+    }
     if (arg.startsWith("--pet=")) {
       petId = validateRawPetArg(arg.slice("--pet=".length));
       continue;
@@ -33,7 +48,13 @@ export function parseMcpArgs(argv: readonly string[]): McpCliOptions {
     throw new Error(`Unknown argument: ${arg}`);
   }
 
-  return { petId, help, version };
+  if (!help && !version && !product) throw new Error("Missing required --product <brainpet|openpets> target.");
+  return { product, petId, help, version };
+}
+
+export function validateProduct(value: string): TargetProduct {
+  if (!targetProducts.includes(value as TargetProduct)) throw new Error(`Invalid product target: ${value}. Expected brainpet or openpets.`);
+  return value as TargetProduct;
 }
 
 export function validatePetId(value: string): string {
@@ -53,5 +74,5 @@ export function validateRawPetArg(value: string): string {
 }
 
 export function createHelpText(): string {
-  return `OpenPets MCP server\n\nUsage:\n  open-pets-mcp [--pet <petId>]\n\nOptions:\n  --pet <petId>  Request an installed OpenPets pet for local IPC; remote mode rejects --pet and uses only the default pet.\n  --help         Show this help.\n  --version      Show package version.\n`;
+  return `OpenPets MCP server\n\nUsage:\n  open-pets-mcp --product <brainpet|openpets> [--pet <petId>]\n\nOptions:\n  --product      Explicit desktop product target. Required for runtime commands.\n  --pet <petId>  Request an installed OpenPets pet for local IPC; remote mode rejects --pet and uses only the default pet.\n  --help         Show this help.\n  --version      Show package version.\n`;
 }

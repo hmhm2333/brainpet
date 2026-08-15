@@ -252,18 +252,17 @@ itself requires an absolute path plus an explicit `zip` or `folder` kind.
 
 ### Standalone installer (`install-pet`)
 
-`packages/install-pet/` is a standalone CLI (`install-pet <pet-id>` or
-`npx -y install-pet <pet-id>`). It prefers the running app via
-`@open-pets/client` and **falls back** to a direct download + extract when the
-app is unavailable. Direct mode uses a lock file (`.install-pet.lock`, 10-min
-stale timeout) to prevent concurrent installs, the same ZIP safety limits (50MB
-download / 200MB extracted / 500 files / 100MB per file), and the same
-platform-specific user-data path resolution. This is what powers
-"`npx install-pet <id>`" without requiring the app to be open.
+`packages/install-pet/` is a thin product-targeted CLI:
+`install-pet --product <brainpet|openpets> <pet-id>` (or the equivalent `npx`
+command). It sends `pets.install` to that exact running host through
+`@open-pets/client`. If the host is unavailable it fails with an instruction to
+start the selected product. Release code never downloads a ZIP, extracts files,
+or rebuilds `openpets-state.json` while the host is offline; state migration and
+atomic persistence remain owned by the desktop process.
 
 ### ZIP safety (shared)
 
-Both paths enforce: HTTPS-only catalog/ZIP hosts on an allowlist, no encrypted
+The running-host installation path enforces: HTTPS-only catalog/ZIP hosts on an allowlist, no encrypted
 entries, only stored/deflate compression, valid Unix modes, required files
 (`pet.json` + `spritesheet.webp`), and atomic extraction with private
 permissions. The pet `id` must match `^[a-z0-9][a-z0-9_-]{0,63}$` and cannot be

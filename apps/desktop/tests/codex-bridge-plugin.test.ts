@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { spawn } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import net from "node:net";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
@@ -61,9 +64,9 @@ test("Codex bridge resolves isolated BrainPet runtime paths and rejects arbitrar
   };
   const paths = runtime.getRuntimePaths("win32", { APPDATA: "C:\\Users\\test\\AppData\\Roaming", LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local" }, "C:\\Users\\test");
   assert.equal(paths.brainPetDiscovery, "C:\\Users\\test\\AppData\\Roaming\\BrainPet\\runtime\\ipc.json");
+  assert.equal("openPetsDevelopmentDiscovery" in paths, false, "BrainPet bridges must not retain an OpenPets discovery fallback.");
   assert.equal(runtime.shouldWakeRuntime({ state: "working" }), true);
   assert.equal(runtime.shouldWakeRuntime({ state: "idle" }), false);
-  assert.equal(paths.openPetsDevelopmentDiscovery, "C:\\Users\\test\\AppData\\Roaming\\OpenPets\\runtime\\ipc.json");
   assert.equal(paths.installMarker, "C:\\Users\\test\\AppData\\Local\\BrainPet\\runtime-install.json");
   const valid = { schemaVersion: 1, product: "brainpet", executablePath: "C:\\Program Files\\BrainPet\\brainpet.exe", appVersion: "1.0.0", channel: "stable", platform: "win32", arch: "x64", writtenAt: 123 };
   assert.equal(runtime.validateInstallMarker(valid, "win32").executablePath, valid.executablePath);
@@ -72,3 +75,62 @@ test("Codex bridge resolves isolated BrainPet runtime paths and rejects arbitrar
   assert.equal(runtime.remainingDeadlineMs(2_600, 2_250), 350);
   assert.equal(runtime.remainingDeadlineMs(2_600, 2_700), 0);
 });
+
+test("Codex bridge rejects an explicitly supplied OpenPets discovery identity", async () => {
+  const desktopRoot = process.env.OPENPETS_DESKTOP_ROOT ?? resolve(process.cwd(), "apps/desktop");
+  const bridgePath = resolve(desktopRoot, "../..", "integrations/codex/plugins/brainpet-codex-bridge/scripts/bridge.mjs");
+  const root = mkdtempSync(join(tmpdir(), "brainpet-bridge-target-"));
+  const discoveryPath = join(root, "ipc.json");
+  let requests = 0;
+  const server = net.createServer((socket) => {
+    requests += 1;
+    socket.setEncoding("utf8");
+    socket.once("data", (chunk: string) => {
+      const request = JSON.parse(chunk.slice(0, chunk.indexOf("\n"))) as { readonly id: string };
+      socket.end(`${JSON.stringify({ id: request.id, ok: true, result: { accepted: true } })}\n`);
+    });
+  });
+  await new Promise<void>((resolveListen, reject) => {
+    server.once("error", reject);
+    server.listen({ host: "127.0.0.1", port: 0 }, resolveListen);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Bridge target fixture did not bind.");
+  const base = {
+    protocol: "openpets-ipc",
+    protocolVersion: 1,
+    endpoint: `tcp://127.0.0.1:${address.port}`,
+    token: "x".repeat(32),
+    appVersion: "1.0.0",
+    pid: process.pid,
+    platform: process.platform,
+  };
+  try {
+    writeFileSync(discoveryPath, JSON.stringify({ ...base, product: "openpets", appId: "dev.openpets.app" }), "utf8");
+    await runBridge(bridgePath, discoveryPath);
+    assert.equal(requests, 0, "a BrainPet bridge must fail open instead of sending to OpenPets");
+
+    writeFileSync(discoveryPath, JSON.stringify({ ...base, product: "brainpet", appId: "dev.brainpet.app" }), "utf8");
+    await runBridge(bridgePath, discoveryPath);
+    assert.equal(requests, 1, "the same bridge must accept the matching BrainPet identity");
+  } finally {
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+async function runBridge(bridgePath: string, discoveryPath: string): Promise<void> {
+  await new Promise<void>((resolveRun, reject) => {
+    const child = spawn(process.execPath, [bridgePath], {
+      env: { ...process.env, OPENPETS_DISCOVERY_FILE: discoveryPath },
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("exit", (code) => code === 0 ? resolveRun() : reject(new Error(`Bridge exited with ${code}: ${stderr}`)));
+    child.stdin.end(JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: "session-target", turn_id: "turn-target" }));
+  });
+}

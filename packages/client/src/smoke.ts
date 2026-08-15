@@ -1,8 +1,9 @@
-import { createOpenPetsClient } from "./index.js";
+import { createOpenPetsClient, targetProducts, type TargetProduct } from "./index.js";
 import { validateReaction, type OpenPetsReaction } from "./protocol.js";
 
-const client = createOpenPetsClient();
-const [command = "status", first, second] = process.argv.slice(2);
+const { product, operands } = parseArgs(process.argv.slice(2));
+const client = createOpenPetsClient({ target: product });
+const [command = "status", first, second] = operands;
 
 try {
   const result = command === "hello"
@@ -14,7 +15,7 @@ try {
         : command === "say"
           ? await client.say(first ?? "Working on it", second ? { reaction: validateReaction(second) as OpenPetsReaction } : undefined)
           : command === "invalid-token"
-            ? await runInvalidTokenCheck()
+            ? await runInvalidTokenCheck(product)
             : await client.status();
 
   console.log(JSON.stringify(result, null, 2));
@@ -23,8 +24,20 @@ try {
   process.exitCode = 1;
 }
 
-async function runInvalidTokenCheck(): Promise<unknown> {
+async function runInvalidTokenCheck(product: TargetProduct): Promise<unknown> {
   const { readDiscoveryFile, sendRequest } = await import("./index.js");
-  const discovery = readDiscoveryFile();
+  const discovery = readDiscoveryFile(product);
   return sendRequest({ ...discovery, token: "invalid-token-value" }, "hello", {});
+}
+
+function parseArgs(args: string[]): { product: TargetProduct; operands: string[] } {
+  const productFlag = args.indexOf("--product");
+  const product = productFlag >= 0 ? args[productFlag + 1] : undefined;
+  if (!targetProducts.includes(product as TargetProduct)) {
+    throw new Error("Usage: pnpm smoke --product <brainpet|openpets> [status|hello|react|say|invalid-token]");
+  }
+  return {
+    product: product as TargetProduct,
+    operands: args.filter((_value, index) => index !== productFlag && index !== productFlag + 1),
+  };
 }

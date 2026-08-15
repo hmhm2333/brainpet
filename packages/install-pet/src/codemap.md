@@ -2,5 +2,5 @@
 
 ## Files
 
-- **index.ts**: Main implementation (571 lines). `installPet()`, `tryInstallThroughRunningApp()`, `installPetDirectly()`, catalog fetching, ZIP download/extraction, state management, locking, validation functions.
+- **index.ts**: Host-only CLI implementation. Parses the required product target, validates the pet id, calls the selected running host, and fails open without direct state writes.
 - **check-install-pet.ts**: Contract validation (excluded from detailed documentation).

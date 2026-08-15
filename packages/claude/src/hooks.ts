@@ -2,7 +2,7 @@ import { lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync,
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { homedir, tmpdir, userInfo } from "node:os";
 
-import { createOpenPetsClient, type OpenPetsClient, type OpenPetsReaction, OpenPetsClientError } from "@open-pets/client";
+import { createOpenPetsClient, type OpenPetsClient, type OpenPetsReaction, OpenPetsClientError, type TargetProduct } from "@open-pets/client";
 import { createNormalizedAgentLifecycleEvent, validateHookSpeech as validateSharedHookSpeech, type NormalizedAgentLifecycleEvent } from "@open-pets/agent-events";
 
 import { pickHookSpeech, type HookSpeechCategory } from "./hook-messages.js";
@@ -16,6 +16,7 @@ export interface ClaudeHookDecision {
 }
 
 export interface ClaudeHookOptions {
+  readonly product?: TargetProduct;
   readonly client?: OpenPetsClient;
   readonly configuredPetId?: string;
   readonly projectLocal?: boolean;
@@ -58,7 +59,7 @@ export async function handleClaudeHookPayload(raw: string, options: ClaudeHookOp
 
   let client: OpenPetsClient | undefined;
   if (lifecycle) {
-    client = options.client ?? createOpenPetsClient({ connectTimeoutMs: 500, responseTimeoutMs: 500 });
+    client = options.client ?? createTargetedClient(options.product);
     try {
       await client.reportAgentActivity(lifecycle);
     } catch (error) {
@@ -71,7 +72,7 @@ export async function handleClaudeHookPayload(raw: string, options: ClaudeHookOp
   const shouldReact = shouldSendReaction(decision.reaction, options);
   if (!shouldSpeak && !shouldReact) return decision;
 
-  client ??= options.client ?? createOpenPetsClient({ connectTimeoutMs: 500, responseTimeoutMs: 500 });
+  client ??= options.client ?? createTargetedClient(options.product);
   const lease = options.configuredPetId ? await acquireHookLease(client, options.configuredPetId, options.debug) : undefined;
   try {
     if (decision.speechCategory && shouldSpeak) {
@@ -139,6 +140,11 @@ export function mapClaudeHookEvent(payload: Record<string, unknown>): ClaudeHook
   if (eventName === "SessionEnd") return { eventName };
   if (eventName === "PreToolUse") return { eventName, reaction: classifyToolReaction(payload) };
   return eventName ? { eventName } : null;
+}
+
+function createTargetedClient(product: TargetProduct | undefined): OpenPetsClient {
+  if (!product) throw new Error("Claude hook requires an explicit brainpet or openpets product target.");
+  return createOpenPetsClient({ target: product, connectTimeoutMs: 500, responseTimeoutMs: 500 });
 }
 
 export function mapClaudeLifecycleEvent(payload: Record<string, unknown>, occurredAt = Date.now()): NormalizedAgentLifecycleEvent | null {

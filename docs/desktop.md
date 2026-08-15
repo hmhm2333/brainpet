@@ -175,7 +175,10 @@ installed.
 ### App state
 
 `app-state.ts` persists a versioned JSON document under
-`userData/openpets-state.json` using atomic temp-write + rename. It holds
+`userData/openpets-state.json` using same-directory atomic temp-write + rename.
+Migration normalizes known V1 fields while preserving unknown top-level and
+nested fields. Each valid primary is retained as `.bak`; a malformed primary
+recovers from that last-known-good backup without overwriting it. The document holds
 installed pets, the default-pet config, reaction→animation overrides, onboarding
 state, locale preference, the pet pool preference (ordered pet list +
 `petPoolEnabled` toggle), and display-roaming preferences (`petConfinementEnabled`,

@@ -78,7 +78,7 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
 
 托盘“BrainPet 安装与恢复”页给出三类分离证据：runtime 标记与运行版本、用户明确确认已审核 Bridge、新任务是否真的送达首条 lifecycle。状态保存在 BrainPet 独立用户目录，Bridge 版本变化会转为重新确认。暂停或卸载 Bridge 不影响离线宠物与训练；卸载 runtime 会删除安装标记并让 Bridge 快速 no-op，但默认保留用户训练进度。
 
-BrainPet 与 OpenPets 使用独立 discovery 命名空间，避免两款应用同时运行时把 Agent 事件发错进程。macOS 使用 `~/Library/Application Support/BrainPet/runtime/ipc.json`，Windows 使用 `%APPDATA%\\BrainPet\\runtime\\ipc.json`，Linux 优先使用 `$XDG_RUNTIME_DIR/brainpet/ipc.json`。安装标记位于系统的 per-user BrainPet 配置目录；源码 checkout 在没有安装标记时才允许回退到 OpenPets discovery 供开发验证。各端使用相同的 `agent.activity` schema v1 和 discovery token。
+BrainPet 与 OpenPets 使用独立 discovery 命名空间，避免两款应用同时运行时把 Agent 事件发错进程。macOS 使用 `~/Library/Application Support/BrainPet/runtime/ipc.json`，Windows 使用 `%APPDATA%\\BrainPet\\runtime\\ipc.json`，Linux 优先使用 `$XDG_RUNTIME_DIR/brainpet/ipc.json`。安装标记位于系统的 per-user BrainPet 配置目录；源码 checkout 也只接受 `product=brainpet`、`appId=dev.brainpet.app` 的 discovery，缺失时 fail-open，不回退到 OpenPets。各端使用相同的 `agent.activity` schema v1 和 discovery token。
 
 不推荐把 npm 作为普通用户入口。Codex marketplace 虽可引用 npm 包，但那仍要求本机 npm，并不能提供透明桌面 runtime；npm 只适合开发者分发桥接源码或 CLI。
 

@@ -11,12 +11,13 @@ import { wireTransportLifecycle, type OpenPetsLeaseResult } from "./index.js";
 import { createOpenPetsMcpServer } from "./server.js";
 import { createMcpStatus, handleReact, handleSay, sanitizeUnavailableReason, type LeaseContext, type OpenPetsMcpStatus } from "./tools.js";
 
-parseMcpArgs(["--pet", "snoopy"]);
-parseMcpArgs(["--pet=snoopy"]);
-parseMcpArgs(["--pet", "Bad Pet"]);
+parseMcpArgs(["--product", "openpets", "--pet", "snoopy"]);
+parseMcpArgs(["--product=brainpet", "--pet=snoopy"]);
+parseMcpArgs(["--product", "openpets", "--pet", "Bad Pet"]);
 parseMcpArgs(["--help"]);
 assertRejects(() => parseMcpArgs(["--pet", "bad/pet"]));
 assertRejects(() => parseMcpArgs(["--agent", "claude"]));
+assertRejects(() => parseMcpArgs(["--pet", "snoopy"]));
 if (!createHelpText().includes("remote mode rejects --pet")) throw new Error("MCP help does not define remote --pet behavior.");
 
 const unavailableStatus = createMcpStatus({ ok: false, appRunning: false, unavailableReason: "/Users/alvin/.config/OpenPets/runtime/ipc.json ENOENT" }, "snoopy");
@@ -138,7 +139,7 @@ async function checkRemoteModeLeaseFree(): Promise<void> {
 async function checkStdioServerContract(): Promise<void> {
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [join("dist", "index.js"), "--pet", "snoopy"],
+    args: [join("dist", "index.js"), "--product", "openpets", "--pet", "snoopy"],
     env: { ...process.env, OPENPETS_DISCOVERY_FILE: join(process.cwd(), ".missing-openpets-discovery.json") },
     stderr: "ignore",
   });

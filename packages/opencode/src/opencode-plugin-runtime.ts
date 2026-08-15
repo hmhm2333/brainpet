@@ -2,12 +2,13 @@ import { homedir, tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
-import { createOpenPetsClient, type OpenPetsClient, type OpenPetsReaction } from "@open-pets/client";
+import { createOpenPetsClient, type OpenPetsClient, type OpenPetsReaction, type TargetProduct } from "@open-pets/client";
 import { createNormalizedAgentLifecycleEvent, pickHookSpeech, type HookSpeechCategory, type NormalizedAgentLifecycleEvent, validateHookSpeech } from "@open-pets/agent-events";
 
 import { sanitizeOpenCodeExcludedReactions, validateOpenPetsPetArg } from "./opencode-previews.js";
 
 export interface OpenCodePluginOptions {
+  readonly product?: TargetProduct;
   readonly pet?: string;
   readonly debug?: boolean;
   /** Reactions the user wants suppressed. Excluded reactions are silently dropped before any IPC or throttle work. */
@@ -45,7 +46,10 @@ export function isReactionExcluded(reaction: OpenPetsReaction, excludedSet: Read
 
 export function createOpenPetsOpenCodeHooks(options: OpenCodePluginRuntimeOptions = {}): OpenCodeHooks {
   const pet = options.pet === undefined ? undefined : validateOpenPetsPetArg(options.pet);
-  const clientFactory = options.clientFactory ?? (() => createOpenPetsClient({ connectTimeoutMs: 500, responseTimeoutMs: 500 }));
+  const clientFactory = options.clientFactory ?? (() => {
+    if (!options.product) throw new Error("OpenCode plugin requires an explicit brainpet or openpets product target.");
+    return createOpenPetsClient({ target: options.product, connectTimeoutMs: 500, responseTimeoutMs: 500 });
+  });
   const schedule = options.schedule ?? defaultSchedule;
   const debug = options.debug === true || process.env.OPENPETS_DEBUG === "1";
   const debugLog = options.debugLog ?? ((message) => { if (debug) process.stderr.write(`${message}\n`); });

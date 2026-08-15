@@ -12,6 +12,7 @@ import { doctorOpenCodeGlobalSetup, getGlobalOpenCodeConfigDir, parseOpenCodeCon
 import { getAppStateSnapshot, updatePreferences, type InstalledPetState, type OpenPetsStateV1 } from "./app-state.js";
 import { doctorClaudeOpenPetsMemory, installClaudeOpenPetsMemory, uninstallClaudeOpenPetsMemory, type ClaudeOpenPetsMemoryStatus } from "./claude-memory.js";
 import { getDefaultOpenCodeCommand, getOpenCodeCommandCandidates } from "./opencode-command.js";
+import { resolveLocalIpcDistributionProfile } from "./local-ipc-paths.js";
 
 export type AgentSetupAction = "configure" | "replace" | "remove" | "install-memory" | "doctor-hooks" | "install-hooks" | "uninstall-hooks" | "opencode-install" | "opencode-remove" | "cursor-install" | "cursor-replace" | "cursor-remove";
 export type JournalAction = "configure" | "update" | "replace" | "remove";
@@ -204,7 +205,7 @@ export function sanitizeAgentSetupOutput(value: string): string {
 
 function safeBuildClaudeMcpPreview(selectedPetId: string | undefined, commandMode: OpenPetsCommandMode): { readonly preview: ClaudeMcpPreview; readonly error?: string } {
   try {
-    return { preview: withPreferredClaudeCommand(buildClaudeMcpPreview(selectedPetId, commandMode, getPreferredNodeCommand())) };
+    return { preview: withPreferredClaudeCommand(buildClaudeMcpPreview(selectedPetId, commandMode, getPreferredNodeCommand(), resolveLocalIpcDistributionProfile())) };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Packaged OpenPets command resources are unavailable.";
     return { preview: createErrorPreview(commandMode, message), error: message };
@@ -213,7 +214,7 @@ function safeBuildClaudeMcpPreview(selectedPetId: string | undefined, commandMod
 
 function safeDoctorClaudeHooks(commandMode: OpenPetsCommandMode, selectedPetId: string | undefined): ClaudeHookDoctorResult {
   try {
-    return doctorClaudeHooks(undefined, commandMode, selectedPetId, getPreferredNodeCommand());
+    return doctorClaudeHooks(undefined, commandMode, selectedPetId, getPreferredNodeCommand(), undefined, resolveLocalIpcDistributionProfile());
   } catch (error) {
     return createHookErrorStatus(error instanceof Error ? error.message : "Packaged OpenPets hook resources are unavailable.");
   }
@@ -263,7 +264,7 @@ async function runAction(action: AgentSetupAction, selectedPetId: string | undef
   if (action === "uninstall-hooks") {
     let result;
     try {
-      result = uninstallClaudeHooks(undefined, commandMode);
+      result = uninstallClaudeHooks(undefined, commandMode, resolveLocalIpcDistributionProfile());
     } catch (error) {
       return { ok: false, action, message: error instanceof Error ? error.message : "OpenPets hook uninstall failed.", changed: false };
     }
@@ -288,7 +289,7 @@ async function runAction(action: AgentSetupAction, selectedPetId: string | undef
   if (action === "install-hooks") {
     let result;
     try {
-      result = installClaudeHooks(undefined, commandMode, selectedPetId, getPreferredNodeCommand());
+      result = installClaudeHooks(undefined, commandMode, selectedPetId, getPreferredNodeCommand(), undefined, resolveLocalIpcDistributionProfile());
     } catch (error) {
       return { ok: false, action, message: error instanceof Error ? error.message : "OpenPets hook install failed.", changed: false };
     }
@@ -375,7 +376,7 @@ async function getCursorSetup(commandMode: OpenPetsCommandMode, selectedPetId: s
   const mcpVersion = getMcpPackageVersion();
 
   const configResult = readCursorMcpConfig(configPath);
-  const statusResult = classifyCursorMcpStatus(configResult, configPath, { mcpVersion, petId, commandMode: "published" });
+  const statusResult = classifyCursorMcpStatus(configResult, configPath, { product: resolveLocalIpcDistributionProfile(), mcpVersion, petId, commandMode: "published" });
 
   const state = mapCursorStatusToState(statusResult.status);
   const label = mapCursorStatusToLabel(statusResult.status);
@@ -394,7 +395,7 @@ async function getCursorSetup(commandMode: OpenPetsCommandMode, selectedPetId: s
     preview: {
       global: true,
       configPath: formatUserPath(configPath) ?? configPath,
-      mcpEntry: buildOpenPetsOnlyPreview({ mcpVersion, petId, commandMode: "published" }),
+      mcpEntry: buildOpenPetsOnlyPreview({ product: resolveLocalIpcDistributionProfile(), mcpVersion, petId, commandMode: "published" }),
       rulesPath: ".cursor/rules/openpets.mdc",
       rulesContent: buildCursorRulesPreview(),
       commandMode: "published",
@@ -483,7 +484,7 @@ function quoteCommandForDisplay(command: string): string {
 
 function safePrepareOpenCode(configDir: string, selectedPetId: string | undefined, cliVersion: string, pluginVersion: string, commandMode: OpenPetsCommandMode, cliEntryPath: string | undefined): { readonly ok: true; readonly command: readonly string[]; readonly configPath: string; readonly cleanupConfigPaths: readonly string[]; readonly instructionPath: string; readonly plugin: readonly unknown[] | string; readonly configPreview: Record<string, unknown> } | { readonly ok: false; readonly message: string } {
   try {
-    const prepared = prepareOpenCodeGlobalSetup({ configDir, petId: selectedPetId || undefined, cliVersion, pluginVersion, commandMode, cliEntryPath });
+    const prepared = prepareOpenCodeGlobalSetup({ product: resolveLocalIpcDistributionProfile(), configDir, petId: selectedPetId || undefined, cliVersion, pluginVersion, commandMode, cliEntryPath });
     const parsed = parseOpenCodeConfig(prepared.configWrite.content);
     if (!parsed.ok) return { ok: false, message: parsed.message };
     const config = parsed.value as { mcp?: { openpets?: { command?: readonly string[] } }; plugin?: readonly unknown[] };
@@ -501,7 +502,7 @@ async function installOpenCodeGlobal(selectedPetId: string | undefined, commandM
   }
   try {
     const configDir = getGlobalOpenCodeConfigDir(process.env, app.getPath("home"), process.platform);
-    const prepared = prepareOpenCodeGlobalSetup({ configDir, petId: selectedPetId || undefined, cliVersion: getCliPackageVersion(), pluginVersion: getOpenCodePackageVersion(), commandMode, cliEntryPath: commandMode === "published" ? undefined : getDesktopCliEntryPath(commandMode) });
+    const prepared = prepareOpenCodeGlobalSetup({ product: resolveLocalIpcDistributionProfile(), configDir, petId: selectedPetId || undefined, cliVersion: getCliPackageVersion(), pluginVersion: getOpenCodePackageVersion(), commandMode, cliEntryPath: commandMode === "published" ? undefined : getDesktopCliEntryPath(commandMode) });
     writePreparedOpenCodeGlobalSetup(prepared);
     return { ok: true, action: "opencode-install", message: `Installed global OpenCode OpenPets setup. Config: ${formatUserPath(prepared.configPath) ?? prepared.configPath}. Instructions: ${formatUserPath(prepared.instructionPath) ?? prepared.instructionPath}.`, changed: true };
   } catch (error) {
@@ -526,7 +527,7 @@ async function installCursorGlobal(selectedPetId: string | undefined, commandMod
     const homeDir = app.getPath("home");
     const configPath = getCursorGlobalMcpPath(homeDir);
     const mcpVersion = getMcpPackageVersion();
-    const plan = planCursorMcpInstall(configPath, { mcpVersion, petId: selectedPetId || undefined, commandMode: "published" });
+    const plan = planCursorMcpInstall(configPath, { product: resolveLocalIpcDistributionProfile(), mcpVersion, petId: selectedPetId || undefined, commandMode: "published" });
     if ("ok" in plan && !plan.ok) {
       return { ok: false, action: "cursor-install", message: plan.message, changed: false };
     }
@@ -547,7 +548,7 @@ async function replaceCursorGlobal(selectedPetId: string | undefined, commandMod
     const homeDir = app.getPath("home");
     const configPath = getCursorGlobalMcpPath(homeDir);
     const mcpVersion = getMcpPackageVersion();
-    const plan = planCursorMcpReplace(configPath, { mcpVersion, petId: selectedPetId || undefined, commandMode: "published" });
+    const plan = planCursorMcpReplace(configPath, { product: resolveLocalIpcDistributionProfile(), mcpVersion, petId: selectedPetId || undefined, commandMode: "published" });
     if ("ok" in plan && !plan.ok) {
       return { ok: false, action: "cursor-replace", message: plan.message, changed: false };
     }
@@ -614,7 +615,8 @@ function summarizeMemoryMessages(...messages: readonly string[]): string {
 }
 
 function createHookJournalCommand(command: "doctor-hooks" | "install-hooks", selectedPetId: string | undefined): readonly string[] {
-  return selectedPetId ? ["open-pets-claude", command, "--pet", selectedPetId] : ["open-pets-claude", command];
+  const targetArgs = ["--product", resolveLocalIpcDistributionProfile()];
+  return selectedPetId ? ["open-pets-claude", command, ...targetArgs, "--pet", selectedPetId] : ["open-pets-claude", command, ...targetArgs];
 }
 
 async function runAdd(preview: ClaudeMcpPreview, selectedPetId: string | undefined, previousStatus: string, action: AgentSetupAction): Promise<AgentSetupActionResult> {
@@ -672,11 +674,11 @@ async function detectClaudeCodeStatus(selectedPetId: string | undefined, command
     return createStatus("error", "Error / needs attention", `Claude Code was detected, but MCP status failed: ${summarizeCommandResult(list)}`, sanitizeAgentSetupOutput(version.stdout || version.stderr), list, { present: false, source: "none", verified: false, matchesExpected: false });
   }
 
-  const listed = classifyClaudeMcpStatus(list.stdout, undefined, selectedPetId, commandMode, getPreferredNodeCommand());
+  const listed = classifyClaudeMcpStatus(list.stdout, undefined, selectedPetId, commandMode, getPreferredNodeCommand(), resolveLocalIpcDistributionProfile());
   let entry = listed;
   if (listed.present) {
     const get = await runClaudeCommand(buildClaudeMcpGetCommand());
-    if (get.ok) entry = classifyClaudeMcpStatus(list.stdout, get.stdout, selectedPetId, commandMode, getPreferredNodeCommand());
+    if (get.ok) entry = classifyClaudeMcpStatus(list.stdout, get.stdout, selectedPetId, commandMode, getPreferredNodeCommand(), resolveLocalIpcDistributionProfile());
   }
 
   if (!entry.present) return createStatus("needs_setup", "Needs setup", "Claude Code is detected, but OpenPets MCP is not configured.", sanitizeAgentSetupOutput(version.stdout || version.stderr), list, entry);

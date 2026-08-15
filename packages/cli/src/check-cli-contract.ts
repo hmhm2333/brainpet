@@ -1,62 +1,67 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 import { assertSafeProjectHookPath, cliPackageName, configureProject, createClaudeMcpAddJsonArgs, createLocalDevCliCommand, createVersionPinnedCliCommand, installProjectLocalHooks, parseConfigureArgs, parseDoctorArgs, parseInstallArgs, parsePluginNewArgs, parseReactArgs, parseSayArgs, resolveConfiguredPet, runClaudeMcpAddJson, runDoctor, scaffoldPlugin } from "./index.js";
 import { pluginTemplateNames } from "./plugin-templates.js";
 import { validatePluginFolder } from "./plugin-validate.js";
 
 const packageVersion = (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { readonly version: string }).version;
+const cliEntryPath = fileURLToPath(new URL("./index.js", import.meta.url));
 
-const parsed = parseConfigureArgs(["--agent", "claude", "--pet", "fixer", "--cwd", "/tmp/project", "--yes"]);
+const targeted = (args: readonly string[]): readonly string[] => ["--product", "openpets", ...args];
+const parsed = parseConfigureArgs(targeted(["--agent", "claude", "--pet", "fixer", "--cwd", "/tmp/project", "--yes"]));
+assert.equal(parsed.product, "openpets");
 assert.equal(parsed.agent, "claude");
 assert.equal(parsed.petId, "fixer");
 assert.equal(parsed.cwd, "/tmp/project");
 assert.equal(parsed.yes, true);
-assert.equal(parseConfigureArgs(["--pet", "fixer", "--force"]).force, true);
-assert.equal(parseConfigureArgs(["--pet", "fixer", "--replace"]).force, true);
-assert.equal(parseConfigureArgs(["--pet", "fixer", "--local-dev"]).localDev, true);
-assert.equal(parseConfigureArgs(["--pet=fixer"]).petId, "fixer");
-assert.equal(parseConfigureArgs(["--agent", "opencode", "--pet", "fixer"]).agent, "opencode");
-assert.equal(parseConfigureArgs(["--agent", "cursor", "--pet", "fixer"]).agent, "cursor");
-assert.equal(parseConfigureArgs(["--agent", "cursor", "--pet", "fixer"]).cwd, process.cwd());
-assert.equal(parseConfigureArgs(["--agent", "cursor", "--rules-only"]).cursorRulesMode, "only");
-assert.equal(parseConfigureArgs(["--agent", "cursor", "--remove-rules"]).cursorRulesMode, "remove");
-assert.equal(parseConfigureArgs(["--agent", "cursor", "--with-rules"]).cursorRulesMode, "with");
-assert.throws(() => parseConfigureArgs(["--agent", "cursor", "--with-rules", "--rules-only"]));
-assert.throws(() => parseConfigureArgs(["--agent", "claude", "--rules-only"]));
-assert.throws(() => parseConfigureArgs(["--pet", "bad/pet"]));
-assert.deepEqual(parseInstallArgs(["review-owl"]), { petId: "review-owl" });
-assert.deepEqual(parseInstallArgs(["--from-zip", "my-pet.zip"]), { fromZip: "my-pet.zip" });
-assert.deepEqual(parseInstallArgs(["--from-zip=my-pet.zip"]), { fromZip: "my-pet.zip" });
-assert.deepEqual(parseInstallArgs(["--from-folder", "my-folder"]), { fromFolder: "my-folder" });
-assert.deepEqual(parseInstallArgs(["--from-folder=my-folder"]), { fromFolder: "my-folder" });
+assert.equal(parseConfigureArgs(targeted(["--pet", "fixer", "--force"])).force, true);
+assert.equal(parseConfigureArgs(targeted(["--pet", "fixer", "--replace"])).force, true);
+assert.equal(parseConfigureArgs(targeted(["--pet", "fixer", "--local-dev"])).localDev, true);
+assert.equal(parseConfigureArgs(targeted(["--pet=fixer"])).petId, "fixer");
+assert.equal(parseConfigureArgs(targeted(["--agent", "opencode", "--pet", "fixer"])).agent, "opencode");
+assert.equal(parseConfigureArgs(targeted(["--agent", "cursor", "--pet", "fixer"])).agent, "cursor");
+assert.equal(parseConfigureArgs(targeted(["--agent", "cursor", "--pet", "fixer"])).cwd, process.cwd());
+assert.equal(parseConfigureArgs(targeted(["--agent", "cursor", "--rules-only"])).cursorRulesMode, "only");
+assert.equal(parseConfigureArgs(targeted(["--agent", "cursor", "--remove-rules"])).cursorRulesMode, "remove");
+assert.equal(parseConfigureArgs(targeted(["--agent", "cursor", "--with-rules"])).cursorRulesMode, "with");
+assert.throws(() => parseConfigureArgs(targeted(["--agent", "cursor", "--with-rules", "--rules-only"])));
+assert.throws(() => parseConfigureArgs(targeted(["--agent", "claude", "--rules-only"])));
+assert.throws(() => parseConfigureArgs(targeted(["--pet", "bad/pet"])));
+assert.throws(() => parseConfigureArgs(["--pet", "fixer"]), /Missing required --product/);
+assert.deepEqual(parseInstallArgs(targeted(["review-owl"])), { product: "openpets", petId: "review-owl" });
+assert.deepEqual(parseInstallArgs(targeted(["--from-zip", "my-pet.zip"])), { product: "openpets", fromZip: "my-pet.zip" });
+assert.deepEqual(parseInstallArgs(targeted(["--from-zip=my-pet.zip"])), { product: "openpets", fromZip: "my-pet.zip" });
+assert.deepEqual(parseInstallArgs(targeted(["--from-folder", "my-folder"])), { product: "openpets", fromFolder: "my-folder" });
+assert.deepEqual(parseInstallArgs(targeted(["--from-folder=my-folder"])), { product: "openpets", fromFolder: "my-folder" });
 assert.throws(() => parseInstallArgs([]));
-assert.throws(() => parseInstallArgs(["bad/pet"]));
-assert.throws(() => parseInstallArgs(["review-owl", "--from-zip", "my-pet.zip"]));
-assert.throws(() => parseInstallArgs(["--from-zip", "my-pet.zip", "--from-folder", "my-folder"]));
-assert.throws(() => parseInstallArgs(["--from-zip"]));
-assert.throws(() => parseInstallArgs(["--from-folder"]));
-assert.deepEqual(parseReactArgs(["success"]), { reaction: "success" });
+assert.throws(() => parseInstallArgs(targeted(["bad/pet"])));
+assert.throws(() => parseInstallArgs(targeted(["review-owl", "--from-zip", "my-pet.zip"])));
+assert.throws(() => parseInstallArgs(targeted(["--from-zip", "my-pet.zip", "--from-folder", "my-folder"])));
+assert.throws(() => parseInstallArgs(targeted(["--from-zip"])));
+assert.throws(() => parseInstallArgs(targeted(["--from-folder"])));
+assert.deepEqual(parseReactArgs(targeted(["success"])), { product: "openpets", reaction: "success" });
 assert.throws(() => parseReactArgs([]));
-assert.throws(() => parseReactArgs(["bad"]));
-assert.deepEqual(parseSayArgs(["Build", "finished"]), { message: "Build finished", reaction: undefined });
-assert.deepEqual(parseSayArgs(["Build finished", "--reaction", "celebrating"]), { message: "Build finished", reaction: "celebrating" });
-assert.deepEqual(parseSayArgs(["--reaction=success", "Tests", "passed"]), { message: "Tests passed", reaction: "success" });
+assert.throws(() => parseReactArgs(targeted(["bad"])));
+assert.deepEqual(parseSayArgs(targeted(["Build", "finished"])), { product: "openpets", message: "Build finished", reaction: undefined });
+assert.deepEqual(parseSayArgs(targeted(["Build finished", "--reaction", "celebrating"])), { product: "openpets", message: "Build finished", reaction: "celebrating" });
+assert.deepEqual(parseSayArgs(targeted(["--reaction=success", "Tests", "passed"])), { product: "openpets", message: "Tests passed", reaction: "success" });
 assert.throws(() => parseSayArgs([]));
-assert.throws(() => parseSayArgs(["Hello", "--reaction", "bad"]));
-assert.throws(() => parseSayArgs(["Hello", "--unknown"]));
+assert.throws(() => parseSayArgs(targeted(["Hello", "--reaction", "bad"])));
+assert.throws(() => parseSayArgs(targeted(["Hello", "--unknown"])));
 
-assert.deepEqual(parseDoctorArgs([]), { cwd: process.cwd(), json: false });
-assert.equal(parseDoctorArgs(["--json"]).json, true);
-assert.equal(parseDoctorArgs(["--cwd", "/tmp/project"]).cwd, "/tmp/project");
-assert.equal(parseDoctorArgs(["--cwd=/tmp/project"]).cwd, "/tmp/project");
-assert.deepEqual(parseDoctorArgs(["--cwd=/tmp/project", "--json"]), { cwd: "/tmp/project", json: true });
-assert.throws(() => parseDoctorArgs(["--unknown"]));
-assert.throws(() => parseDoctorArgs(["--cwd"]));
+assert.deepEqual(parseDoctorArgs(targeted([])), { product: "openpets", cwd: process.cwd(), json: false });
+assert.equal(parseDoctorArgs(targeted(["--json"])).json, true);
+assert.equal(parseDoctorArgs(targeted(["--cwd", "/tmp/project"])).cwd, "/tmp/project");
+assert.equal(parseDoctorArgs(targeted(["--cwd=/tmp/project"])).cwd, "/tmp/project");
+assert.deepEqual(parseDoctorArgs(targeted(["--cwd=/tmp/project", "--json"])), { product: "openpets", cwd: "/tmp/project", json: true });
+assert.throws(() => parseDoctorArgs(targeted(["--unknown"])));
+assert.throws(() => parseDoctorArgs(targeted(["--cwd"])));
 
 assert.deepEqual(parsePluginNewArgs(["My Plugin"]), { name: "My Plugin", id: "local.my-plugin", dir: "my-plugin", author: undefined, template: "blank" });
 assert.equal(parsePluginNewArgs(["My Plugin", "--id", "acme.my-plugin"]).id, "acme.my-plugin");
@@ -165,57 +170,64 @@ try {
   const outside = join(dir, "outside-claude");
   mkdirSync(symlinkProject);
   mkdirSync(outside);
-  symlinkSync(outside, join(symlinkProject, ".claude"));
+  createDirectorySymlink(outside, join(symlinkProject, ".claude"));
   assert.throws(() => assertSafeProjectHookPath(symlinkProject));
 
   const binDir = join(dir, "bin");
   const logPath = join(dir, "claude-log.json");
   mkdirSync(binDir);
-  const fakeClaude = join(binDir, "claude");
-  writeFileSync(fakeClaude, `#!/usr/bin/env node\nconst fs = require('fs'); let log = []; try { log = JSON.parse(fs.readFileSync(${JSON.stringify(logPath)}, 'utf8')); } catch {} log.push({ cwd: process.cwd(), argv: process.argv.slice(2) }); fs.writeFileSync(${JSON.stringify(logPath)}, JSON.stringify(log)); process.exit(0);\n`, "utf8");
+  const fakeClaudeScript = join(binDir, "claude.cjs");
+  writeFileSync(fakeClaudeScript, `const fs = require('fs'); let log = []; try { log = JSON.parse(fs.readFileSync(${JSON.stringify(logPath)}, 'utf8')); } catch {} log.push({ cwd: process.cwd(), argv: process.argv.slice(2) }); fs.writeFileSync(${JSON.stringify(logPath)}, JSON.stringify(log)); process.exit(0);\n`, "utf8");
+  const fakeClaude = join(binDir, process.platform === "win32" ? "claude.cmd" : "claude");
+  writeFileSync(fakeClaude, process.platform === "win32" ? `@echo off\r\n"${process.execPath}" "%~dp0claude.cjs" %*\r\n` : `#!/usr/bin/env node\nrequire('./claude.cjs');\n`, "utf8");
   chmodSync(fakeClaude, 0o700);
   const oldPath = process.env.PATH;
-  process.env.PATH = `${binDir}:${oldPath ?? ""}`;
-  try {
-    runClaudeMcpAddJson(project, { type: "stdio", command: "npx", args: ["-y", "@open-pets/cli@1.2.3", "mcp", "--pet", "fixer"], env: {} }, true);
-  } finally {
+  process.env.PATH = `${binDir}${delimiter}${oldPath ?? ""}`;
+  if (process.platform !== "win32") {
+    try {
+      runClaudeMcpAddJson(project, { type: "stdio", command: "npx", args: ["-y", "@open-pets/cli@1.2.3", "mcp", "--pet", "fixer"], env: {} }, true);
+      const claudeLog = JSON.parse(readFileSync(logPath, "utf8")) as Array<{ readonly cwd: string; readonly argv: readonly string[] }>;
+      assert.equal(claudeLog.at(-1)?.cwd, realpathSync(project));
+      assert.deepEqual(claudeLog.at(-2)?.argv, ["mcp", "remove", "openpets", "--scope", "local"]);
+      assert.deepEqual(claudeLog.at(-1)?.argv.slice(0, 3), ["mcp", "add-json", "openpets"]);
+      const loggedMcpJson = JSON.parse(claudeLog.at(-1)?.argv[3] ?? "{}") as { readonly command?: string; readonly args?: readonly string[]; readonly env?: Record<string, unknown> };
+      assert.equal(loggedMcpJson.command, "npx");
+      assert.deepEqual(loggedMcpJson.args, ["-y", "@open-pets/cli@1.2.3", "mcp", "--pet", "fixer"]);
+      assert.deepEqual(loggedMcpJson.env, {});
+      assert.equal(claudeLog.at(-1)?.argv.at(-2), "--scope");
+      assert.equal(claudeLog.at(-1)?.argv.at(-1), "local");
+    } finally {
+      process.env.PATH = oldPath;
+    }
+  } else {
     process.env.PATH = oldPath;
   }
-  const claudeLog = JSON.parse(readFileSync(logPath, "utf8")) as Array<{ readonly cwd: string; readonly argv: readonly string[] }>;
-  assert.equal(claudeLog.at(-1)?.cwd, realpathSync(project));
-  assert.deepEqual(claudeLog.at(-2)?.argv, ["mcp", "remove", "openpets", "--scope", "local"]);
-  assert.deepEqual(claudeLog.at(-1)?.argv.slice(0, 3), ["mcp", "add-json", "openpets"]);
-  const loggedMcpJson = JSON.parse(claudeLog.at(-1)?.argv[3] ?? "{}") as { readonly command?: string; readonly args?: readonly string[]; readonly env?: Record<string, unknown> };
-  assert.equal(loggedMcpJson.command, "npx");
-  assert.deepEqual(loggedMcpJson.args, ["-y", "@open-pets/cli@1.2.3", "mcp", "--pet", "fixer"]);
-  assert.deepEqual(loggedMcpJson.env, {});
-  assert.equal(claudeLog.at(-1)?.argv.at(-2), "--scope");
-  assert.equal(claudeLog.at(-1)?.argv.at(-1), "local");
 
   const cliBinLink = join(binDir, "openpets");
-  symlinkSync(new URL("./index.js", import.meta.url).pathname, cliBinLink);
-  const symlinkedHelp = spawnSync(process.execPath, [cliBinLink, "--help"], { encoding: "utf8" });
-  assert.equal(symlinkedHelp.status, 0);
-  assert.match(symlinkedHelp.stdout, /Usage:/);
+  if (createFileSymlinkIfSupported(cliEntryPath, cliBinLink)) {
+    const symlinkedHelp = spawnSync(process.execPath, [cliBinLink, "--help"], { encoding: "utf8" });
+    assert.equal(symlinkedHelp.status, 0);
+    assert.match(symlinkedHelp.stdout, /Usage:/);
+  }
 
   const opencodeProject = join(dir, "opencode-project");
   mkdirSync(opencodeProject);
-  await configureProject({ agent: "opencode", petId: "fixer", cwd: opencodeProject, yes: true, force: false, localDev: false });
+  await configureProject({ product: "openpets", agent: "opencode", petId: "fixer", cwd: opencodeProject, yes: true, force: false, localDev: false });
   const opencodeConfigPath = join(opencodeProject, ".opencode", "opencode.jsonc");
   const opencodeInstructionPath = join(opencodeProject, ".opencode", "openpets.md");
   const opencodeConfig = JSON.parse(readFileSync(opencodeConfigPath, "utf8")) as { readonly mcp?: Record<string, { readonly command?: readonly string[] }>; readonly instructions?: readonly string[]; readonly plugin?: readonly unknown[] };
-  assert.deepEqual(opencodeConfig.mcp?.openpets?.command, ["npx", "-y", `@open-pets/cli@${packageVersion}`, "mcp", "--pet", "fixer"]);
+  assert.deepEqual(opencodeConfig.mcp?.openpets?.command, ["npx", "-y", `@open-pets/cli@${packageVersion}`, "mcp", "--product", "openpets", "--pet", "fixer"]);
   assert.deepEqual(opencodeConfig.instructions, [".opencode/openpets.md"]);
-  assert.deepEqual(opencodeConfig.plugin, [[`@open-pets/opencode@${packageVersion}`, { pet: "fixer" }]]);
+  assert.deepEqual(opencodeConfig.plugin, [[`@open-pets/opencode@${packageVersion}`, { product: "openpets", pet: "fixer" }]]);
   assert.match(readFileSync(opencodeInstructionPath, "utf8"), /OPENPETS:START/);
-  await configureProject({ agent: "opencode", petId: "fixer", cwd: opencodeProject, yes: true, force: false, localDev: false });
+  await configureProject({ product: "openpets", agent: "opencode", petId: "fixer", cwd: opencodeProject, yes: true, force: false, localDev: false });
   const opencodeConfigAgain = readFileSync(opencodeConfigPath, "utf8");
   assert.equal((opencodeConfigAgain.match(/@open-pets\/opencode/g) ?? []).length, 1);
 
   const existingTopLevel = join(dir, "opencode-existing-top");
   mkdirSync(existingTopLevel);
   writeFileSync(join(existingTopLevel, "opencode.json"), JSON.stringify({ theme: "x", mcp: { other: { type: "local", command: ["other"] } }, plugin: ["other-plugin"], instructions: ["README.md"] }, null, 2), "utf8");
-  await configureProject({ agent: "opencode", petId: "fixer", cwd: existingTopLevel, yes: true, force: false, localDev: true });
+  await configureProject({ product: "openpets", agent: "opencode", petId: "fixer", cwd: existingTopLevel, yes: true, force: false, localDev: true });
   const existingConfig = JSON.parse(readFileSync(join(existingTopLevel, "opencode.json"), "utf8")) as { readonly theme?: string; readonly mcp?: Record<string, { readonly command?: readonly string[] }>; readonly plugin?: readonly unknown[]; readonly instructions?: readonly string[] };
   assert.equal(existingConfig.theme, "x");
   assert.deepEqual(existingConfig.mcp?.other?.command, ["other"]);
@@ -228,22 +240,22 @@ try {
   mkdirSync(join(lowerOwnerProject, ".opencode"), { recursive: true });
   writeFileSync(join(lowerOwnerProject, "opencode.json"), JSON.stringify({ theme: "top" }, null, 2), "utf8");
   writeFileSync(join(lowerOwnerProject, ".opencode", "opencode.jsonc"), JSON.stringify({ mcp: { openpets: { type: "local", command: ["npx", "-y", "@open-pets/cli@0.0.1", "mcp", "--pet", "helper"], enabled: true } } }, null, 2), "utf8");
-  await configureProject({ agent: "opencode", petId: "fixer", cwd: lowerOwnerProject, yes: true, force: false, localDev: false });
+  await configureProject({ product: "openpets", agent: "opencode", petId: "fixer", cwd: lowerOwnerProject, yes: true, force: false, localDev: false });
   const lowerTop = readFileSync(join(lowerOwnerProject, "opencode.json"), "utf8");
   const lowerOwned = JSON.parse(readFileSync(join(lowerOwnerProject, ".opencode", "opencode.jsonc"), "utf8")) as { readonly mcp?: Record<string, { readonly command?: readonly string[] }> };
   assert.equal(lowerTop.includes("@open-pets/cli"), false);
-  assert.deepEqual(lowerOwned.mcp?.openpets?.command, ["npx", "-y", `@open-pets/cli@${packageVersion}`, "mcp", "--pet", "fixer"]);
+  assert.deepEqual(lowerOwned.mcp?.openpets?.command, ["npx", "-y", `@open-pets/cli@${packageVersion}`, "mcp", "--product", "openpets", "--pet", "fixer"]);
 
   const customProject = join(dir, "opencode-custom");
   mkdirSync(customProject);
   writeFileSync(join(customProject, "opencode.json"), JSON.stringify({ mcp: { openpets: { type: "local", command: ["my-openpets-wrapper"] } } }), "utf8");
-  await assert.rejects(() => configureProject({ agent: "opencode", petId: "fixer", cwd: customProject, yes: true, force: false, localDev: false }));
+  await assert.rejects(() => configureProject({ product: "openpets", agent: "opencode", petId: "fixer", cwd: customProject, yes: true, force: false, localDev: false }));
   assert.equal(readFileSync(join(customProject, "opencode.json"), "utf8").includes("@open-pets/cli"), false);
 
   const instructionProject = join(dir, "opencode-instruction");
   mkdirSync(join(instructionProject, ".opencode"), { recursive: true });
   writeFileSync(join(instructionProject, ".opencode", "openpets.md"), "User text\n", "utf8");
-  await configureProject({ agent: "opencode", petId: "fixer", cwd: instructionProject, yes: true, force: false, localDev: false });
+  await configureProject({ product: "openpets", agent: "opencode", petId: "fixer", cwd: instructionProject, yes: true, force: false, localDev: false });
   const instructionText = readFileSync(join(instructionProject, ".opencode", "openpets.md"), "utf8");
   assert.match(instructionText, /User text/);
   assert.match(instructionText, /OPENPETS:START/);
@@ -254,16 +266,16 @@ try {
   mkdirSync(outsideOpenCode);
   writeFileSync(join(outsideOpenCode, "opencode.jsonc"), "{}\n", "utf8");
   writeFileSync(join(outsideOpenCode, "openpets.md"), "outside\n", "utf8");
-  symlinkSync(outsideOpenCode, join(symlinkOpenCodeProject, ".opencode"));
-  await assert.rejects(() => configureProject({ agent: "opencode", petId: "fixer", cwd: symlinkOpenCodeProject, yes: true, force: false, localDev: false }));
+  createDirectorySymlink(outsideOpenCode, join(symlinkOpenCodeProject, ".opencode"));
+  await assert.rejects(() => configureProject({ product: "openpets", agent: "opencode", petId: "fixer", cwd: symlinkOpenCodeProject, yes: true, force: false, localDev: false }));
 
   const cursorProject = join(dir, "cursor-project");
   mkdirSync(cursorProject);
-  await configureProject({ agent: "cursor", petId: "fixer", cwd: cursorProject, yes: true, force: false, localDev: false });
+  await configureProject({ product: "openpets", agent: "cursor", petId: "fixer", cwd: cursorProject, yes: true, force: false, localDev: false });
   const cursorConfigPath = join(cursorProject, ".cursor", "mcp.json");
   const cursorConfig = JSON.parse(readFileSync(cursorConfigPath, "utf8")) as { readonly mcpServers?: Record<string, { readonly command?: string; readonly args?: readonly string[] }> };
   assert.equal(cursorConfig.mcpServers?.openpets?.command, "npx");
-  assert.deepEqual(cursorConfig.mcpServers?.openpets?.args, ["-y", `@open-pets/mcp@${packageVersion}`, "--pet", "fixer"]);
+  assert.deepEqual(cursorConfig.mcpServers?.openpets?.args, ["-y", `@open-pets/mcp@${packageVersion}`, "--product", "openpets", "--pet", "fixer"]);
   assert.equal(readFileSync(cursorConfigPath, "utf8").includes("@open-pets/cli"), false);
 
   const cursorExistingProject = join(dir, "cursor-existing");
@@ -273,7 +285,7 @@ try {
   let cursorOutput = "";
   process.stdout.write = ((chunk: string | Uint8Array): boolean => { cursorOutput += String(chunk); return true; }) as typeof process.stdout.write;
   try {
-    await configureProject({ agent: "cursor", petId: "helper", cwd: cursorExistingProject, yes: true, force: false, localDev: false });
+    await configureProject({ product: "openpets", agent: "cursor", petId: "helper", cwd: cursorExistingProject, yes: true, force: false, localDev: false });
   } finally {
     process.stdout.write = originalStdoutWrite;
   }
@@ -282,20 +294,20 @@ try {
   assert.deepEqual(cursorExistingConfig.mcpServers?.other?.args, ["--token=hidden"]);
   assert.deepEqual(cursorExistingConfig.mcpServers?.other?.env, { SECRET: "hidden" });
   assert.equal(cursorExistingConfig.topLevel, "keep");
-  assert.deepEqual(cursorExistingConfig.mcpServers?.openpets?.args, ["-y", `@open-pets/mcp@${packageVersion}`, "--pet", "helper"]);
+  assert.deepEqual(cursorExistingConfig.mcpServers?.openpets?.args, ["-y", `@open-pets/mcp@${packageVersion}`, "--product", "openpets", "--pet", "helper"]);
 
   const cursorConflictProject = join(dir, "cursor-conflict");
   mkdirSync(join(cursorConflictProject, ".cursor"), { recursive: true });
   writeFileSync(join(cursorConflictProject, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: { openpets: { type: "stdio", command: "custom", args: [] }, other: { type: "stdio", command: "other", args: [] } } }, null, 2), "utf8");
-  await assert.rejects(() => configureProject({ agent: "cursor", petId: "fixer", cwd: cursorConflictProject, yes: true, force: false, localDev: false }));
-  await configureProject({ agent: "cursor", petId: "fixer", cwd: cursorConflictProject, yes: true, force: true, localDev: false });
+  await assert.rejects(() => configureProject({ product: "openpets", agent: "cursor", petId: "fixer", cwd: cursorConflictProject, yes: true, force: false, localDev: false }));
+  await configureProject({ product: "openpets", agent: "cursor", petId: "fixer", cwd: cursorConflictProject, yes: true, force: true, localDev: false });
   const cursorReplaced = JSON.parse(readFileSync(join(cursorConflictProject, ".cursor", "mcp.json"), "utf8")) as { readonly mcpServers?: Record<string, { readonly command?: string; readonly args?: readonly string[] }> };
   assert.equal(cursorReplaced.mcpServers?.other?.command, "other");
-  assert.deepEqual(cursorReplaced.mcpServers?.openpets?.args, ["-y", `@open-pets/mcp@${packageVersion}`, "--pet", "fixer"]);
+  assert.deepEqual(cursorReplaced.mcpServers?.openpets?.args, ["-y", `@open-pets/mcp@${packageVersion}`, "--product", "openpets", "--pet", "fixer"]);
 
   const cursorRulesOnlyProject = join(dir, "cursor-rules-only");
   mkdirSync(cursorRulesOnlyProject);
-  await configureProject({ agent: "cursor", cwd: cursorRulesOnlyProject, yes: true, force: false, localDev: false, cursorRulesMode: "only" });
+  await configureProject({ product: "openpets", agent: "cursor", cwd: cursorRulesOnlyProject, yes: true, force: false, localDev: false, cursorRulesMode: "only" });
   const cursorRulesPath = join(cursorRulesOnlyProject, ".cursor", "rules", "openpets.mdc");
   const cursorRulesContent = readFileSync(cursorRulesPath, "utf8");
   assert.match(cursorRulesContent, /OPENPETS:CURSOR_RULES:START/);
@@ -303,28 +315,28 @@ try {
   assert.doesNotMatch(cursorRulesContent, /alwaysApply:\s*true/);
   assert.equal(existsSync(join(cursorRulesOnlyProject, ".cursor", "mcp.json")), false);
 
-  await configureProject({ agent: "cursor", cwd: cursorRulesOnlyProject, yes: true, force: false, localDev: false, cursorRulesMode: "remove" });
+  await configureProject({ product: "openpets", agent: "cursor", cwd: cursorRulesOnlyProject, yes: true, force: false, localDev: false, cursorRulesMode: "remove" });
   assert.equal(existsSync(cursorRulesPath), false);
   assert.equal(existsSync(join(cursorRulesOnlyProject, ".cursor", "rules")), true);
 
   const cursorWithRulesConflictProject = join(dir, "cursor-with-rules-conflict");
   mkdirSync(join(cursorWithRulesConflictProject, ".cursor", "rules"), { recursive: true });
   writeFileSync(join(cursorWithRulesConflictProject, ".cursor", "rules", "openpets.mdc"), "User rule SECRET=hidden\n", "utf8");
-  await assert.rejects(() => configureProject({ agent: "cursor", petId: "fixer", cwd: cursorWithRulesConflictProject, yes: true, force: false, localDev: false, cursorRulesMode: "with" }));
+  await assert.rejects(() => configureProject({ product: "openpets", agent: "cursor", petId: "fixer", cwd: cursorWithRulesConflictProject, yes: true, force: false, localDev: false, cursorRulesMode: "with" }));
   assert.equal(existsSync(join(cursorWithRulesConflictProject, ".cursor", "mcp.json")), false);
   assert.equal(readFileSync(join(cursorWithRulesConflictProject, ".cursor", "rules", "openpets.mdc"), "utf8"), "User rule SECRET=hidden\n");
 
   let cursorWithRulesOutput = "";
   process.stdout.write = ((chunk: string | Uint8Array): boolean => { cursorWithRulesOutput += String(chunk); return true; }) as typeof process.stdout.write;
   try {
-    await configureProject({ agent: "cursor", petId: "fixer", cwd: cursorWithRulesConflictProject, yes: true, force: true, localDev: false, cursorRulesMode: "with" });
+    await configureProject({ product: "openpets", agent: "cursor", petId: "fixer", cwd: cursorWithRulesConflictProject, yes: true, force: true, localDev: false, cursorRulesMode: "with" });
   } finally {
     process.stdout.write = originalStdoutWrite;
   }
   assert.match(cursorWithRulesOutput, /Rules backup:/);
   assert.equal(cursorWithRulesOutput.includes("hidden"), false);
   const cursorWithRulesConfig = JSON.parse(readFileSync(join(cursorWithRulesConflictProject, ".cursor", "mcp.json"), "utf8")) as { readonly mcpServers?: Record<string, { readonly args?: readonly string[] }> };
-  assert.deepEqual(cursorWithRulesConfig.mcpServers?.openpets?.args, ["-y", `@open-pets/mcp@${packageVersion}`, "--pet", "fixer"]);
+  assert.deepEqual(cursorWithRulesConfig.mcpServers?.openpets?.args, ["-y", `@open-pets/mcp@${packageVersion}`, "--product", "openpets", "--pet", "fixer"]);
   assert.match(readFileSync(join(cursorWithRulesConflictProject, ".cursor", "rules", "openpets.mdc"), "utf8"), /OPENPETS:CURSOR_RULES:START/);
   const cursorRulesBackups = readdirSync(join(cursorWithRulesConflictProject, ".cursor", "rules")).filter((name) => name.includes("openpets-backup"));
   assert.equal(cursorRulesBackups.length, 1);
@@ -339,7 +351,7 @@ async function captureDoctorJson(cwd: string): Promise<Record<string, unknown>> 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   process.stdout.write = ((chunk: any) => { captured += typeof chunk === "string" ? chunk : String(chunk); return true; }) as typeof process.stdout.write;
   try {
-    await runDoctor({ cwd, json: true });
+    await runDoctor({ product: "openpets", cwd, json: true });
   } finally {
     process.stdout.write = originalWrite;
   }
@@ -362,19 +374,34 @@ const doctorMissingReport = await captureDoctorJson(doctorMissingProject);
 assert.equal((doctorMissingReport.cursor as { status?: string }).status, "missing");
 rmSync(doctorMissingProject, { recursive: true, force: true });
 
-const invalidHook = spawnSync(process.execPath, [new URL("./index.js", import.meta.url).pathname, "hook", "--openpets-managed", "--pet", "bad/pet"], { input: JSON.stringify({ hook_event_name: "Notification" }), encoding: "utf8" });
+const invalidHook = spawnSync(process.execPath, [cliEntryPath, "hook", "--openpets-managed", "--pet", "bad/pet"], { input: JSON.stringify({ hook_event_name: "Notification" }), encoding: "utf8" });
 assert.equal(invalidHook.status, 1);
-const missingPetHook = spawnSync(process.execPath, [new URL("./index.js", import.meta.url).pathname, "hook", "--openpets-managed", "--pet"], { input: JSON.stringify({ hook_event_name: "Notification" }), encoding: "utf8" });
+const missingPetHook = spawnSync(process.execPath, [cliEntryPath, "hook", "--openpets-managed", "--pet"], { input: JSON.stringify({ hook_event_name: "Notification" }), encoding: "utf8" });
 assert.equal(missingPetHook.status, 1);
 
 for (const args of [["--help"], ["-h"], ["status", "--help"], ["doctor", "--help"], ["pets", "--help"], ["react", "--help"], ["say", "--help"], ["install", "--help"], ["configure", "--help"], ["configure", "-h"], ["plugin", "--help"], ["plugin", "new", "--help"], ["mcp", "--help"], ["hook", "--help"]]) {
-  const help = spawnSync(process.execPath, [new URL("./index.js", import.meta.url).pathname, ...args], { encoding: "utf8" });
-  assert.equal(help.status, 0);
+  const help = spawnSync(process.execPath, [cliEntryPath, ...args], { encoding: "utf8" });
+  assert.equal(help.status, 0, `help command failed: ${args.join(" ")}\n${help.stderr}`);
   assert.match(help.stdout, /Usage:/);
 }
 
-const doctorHelp = spawnSync(process.execPath, [new URL("./index.js", import.meta.url).pathname, "doctor", "--help"], { encoding: "utf8" });
+const doctorHelp = spawnSync(process.execPath, [cliEntryPath, "doctor", "--help"], { encoding: "utf8" });
 assert.equal(doctorHelp.status, 0);
 assert.match(doctorHelp.stdout, /doctor/);
 
 console.error("CLI contract validation passed.");
+
+function createFileSymlinkIfSupported(target: string, path: string): boolean {
+  try {
+    symlinkSync(target, path, "file");
+    return true;
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+    if (code === "EPERM" || code === "EACCES" || code === "ENOTSUP") return false;
+    throw error;
+  }
+}
+
+function createDirectorySymlink(target: string, path: string): void {
+  symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
+}

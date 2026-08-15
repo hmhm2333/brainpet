@@ -33,6 +33,8 @@ try {
 
   assert.deepEqual(formatOpenCodeMcpConfig({ cliVersion: "0.0.0", petId: "fixer" }), { mcp: { openpets: { type: "local", command: ["npx", "-y", "@open-pets/cli@0.0.0", "mcp", "--pet", "fixer"], enabled: true } } });
   assert.deepEqual(buildOpenCodeMcpEntry({ cliVersion: "0.0.0" }), { type: "local", command: ["npx", "-y", "@open-pets/cli@0.0.0", "mcp"], enabled: true });
+  assert.deepEqual(buildOpenCodeMcpEntry({ product: "brainpet", cliVersion: "0.0.0", petId: "fixer" }).command, ["npx", "-y", "@open-pets/cli@0.0.0", "mcp", "--product", "brainpet", "--pet", "fixer"]);
+  assert.deepEqual(buildOpenCodePluginPreview({ product: "brainpet", petId: "fixer" }), ["@open-pets/opencode", { product: "brainpet", pet: "fixer" }]);
   assert.deepEqual(buildOpenCodeMcpEntry({ cliVersion: "0.0.0", environment: { OPENPETS_DISCOVERY_FILE: "/mnt/c/Users/alvin/AppData/Roaming/OpenPets/runtime/ipc.json" } }), { type: "local", command: ["npx", "-y", "@open-pets/cli@0.0.0", "mcp"], enabled: true, environment: { OPENPETS_DISCOVERY_FILE: "/mnt/c/Users/alvin/AppData/Roaming/OpenPets/runtime/ipc.json" } });
   assert.deepEqual(buildOpenCodeMcpEntry({ cliVersion: "0.0.0", commandMode: "local", cliEntryPath: join(root, "cli.js"), petId: "fixer" }), { type: "local", command: ["node", join(root, "cli.js"), "mcp", "--pet", "fixer"], enabled: true });
   assert.throws(() => buildOpenCodeMcpEntry({ cliVersion: "0.0.0", commandMode: "local", cliEntryPath: "relative.js" }));

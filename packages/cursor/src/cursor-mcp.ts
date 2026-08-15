@@ -1,4 +1,5 @@
 import { isAbsolute, join } from "node:path";
+import type { TargetProduct } from "@open-pets/client";
 
 export const cursorMcpServerName = "openpets";
 export const openPetsMcpPackageName = "@open-pets/mcp";
@@ -19,6 +20,7 @@ export interface CursorMcpConfig {
 }
 
 export interface CursorMcpPreviewOptions {
+  readonly product?: TargetProduct;
   readonly mcpVersion: string;
   readonly petId?: string;
   readonly commandMode?: CursorCommandMode;
@@ -38,15 +40,16 @@ export function isValidPetId(value: string): boolean {
 
 export function buildCursorMcpEntry(options: CursorMcpPreviewOptions): CursorMcpEntry {
   const petArgs = options.petId === undefined ? [] : ["--pet", validateOpenPetsPetId(options.petId)];
+  const targetArgs = options.product ? ["--product", options.product] : [];
   const mode = options.commandMode ?? "published";
   if (mode === "local" || mode === "bundled") {
     if (!options.mcpEntryPath || !isAbsolute(options.mcpEntryPath)) {
       throw new Error("Cursor local MCP preview requires an absolute MCP entry path.");
     }
-    return { type: "stdio", command: "node", args: [options.mcpEntryPath, ...petArgs] };
+    return { type: "stdio", command: "node", args: [options.mcpEntryPath, ...targetArgs, ...petArgs] };
   }
   validateOpenPetsPackageVersion(options.mcpVersion);
-  return { type: "stdio", command: "npx", args: ["-y", `${openPetsMcpPackageName}@${options.mcpVersion}`, ...petArgs] };
+  return { type: "stdio", command: "npx", args: ["-y", `${openPetsMcpPackageName}@${options.mcpVersion}`, ...targetArgs, ...petArgs] };
 }
 
 export function validateOpenPetsPackageVersion(value: string): string {

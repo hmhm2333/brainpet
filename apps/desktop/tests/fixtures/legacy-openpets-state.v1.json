@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "futureTopLevel": {
+    "owner": "future-release",
+    "enabled": true
+  },
+  "preferences": {
+    "defaultPetId": "missing-pet",
+    "openDefaultPetOnLaunch": false,
+    "petScale": 1.5,
+    "onboardingCompleted": true,
+    "futurePreference": {
+      "mode": "preserve-me"
+    }
+  },
+  "pets": {
+    "installed": [],
+    "futureCatalogCursor": "page-7"
+  },
+  "defaultPet": {
+    "position": {
+      "x": 10.4,
+      "y": 20.6
+    },
+    "futureRigCalibration": [1, 2, 3]
+  },
+  "activity": {
+    "messagesSent": 3,
+    "reactionsSent": 4,
+    "reactionCounts": {
+      "success": 2
+    },
+    "perPetActivityCounts": {},
+    "futureCounter": 9
+  }
+}

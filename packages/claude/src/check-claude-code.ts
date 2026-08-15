@@ -12,6 +12,9 @@ const petPreview = buildClaudeMcpPreview("snoopy");
 assert.deepEqual(petPreview.add.args, ["mcp", "add", "--scope", "user", "openpets", "--", "npx", "-y", "@open-pets/mcp", "--pet", "snoopy"]);
 assert.deepEqual(petPreview.mcpJson.mcpServers.openpets.args, ["-y", "@open-pets/mcp", "--pet", "snoopy"]);
 assert.deepEqual(buildClaudeMcpGetCommand().args, ["mcp", "get", "openpets"]);
+const brainPetPreview = buildClaudeMcpPreview("snoopy", "published", "node", "brainpet");
+assert.deepEqual(brainPetPreview.mcpJson.mcpServers.openpets.args, ["-y", "@open-pets/mcp", "--product", "brainpet", "--pet", "snoopy"]);
+assert.equal(parseClaudeMcpGetOutput(JSON.stringify({ command: "npx", args: brainPetPreview.mcpJson.mcpServers.openpets.args }), "snoopy", "published", "node", "brainpet").matchesExpected, true);
 
 const localPreview = buildClaudeMcpPreview("snoopy", "local");
 assert.deepEqual(localPreview.add.args, ["mcp", "add", "--scope", "user", "openpets", "--", "node", getLocalMcpEntryPath(), "--pet", "snoopy"]);

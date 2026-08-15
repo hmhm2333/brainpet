@@ -288,6 +288,8 @@ async function handleRequest(request: OpenPetsIpcRequest): Promise<unknown> {
       ok: true,
       protocol: "openpets-ipc",
       protocolVersion: 1,
+      product: ipcDiscovery?.product,
+      appId: ipcDiscovery?.appId,
       appVersion: ipcDiscovery?.appVersion ?? "0.0.0",
     };
   }
@@ -306,6 +308,8 @@ async function handleRequest(request: OpenPetsIpcRequest): Promise<unknown> {
       ok: true,
       appRunning: true,
       protocolVersion: 1,
+      product: ipcDiscovery?.product,
+      appId: ipcDiscovery?.appId,
       appVersion: ipcDiscovery?.appVersion ?? "0.0.0",
       defaultPet: {
         id: defaultPet.id,

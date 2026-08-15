@@ -46,11 +46,7 @@ async function sendLifecycleEvent(event, deadline) {
   const running = await readDiscoveryIfPresent(paths.brainPetDiscovery);
   if (running && await sendToDiscovery(event, running, deadline)) return;
 
-  if (!shouldWakeRuntime(event)) {
-    const development = await readDiscoveryIfPresent(paths.openPetsDevelopmentDiscovery);
-    if (development) await sendToDiscovery(event, development, deadline);
-    return;
-  }
+  if (!shouldWakeRuntime(event)) return;
 
   const wake = paths.installMarker ? await launchInstalledRuntime(paths.installMarker) : { status: "missing" };
   if (paths.brainPetDiscovery && wake.status === "launched") {
@@ -62,10 +58,8 @@ async function sendLifecycleEvent(event, deadline) {
     return;
   }
 
-  if (wake.status !== "missing") return;
-
-  const development = await readDiscoveryIfPresent(paths.openPetsDevelopmentDiscovery);
-  if (development) await sendToDiscovery(event, development, deadline);
+  // Missing or invalid BrainPet installations fail open. A BrainPet bridge must
+  // never send lifecycle activity to an OpenPets discovery endpoint.
 }
 
 async function sendToDiscovery(event, discovery, deadline) {
@@ -85,7 +79,7 @@ async function readDiscovery(path) {
   const raw = await readFile(path, "utf8");
   if (Buffer.byteLength(raw, "utf8") > maxIpcMessageBytes) throw new Error("Invalid discovery file.");
   const value = JSON.parse(raw);
-  if (!value || value.protocol !== "openpets-ipc" || value.protocolVersion !== 1 || typeof value.endpoint !== "string" || typeof value.token !== "string" || value.token.length < 16 || value.token.length > 256) {
+  if (!value || value.protocol !== "openpets-ipc" || value.protocolVersion !== 1 || value.product !== "brainpet" || value.appId !== "dev.brainpet.app" || typeof value.endpoint !== "string" || typeof value.token !== "string" || value.token.length < 16 || value.token.length > 256) {
     throw new Error("Invalid discovery file.");
   }
   return { endpoint: value.endpoint, token: value.token };

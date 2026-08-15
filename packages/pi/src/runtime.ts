@@ -1,7 +1,8 @@
 import { pickHookSpeech, validateHookSpeech } from "@open-pets/agent-events";
-import { allowedReactions, createOpenPetsClient, type OpenPetsClient, type OpenPetsReaction } from "@open-pets/client";
+import { allowedReactions, createOpenPetsClient, type OpenPetsClient, type OpenPetsReaction, type TargetProduct } from "@open-pets/client";
 
 export interface OpenPetsPiOptions {
+  readonly product?: TargetProduct;
   readonly clientFactory?: () => OpenPetsClient;
   readonly schedule?: (work: () => Promise<void>) => void;
   readonly debug?: boolean;
@@ -73,7 +74,10 @@ export function createOpenPetsPiExtension(pi: unknown, options: OpenPetsPiOption
 }
 
 export function createOpenPetsPiRuntime(options: OpenPetsPiOptions = {}): OpenPetsPiRuntime {
-  const clientFactory = options.clientFactory ?? (() => createOpenPetsClient({ connectTimeoutMs: automaticTimeoutMs, responseTimeoutMs: automaticTimeoutMs }));
+  const clientFactory = options.clientFactory ?? (() => {
+    if (!options.product) throw new Error("Pi extension requires an explicit brainpet or openpets product target.");
+    return createOpenPetsClient({ target: options.product, connectTimeoutMs: automaticTimeoutMs, responseTimeoutMs: automaticTimeoutMs });
+  });
   const schedule = options.schedule ?? defaultSchedule;
   const debug = options.debug === true || process.env.OPENPETS_PI_DEBUG === "1";
   const debugLog = options.debugLog ?? ((message) => {

@@ -4,19 +4,12 @@ import { homedir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 import { app } from "electron";
+import { resolveTargetProfile, type OpenPetsDiscoveryFile } from "@open-pets/client";
 
 import { openPetsIpcProtocol, openPetsIpcVersion } from "./local-ipc-protocol.js";
 import { resolveDesktopDistributionSettings, type DesktopDistributionProfile } from "./distribution-profile.js";
 
-export interface OpenPetsDiscoveryFile {
-  readonly protocolVersion: 1;
-  readonly protocol: "openpets-ipc";
-  readonly endpoint: string;
-  readonly token: string;
-  readonly appVersion: string;
-  readonly pid: number;
-  readonly platform: NodeJS.Platform;
-}
+export type { OpenPetsDiscoveryFile };
 
 export type IpcEndpoint =
   | { readonly kind: "tcp"; readonly host: string; readonly port: number }
@@ -29,28 +22,7 @@ export function configureLocalIpcDistributionProfile(profile: DesktopDistributio
 }
 
 export function getDiscoveryFilePath(): string {
-  if (process.env.OPENPETS_DISCOVERY_FILE) {
-    return process.env.OPENPETS_DISCOVERY_FILE;
-  }
-
-  const profile = resolveLocalIpcDistributionProfile();
-  const productDirectory = profile === "brainpet" ? "BrainPet" : "OpenPets";
-  const runtimeDirectory = profile === "brainpet" ? "brainpet" : "openpets";
-
-  if (process.platform === "darwin") {
-    return join(homedir(), "Library", "Application Support", productDirectory, "runtime", "ipc.json");
-  }
-
-  if (process.platform === "win32") {
-    return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), productDirectory, "runtime", "ipc.json");
-  }
-
-  const xdg = getSecureXdgRuntimeDir();
-  if (xdg) {
-    return join(xdg, runtimeDirectory, "ipc.json");
-  }
-
-  return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), productDirectory, "runtime", "ipc.json");
+  return resolveTargetProfile(resolveLocalIpcDistributionProfile()).discoveryPath;
 }
 
 export function resolveLocalIpcDistributionProfile(
@@ -224,9 +196,12 @@ function isPrivateOrLocalIpv4(host: string): boolean {
 }
 
 export function writeDiscoveryFile(endpoint: string, token: string): OpenPetsDiscoveryFile {
+  const target = resolveTargetProfile(resolveLocalIpcDistributionProfile());
   const discovery: OpenPetsDiscoveryFile = {
     protocolVersion: openPetsIpcVersion,
     protocol: openPetsIpcProtocol,
+    product: target.product,
+    appId: target.appId,
     endpoint,
     token,
     appVersion: app.getVersion(),
@@ -250,7 +225,7 @@ export function removeDiscoveryFile(discovery: OpenPetsDiscoveryFile | null): vo
   const path = getDiscoveryFilePath();
   try {
     const current = JSON.parse(readFileSync(path, "utf8")) as Partial<OpenPetsDiscoveryFile>;
-    if (current.pid !== discovery.pid || current.token !== discovery.token || current.endpoint !== discovery.endpoint) {
+    if (current.product !== discovery.product || current.appId !== discovery.appId || current.pid !== discovery.pid || current.token !== discovery.token || current.endpoint !== discovery.endpoint) {
       return;
     }
     rmSync(path, { force: true });

@@ -6,7 +6,7 @@ Core IPC client implementation for OpenPets desktop app communication.
 
 ### index.ts
 
-Main client implementation (193 lines). `createOpenPetsClient()` factory, all client methods, result parsers, and `sendRequest()` for low-level IPC.
+Main client implementation. `createOpenPetsClient({ target })` requires an explicit product for local IPC, while explicit remote mode remains target-independent. Contains all client methods, result parsers, and `sendRequest()` for low-level IPC.
 
 **Client Methods:**
 - `hello()` - Protocol handshake
@@ -56,7 +56,11 @@ IPC protocol constants, request/response types, `parseIpcResponse()`, `validateR
 
 ### discovery.ts
 
-Discovery file handling. `getDiscoveryFilePaths()` preserves explicit-path selection, otherwise probes OpenPets first and BrainPet second; malformed first-party discovery never silently falls through. `readDiscoveryFile()`, `validateDiscovery()`, `validateEndpoint()`, platform-specific path logic, and XDG security checks share the same boundary.
+Discovery file handling. `getDiscoveryFilePaths(product)` resolves exactly one product-specific path; `readDiscoveryFile(target)` validates both `product` and `appId` and never falls through to the other product. `validateEndpoint()`, platform-specific path logic, and XDG security checks share the same boundary.
+
+### target-profile.ts
+
+Single source for `TargetProfile`: product, app id, discovery path, runtime marker path, update channel and adapter contract version. Both desktop and integration packages use this resolver.
 
 **Platform Paths:**
 - macOS: `~/Library/Application Support/{OpenPets,BrainPet}/runtime/ipc.json`
@@ -94,6 +98,8 @@ Contract validation (moved from src/check-client-protocol.ts). Runtime assertion
 - Endpoint parsing (Unix socket, Windows pipe, TCP)
 - TCP private IP validation (loopback, private ranges, link-local)
 - Cross-platform discovery (Windows desktop → WSL)
+- Simultaneous BrainPet/OpenPets hosts with isolated tokens and endpoints
+- Missing/mismatched target rejection with no opposite-product fallback
 - Public IP rejection
 - Response parsing (ok/error cases)
 - Pet list/install result parsing

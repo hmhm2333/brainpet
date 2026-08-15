@@ -46,8 +46,9 @@ Codex 暴露稳定 request id、结构化选项和可执行接口时，BrainPet 
 
 ## C：通用 Agent 适配器
 
-历史验证状态（`0dacd88`）：Claude 与 OpenCode 已改用共享 lifecycle builder；通用客户端在
-OpenPets discovery 缺失时可回退发现 BrainPet，显式 discovery 仍严格优先。
+历史验证状态（`0dacd88`）：Claude 与 OpenCode 已改用共享 lifecycle builder；当时通用客户端在
+OpenPets discovery 缺失时仍会回退发现 BrainPet。该回退已在 RC-1 删除，当前配置必须携带
+`brainpet|openpets` 显式目标，目标缺失或不可用时 fail-open，不再连接另一产品。
 两者均已通过运行中的 packaged BrainPet IPC smoke；OpenCode 另加入串行发送
 队列，保证快速连续事件不会把 `idle` 与 `waiting` 乱序。
 

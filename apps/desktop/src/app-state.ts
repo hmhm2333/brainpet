@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 
 import { app } from "electron";
 
@@ -12,6 +12,7 @@ import { assertSafePetId, getInstalledPetDir } from "./pet-paths.js";
 import { normalizePetPoolOrder } from "./pet-pool.js";
 import { publishPluginAgentActivity } from "./plugin-events-source.js";
 import { normalizeReactionAnimationOverrides, type ReactionAnimationOverrides } from "./reaction-animation-mapping.js";
+import { copyUnknownFields, preserveAppStateUnknownFields, readJsonFileWithBackup, writeJsonFileAtomically } from "./app-state-persistence.js";
 
 export { normalizePetPoolOrder } from "./pet-pool.js";
 
@@ -36,8 +37,10 @@ export interface InstalledPetState {
 }
 
 export interface OpenPetsStateV1 {
+  readonly [key: string]: unknown;
   readonly version: 1;
   readonly preferences: {
+    readonly [key: string]: unknown;
     readonly defaultPetId: string;
     readonly openDefaultPetOnLaunch: boolean;
     readonly locale: LocalePreference;
@@ -76,9 +79,11 @@ export interface OpenPetsStateV1 {
     readonly primaryCompanionFollowMode: PrimaryCompanionFollowMode;
   };
   readonly pets: {
+    readonly [key: string]: unknown;
     readonly installed: readonly InstalledPetState[];
   };
   readonly defaultPet: {
+    readonly [key: string]: unknown;
     readonly position?: Point;
     /**
      * Per-monitor position map. Keys are stable display identifiers derived from
@@ -92,6 +97,7 @@ export interface OpenPetsStateV1 {
 
 /** Local dashboard activity counters (not remote telemetry). */
 export interface OpenPetsActivityState {
+  readonly [key: string]: unknown;
   readonly messagesSent: number;
   readonly reactionsSent: number;
   readonly reactionCounts: Record<OpenPetsReaction, number>;
@@ -421,22 +427,24 @@ function getInitializedState(): OpenPetsStateV1 {
 }
 
 function readStateFile(path: string): unknown {
-  if (!existsSync(path)) {
+  const result = readJsonFileWithBackup(path);
+  if (!result) {
+    if (existsSync(path) || existsSync(`${path}.bak`)) console.error(`Failed to read OpenPets state or its backup from ${path}; using defaults.`);
     return undefined;
   }
+  if (result.recoveredFromBackup) console.warn(`Recovered OpenPets state from ${path}.bak.`);
+  return result.value;
+}
 
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as unknown;
-  } catch (error) {
-    console.error(`Failed to read OpenPets state from ${path}; using defaults.`, error);
-    return undefined;
-  }
+export function migrateAppState(value: unknown): OpenPetsStateV1 {
+  return normalizeState(value);
 }
 
 function normalizeState(value: unknown): OpenPetsStateV1 {
   const record = isRecord(value) ? value : {};
   const defaultPetRecord = isRecord(record.defaultPet) ? record.defaultPet : {};
   const preferencesRecord = isRecord(record.preferences) ? record.preferences : {};
+  const petsRecord = isRecord(record.pets) ? record.pets : {};
   const defaultState = createDefaultState();
   const position = normalizeMaybePosition(defaultPetRecord.position);
   const perMonitorPositions = normalizePerMonitorPositions(defaultPetRecord.perMonitorPositions);
@@ -446,13 +454,14 @@ function normalizeState(value: unknown): OpenPetsStateV1 {
     ? preferencesRecord.defaultPetId
     : builtInPet.id;
 
-  const defaultPet: OpenPetsStateV1["defaultPet"] = {};
+  const defaultPet = copyUnknownFields(defaultPetRecord, ["position", "perMonitorPositions"]) as OpenPetsStateV1["defaultPet"];
   if (position) (defaultPet as Record<string, unknown>).position = position;
   if (perMonitorPositions && Object.keys(perMonitorPositions).length > 0) {
     (defaultPet as Record<string, unknown>).perMonitorPositions = perMonitorPositions;
   }
 
-  return {
+  const normalized: OpenPetsStateV1 = {
+    ...copyUnknownFields(record, ["version", "preferences", "pets", "defaultPet", "activity"]),
     version: 1,
     preferences: normalizePreferences({
       ...defaultState.preferences,
@@ -460,16 +469,19 @@ function normalizeState(value: unknown): OpenPetsStateV1 {
       defaultPetId,
     }),
     pets: {
+      ...copyUnknownFields(petsRecord, ["installed"]),
       installed: installedPets,
     },
     defaultPet,
     activity: normalizeActivity(record.activity),
   };
+  return preserveAppStateUnknownFields(record, normalized);
 }
 
 function normalizeActivity(value: unknown): OpenPetsActivityState {
   const record = isRecord(value) ? value : {};
   return {
+    ...copyUnknownFields(record, ["messagesSent", "reactionsSent", "reactionCounts", "perPetActivityCounts", "lastActivityAt"]),
     messagesSent: normalizeCount(record.messagesSent),
     reactionsSent: normalizeCount(record.reactionsSent),
     reactionCounts: normalizeReactionCounts(record.reactionCounts),
@@ -514,8 +526,10 @@ function normalizeTimestamp(value: unknown): number | undefined {
 
 function normalizePreferences(value: Partial<OpenPetsStateV1["preferences"]>): OpenPetsStateV1["preferences"] {
   const defaultState = createDefaultState();
+  const record = isRecord(value) ? value : {};
 
   return {
+    ...copyUnknownFields(record, ["defaultPetId", "openDefaultPetOnLaunch", "locale", "appearanceTheme", "speechBubblesEnabled", "petScale", "waitingAnimationDurationMs", "reactionAnimationOverrides", "onboardingCompleted", "claudeCommandPath", "nodeCommandPath", "opencodeCommandPath", "petPoolOrder", "petPoolEnabled", "petConfinementEnabled", "petCrossDisplayEnabled", "petGravityEnabled", "primaryCompanionFollowMode"]),
     defaultPetId: typeof value.defaultPetId === "string" ? value.defaultPetId : builtInPet.id,
     openDefaultPetOnLaunch: typeof value.openDefaultPetOnLaunch === "boolean"
       ? value.openDefaultPetOnLaunch
@@ -585,6 +599,7 @@ function normalizeInstalledPet(value: unknown): InstalledPetState | null {
   const brokenReason = validateInstalledPetFiles(value.id);
 
   return {
+    ...copyUnknownFields(value, ["id", "displayName", "description", "builtIn", "protected", "installed", "source", "broken", "brokenReason"]),
     id: value.id,
     displayName: value.displayName,
     description: typeof value.description === "string" ? value.description : undefined,
@@ -641,11 +656,11 @@ function commitState(nextState: OpenPetsStateV1): void {
 
 function writeStateToDisk(state: OpenPetsStateV1): void {
   const path = getStateFilePath();
+  writeStateFileAtomically(path, state);
+}
 
-  mkdirSync(dirname(path), { recursive: true });
-  const tempPath = `${path}.${process.pid}.tmp`;
-  writeFileSync(tempPath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-  renameSync(tempPath, path);
+export function writeStateFileAtomically(path: string, state: OpenPetsStateV1): void {
+  writeJsonFileAtomically(path, state);
 }
 
 function validateInstalledPetFiles(petId: string): string | undefined {

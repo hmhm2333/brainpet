@@ -1,6 +1,7 @@
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lstatSync, realpathSync, statSync } from "node:fs";
+import type { TargetProduct } from "@open-pets/client";
 
 export const claudeMcpServerName = "openpets";
 export const openPetsMcpPackageName = "@open-pets/mcp";
@@ -38,8 +39,8 @@ export interface ParsedClaudeMcpEntry {
   readonly matchesExpected: boolean;
 }
 
-export function buildClaudeMcpPreview(selectedPetId?: string, commandMode: OpenPetsCommandMode = "published", nodeCommand = "node"): ClaudeMcpPreview {
-  const server = buildOpenPetsMcpServerCommand(selectedPetId, commandMode, nodeCommand);
+export function buildClaudeMcpPreview(selectedPetId?: string, commandMode: OpenPetsCommandMode = "published", nodeCommand = "node", product?: TargetProduct): ClaudeMcpPreview {
+  const server = buildOpenPetsMcpServerCommand(selectedPetId, commandMode, nodeCommand, product);
   const addArgs = ["mcp", "add", "--scope", "user", claudeMcpServerName, "--", server.command, ...server.args] as const;
   const removeArgs = ["mcp", "remove", "--scope", "user", claudeMcpServerName] as const;
   const add: ClaudeCommandSpec = { command: "claude", args: addArgs };
@@ -61,21 +62,23 @@ export function buildClaudeMcpPreview(selectedPetId?: string, commandMode: OpenP
   };
 }
 
-export function buildOpenPetsMcpArgs(selectedPetId?: string): readonly string[] {
-  if (selectedPetId === undefined) return ["-y", openPetsMcpPackageName];
+export function buildOpenPetsMcpArgs(selectedPetId?: string, product?: TargetProduct): readonly string[] {
+  const targetArgs = product ? ["--product", product] : [];
+  if (selectedPetId === undefined) return ["-y", openPetsMcpPackageName, ...targetArgs];
   validateOpenPetsPetArg(selectedPetId);
-  return ["-y", openPetsMcpPackageName, "--pet", selectedPetId];
+  return ["-y", openPetsMcpPackageName, ...targetArgs, "--pet", selectedPetId];
 }
 
-export function buildOpenPetsMcpServerCommand(selectedPetId?: string, commandMode: OpenPetsCommandMode = "published", nodeCommand = "node"): { readonly command: string; readonly args: readonly string[] } {
+export function buildOpenPetsMcpServerCommand(selectedPetId?: string, commandMode: OpenPetsCommandMode = "published", nodeCommand = "node", product?: TargetProduct): { readonly command: string; readonly args: readonly string[] } {
+  const targetArgs = product ? ["--product", product] : [];
   if (commandMode === "local" || commandMode === "bundled") {
     const entryPath = commandMode === "bundled" ? getBundledMcpEntryPath() : getLocalMcpEntryPath();
     commandMode === "bundled" ? assertBundledMcpEntryPath() : assertLocalMcpEntryPath();
-    if (selectedPetId === undefined) return { command: nodeCommand, args: [entryPath] };
+    if (selectedPetId === undefined) return { command: nodeCommand, args: [entryPath, ...targetArgs] };
     validateOpenPetsPetArg(selectedPetId);
-    return { command: nodeCommand, args: [entryPath, "--pet", selectedPetId] };
+    return { command: nodeCommand, args: [entryPath, ...targetArgs, "--pet", selectedPetId] };
   }
-  return { command: "npx", args: buildOpenPetsMcpArgs(selectedPetId) };
+  return { command: "npx", args: buildOpenPetsMcpArgs(selectedPetId, product) };
 }
 
 export function assertLocalMcpEntryPath(): void {
@@ -125,12 +128,12 @@ export function parseClaudeMcpListOutput(output: string): ParsedClaudeMcpEntry {
   };
 }
 
-export function parseClaudeMcpGetOutput(output: string, expectedPetId?: string, commandMode: OpenPetsCommandMode = "published", nodeCommand = "node"): ParsedClaudeMcpEntry {
+export function parseClaudeMcpGetOutput(output: string, expectedPetId?: string, commandMode: OpenPetsCommandMode = "published", nodeCommand = "node", product?: TargetProduct): ParsedClaudeMcpEntry {
   const text = output.trim();
   if (!text) return { present: false, source: "none", verified: false, matchesExpected: false };
 
   const parsed = tryParseJson(text);
-  const expected = buildOpenPetsMcpServerCommand(expectedPetId, commandMode, nodeCommand);
+  const expected = buildOpenPetsMcpServerCommand(expectedPetId, commandMode, nodeCommand, product);
   const jsonEntry = parsed ? extractJsonEntry(parsed) : null;
   if (jsonEntry) {
     const matchesExpected = jsonEntry.command === expected.command && arraysEqual(jsonEntry.args, expected.args);
@@ -151,9 +154,9 @@ export function parseClaudeMcpGetOutput(output: string, expectedPetId?: string, 
   return { present: false, source: "none", verified: false, matchesExpected: false };
 }
 
-export function classifyClaudeMcpStatus(listOutput: string, getOutput: string | undefined, expectedPetId?: string, commandMode: OpenPetsCommandMode = "published", nodeCommand = "node"): ParsedClaudeMcpEntry {
+export function classifyClaudeMcpStatus(listOutput: string, getOutput: string | undefined, expectedPetId?: string, commandMode: OpenPetsCommandMode = "published", nodeCommand = "node", product?: TargetProduct): ParsedClaudeMcpEntry {
   if (getOutput) {
-    const parsedGet = parseClaudeMcpGetOutput(getOutput, expectedPetId, commandMode, nodeCommand);
+    const parsedGet = parseClaudeMcpGetOutput(getOutput, expectedPetId, commandMode, nodeCommand, product);
     if (parsedGet.present) return parsedGet;
   }
   return parseClaudeMcpListOutput(listOutput);

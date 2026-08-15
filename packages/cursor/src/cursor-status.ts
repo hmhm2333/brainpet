@@ -187,9 +187,10 @@ function isNodeOpenPetsMcpArgs(args: readonly string[]): boolean {
 
 function hasValidPetArgs(args: readonly string[]): boolean {
   if (args.length === 0) return true;
-  if (args.length !== 2) return false;
-  if (args[0] !== "--pet") return false;
-  return isValidPetId(args[1] ?? "");
+  if (args.length === 2 && args[0] === "--pet") return isValidPetId(args[1] ?? "");
+  if (args.length !== 2 && args.length !== 4) return false;
+  if (args[0] !== "--product" || (args[1] !== "brainpet" && args[1] !== "openpets")) return false;
+  return args.length === 2 || args[2] === "--pet" && isValidPetId(args[3] ?? "");
 }
 
 function isSameMcpEntry(value: unknown, expected: CursorMcpEntry): boolean {

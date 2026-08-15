@@ -22,6 +22,9 @@
       "default": "./dist/index.js"
     }
   },
+  "dependencies": {
+    "@open-pets/client": "workspace:*"
+  },
   "scripts": {
     "test": "node dist/check-cursor.js",
     "check": "pnpm typecheck && pnpm build && pnpm test",

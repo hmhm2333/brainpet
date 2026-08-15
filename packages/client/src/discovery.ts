@@ -1,12 +1,14 @@
-import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { basename, dirname } from "node:path";
 
 import { isRecord, maxIpcMessageBytes, openPetsIpcProtocol, openPetsIpcVersion, OpenPetsClientError } from "./protocol.js";
+import { isTargetProfile, resolveTargetProfile, type TargetProduct, type TargetProfile } from "./target-profile.js";
 
 export interface OpenPetsDiscoveryFile {
   readonly protocolVersion: 1;
   readonly protocol: "openpets-ipc";
+  readonly product: TargetProduct;
+  readonly appId: TargetProfile["appId"];
   readonly endpoint: string;
   readonly token: string;
   readonly appVersion: string;
@@ -18,52 +20,25 @@ export type ParsedIpcEndpoint =
   | { readonly kind: "tcp"; readonly host: string; readonly port: number }
   | { readonly kind: "path"; readonly path: string };
 
-const supportedLocalIpcNamespaces = ["openpets", "brainpet"] as const;
-
-export function getDiscoveryFilePath(): string {
-  return getDiscoveryFilePaths()[0]!;
+export function getDiscoveryFilePath(product: TargetProduct, platform: NodeJS.Platform = process.platform, environment: NodeJS.ProcessEnv = process.env, homeDirectory?: string): string {
+  return resolveTargetProfile(product, platform, environment, homeDirectory).discoveryPath;
 }
 
-export function getDiscoveryFilePaths(platform: NodeJS.Platform = process.platform, environment: NodeJS.ProcessEnv = process.env, homeDirectory = homedir()): readonly string[] {
-  if (environment.OPENPETS_DISCOVERY_FILE) return [environment.OPENPETS_DISCOVERY_FILE];
-
-  if (platform === "darwin") {
-    const root = join(homeDirectory, "Library", "Application Support");
-    return [join(root, "OpenPets", "runtime", "ipc.json"), join(root, "BrainPet", "runtime", "ipc.json")];
-  }
-
-  if (platform === "win32") {
-    const root = environment.APPDATA ?? join(homeDirectory, "AppData", "Roaming");
-    return [join(root, "OpenPets", "runtime", "ipc.json"), join(root, "BrainPet", "runtime", "ipc.json")];
-  }
-
-  const xdg = getSecureXdgRuntimeDir(environment.XDG_RUNTIME_DIR);
-  if (xdg) {
-    return [join(xdg, "openpets", "ipc.json"), join(xdg, "brainpet", "ipc.json")];
-  }
-
-  const root = environment.XDG_CONFIG_HOME ?? join(homeDirectory, ".config");
-  return [join(root, "OpenPets", "runtime", "ipc.json"), join(root, "BrainPet", "runtime", "ipc.json")];
+export function getDiscoveryFilePaths(product: TargetProduct, platform: NodeJS.Platform = process.platform, environment: NodeJS.ProcessEnv = process.env, homeDirectory?: string): readonly [string] {
+  return [getDiscoveryFilePath(product, platform, environment, homeDirectory)];
 }
 
-export function readDiscoveryFile(path?: string): OpenPetsDiscoveryFile {
-  return readDiscoveryFileFromPaths(path ? [path] : getDiscoveryFilePaths());
+export function readDiscoveryFile(target: TargetProduct | TargetProfile, path?: string): OpenPetsDiscoveryFile {
+  const profile = isTargetProfile(target) ? target : resolveTargetProfile(target);
+  return readDiscoveryFileAt(path ?? profile.discoveryPath, profile.product);
 }
 
-export function readDiscoveryFileFromPaths(candidates: readonly string[]): OpenPetsDiscoveryFile {
-  let unavailable: OpenPetsClientError | undefined;
-  for (const candidate of candidates) {
-    try {
-      return readDiscoveryFileAt(candidate);
-    } catch (error) {
-      if (!(error instanceof OpenPetsClientError) || error.code !== "unavailable") throw error;
-      unavailable = error;
-    }
-  }
-  throw unavailable ?? new OpenPetsClientError("unavailable", "No local companion discovery file is available.");
+export function readDiscoveryFileFromPaths(candidates: readonly string[], expectedProduct: TargetProduct): OpenPetsDiscoveryFile {
+  if (candidates.length !== 1) throw new OpenPetsClientError("invalid_discovery", "Product-targeted discovery accepts exactly one path.");
+  return readDiscoveryFileAt(candidates[0]!, expectedProduct);
 }
 
-function readDiscoveryFileAt(path: string): OpenPetsDiscoveryFile {
+function readDiscoveryFileAt(path: string, expectedProduct: TargetProduct): OpenPetsDiscoveryFile {
   let raw: string;
   try {
     const stat = statSync(path);
@@ -80,24 +55,28 @@ function readDiscoveryFileAt(path: string): OpenPetsDiscoveryFile {
   }
 
   try {
-    return validateDiscovery(JSON.parse(raw) as unknown);
+    return validateDiscovery(JSON.parse(raw) as unknown, expectedProduct);
   } catch (error) {
     if (error instanceof OpenPetsClientError) throw error;
     throw new OpenPetsClientError("invalid_discovery", "OpenPets discovery file is malformed JSON.");
   }
 }
 
-export function validateDiscovery(value: unknown): OpenPetsDiscoveryFile {
+export function validateDiscovery(value: unknown, expectedProduct?: TargetProduct): OpenPetsDiscoveryFile {
   if (!isRecord(value)) throw new OpenPetsClientError("invalid_discovery", "Discovery must be an object.");
   if (value.protocol !== openPetsIpcProtocol) throw new OpenPetsClientError("invalid_discovery", "Discovery protocol is invalid.");
   if (value.protocolVersion !== openPetsIpcVersion) throw new OpenPetsClientError("invalid_discovery", "Discovery protocol version is invalid.");
+  if (value.product !== "brainpet" && value.product !== "openpets") throw new OpenPetsClientError("invalid_discovery", "Discovery product is invalid.");
+  if (expectedProduct !== undefined && value.product !== expectedProduct) throw new OpenPetsClientError("invalid_discovery", "Discovery product does not match the requested target.");
+  const expectedAppId = value.product === "brainpet" ? "dev.brainpet.app" : "dev.openpets.app";
+  if (value.appId !== expectedAppId) throw new OpenPetsClientError("invalid_discovery", "Discovery app identity is invalid.");
   if (typeof value.endpoint !== "string") throw new OpenPetsClientError("invalid_discovery", "Discovery endpoint is invalid.");
   if (typeof value.token !== "string" || value.token.length < 16 || value.token.length > 256) throw new OpenPetsClientError("invalid_discovery", "Discovery token is invalid.");
   if (typeof value.appVersion !== "string") throw new OpenPetsClientError("invalid_discovery", "Discovery app version is invalid.");
   if (typeof value.pid !== "number" || !Number.isInteger(value.pid) || value.pid <= 0) throw new OpenPetsClientError("invalid_discovery", "Discovery pid is invalid.");
   if (value.platform !== "darwin" && value.platform !== "linux" && value.platform !== "win32") throw new OpenPetsClientError("invalid_discovery", "Discovery platform is invalid.");
 
-  const endpoint = parseIpcEndpoint(value.endpoint);
+  const endpoint = parseIpcEndpoint(value.endpoint, value.product);
   if (value.platform !== process.platform && !allowsCrossPlatformDiscovery(value.platform, endpoint)) {
     throw new OpenPetsClientError("invalid_discovery", "Discovery platform does not match this client.");
   }
@@ -105,6 +84,8 @@ export function validateDiscovery(value: unknown): OpenPetsDiscoveryFile {
   return {
     protocolVersion: openPetsIpcVersion,
     protocol: openPetsIpcProtocol,
+    product: value.product,
+    appId: expectedAppId,
     endpoint: value.endpoint,
     token: value.token,
     appVersion: value.appVersion,
@@ -113,11 +94,11 @@ export function validateDiscovery(value: unknown): OpenPetsDiscoveryFile {
   };
 }
 
-export function validateEndpoint(endpoint: string): void {
-  parseIpcEndpoint(endpoint);
+export function validateEndpoint(endpoint: string, expectedProduct?: TargetProduct): void {
+  parseIpcEndpoint(endpoint, expectedProduct);
 }
 
-export function parseIpcEndpoint(endpoint: string): ParsedIpcEndpoint {
+export function parseIpcEndpoint(endpoint: string, expectedProduct?: TargetProduct): ParsedIpcEndpoint {
   if (endpoint.length < 1 || endpoint.length > 240) throw new OpenPetsClientError("invalid_discovery", "Discovery endpoint length is invalid.");
   if (endpoint.includes("\0")) throw new OpenPetsClientError("invalid_discovery", "Discovery endpoint contains NUL.");
 
@@ -126,7 +107,8 @@ export function parseIpcEndpoint(endpoint: string): ParsedIpcEndpoint {
   }
 
   if (process.platform === "win32") {
-    const isSupportedPipe = supportedLocalIpcNamespaces.some((namespace) => endpoint.startsWith(`\\\\.\\pipe\\${namespace}-`));
+    const namespaces = expectedProduct ? [expectedProduct] : ["openpets", "brainpet"];
+    const isSupportedPipe = namespaces.some((namespace) => endpoint.startsWith(`\\\\.\\pipe\\${namespace}-`));
     if (!isSupportedPipe || endpoint.includes("/")) {
       throw new OpenPetsClientError("invalid_discovery", "Discovery endpoint is not a supported companion named pipe.");
     }
@@ -138,7 +120,8 @@ export function parseIpcEndpoint(endpoint: string): ParsedIpcEndpoint {
   }
 
   const endpointName = basename(endpoint);
-  const namespace = supportedLocalIpcNamespaces.find((candidate) => endpointName.startsWith(`${candidate}-`));
+  const namespaces = expectedProduct ? [expectedProduct] : ["openpets", "brainpet"];
+  const namespace = namespaces.find((candidate) => endpointName.startsWith(`${candidate}-`));
   if (!namespace || !endpointName.endsWith(".sock")) {
     throw new OpenPetsClientError("invalid_discovery", "Discovery endpoint filename is not a supported companion socket.");
   }
@@ -236,17 +219,4 @@ function allowsCrossPlatformDiscovery(platform: NodeJS.Platform, endpoint: Parse
   }
   // Additional validation: ensure the host is a valid private/local IPv4
   return isPrivateOrLocalIpv4(endpoint.host);
-}
-
-function getSecureXdgRuntimeDir(dir = process.env.XDG_RUNTIME_DIR): string | null {
-  if (!dir || !existsSync(dir)) return null;
-  try {
-    const stat = lstatSync(dir);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) return null;
-    if (typeof process.getuid === "function" && stat.uid !== process.getuid()) return null;
-    if ((stat.mode & 0o777) !== 0o700) return null;
-    return dir;
-  } catch {
-    return null;
-  }
 }

@@ -5,10 +5,12 @@ import { posix, win32 } from "node:path";
 import { parseIpcEndpoint, readDiscoveryFile, type OpenPetsDiscoveryFile } from "./discovery.js";
 import { agentActivitySchemaVersion, allowedAgentCompanionRequestKinds, connectTimeoutMs, maxIpcMessageBytes, openPetsIpcVersion, parseIpcResponse, responseTimeoutMs, validateAgentCompanionCapabilities, validateAgentCompanionRequestOptions, validateAgentLifecycleState, validateReaction, OpenPetsClientError, type AgentCompanionCapability, type AgentCompanionRequestKind, type AgentCompanionRequestOption, type AgentLifecycleState, type OpenPetsIpcMethod, type OpenPetsIpcRequest, type OpenPetsReaction } from "./protocol.js";
 import { maxRemoteMessageBytes, openPetsRemoteProtocol, openPetsRemoteVersion, parseRemoteEndpoint, parseRemoteResponse, remoteConnectTimeoutMs, remoteResponseTimeoutMs, validateRemoteClientId, validateRemoteMessage, validateRemoteReaction, validateRemoteToken, type OpenPetsRemoteEndpoint, type OpenPetsRemoteMethod, type OpenPetsRemoteRequest } from "./remote-protocol.js";
+import { isTargetProfile, resolveTargetProfile, targetProducts, type TargetProduct, type TargetProfile } from "./target-profile.js";
 
 export { getDiscoveryFilePath, getDiscoveryFilePaths, parseIpcEndpoint, readDiscoveryFile, readDiscoveryFileFromPaths, validateDiscovery, validateEndpoint, type OpenPetsDiscoveryFile, type ParsedIpcEndpoint } from "./discovery.js";
 export { agentActivitySchemaVersion, allowedAgentCompanionCapabilities, allowedAgentCompanionRequestKinds, allowedAgentCompanionRequestOptionIntents, allowedAgentLifecycleStates, allowedReactions, validateAgentCompanionRequestOptions, OpenPetsClientError, type AgentCompanionCapability, type AgentCompanionRequestKind, type AgentCompanionRequestOption, type AgentCompanionRequestOptionIntent, type AgentLifecycleState, type OpenPetsReaction } from "./protocol.js";
 export { maxRemoteMessageBytes, openPetsRemoteProtocol, openPetsRemoteVersion, parseRemoteEndpoint, validateRemoteClientId, validateRemoteMessage, validateRemoteReaction, validateRemoteToken, type OpenPetsRemoteEndpoint, type OpenPetsRemoteMethod, type OpenPetsRemoteRequest, type OpenPetsRemoteResponse } from "./remote-protocol.js";
+export { isTargetProfile, resolveTargetProfile, targetProducts, type TargetProduct, type TargetProfile } from "./target-profile.js";
 
 /**
  * Stable per-process session nonce, generated once at module load.
@@ -19,6 +21,8 @@ export { maxRemoteMessageBytes, openPetsRemoteProtocol, openPetsRemoteVersion, p
 const SESSION_NONCE = randomUUID();
 
 export interface OpenPetsClientOptions {
+  /** Required for local IPC. Remote mode never reads a local target profile. */
+  readonly target?: TargetProduct | TargetProfile;
   readonly discoveryPath?: string;
   /** Explicit remote mode. Remote mode never reads the local discovery file. */
   readonly remote?: OpenPetsRemoteOptions;
@@ -228,8 +232,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function sendDiscoveredRequest<T>(method: OpenPetsIpcMethod, params: unknown, options: OpenPetsClientOptions): Promise<T> {
-  const discovery = readDiscoveryFile(options.discoveryPath);
+  const target = resolveClientTarget(options.target);
+  const discovery = readDiscoveryFile(target, options.discoveryPath);
   return sendRequest<T>(discovery, method, params, options);
+}
+
+function resolveClientTarget(target: OpenPetsClientOptions["target"]): TargetProfile {
+  if (isTargetProfile(target)) return target;
+  if (targetProducts.includes(target as TargetProduct)) return resolveTargetProfile(target as TargetProduct);
+  throw new OpenPetsClientError("target_required", "A local companion target is required. Select brainpet or openpets explicitly.");
 }
 
 interface ResolvedRemoteOptions {

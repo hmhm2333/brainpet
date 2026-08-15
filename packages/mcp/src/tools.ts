@@ -1,5 +1,5 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { allowedReactions, createOpenPetsClient, OpenPetsClientError, type OpenPetsClient, type OpenPetsLeaseResult, type OpenPetsReaction, type OpenPetsStatusResult } from "@open-pets/client";
+import { allowedReactions, createOpenPetsClient, OpenPetsClientError, type OpenPetsClient, type OpenPetsLeaseResult, type OpenPetsReaction, type OpenPetsStatusResult, type TargetProduct } from "@open-pets/client";
 import { z } from "zod";
 
 export const reactionSchema = z.enum(allowedReactions);
@@ -39,23 +39,31 @@ export interface LeaseContext {
 }
 
 export interface ToolContext {
+  readonly product?: TargetProduct;
   readonly configuredPetId?: string;
   readonly client?: OpenPetsClient;
   readonly lease?: LeaseContext;
   readonly leaseReady?: Promise<void>;
 }
 
-export function createToolContext(configuredPetId?: string): ToolContext & { readonly client: OpenPetsClient } {
-  const client = createOpenPetsClient();
+export function createToolContext(product: TargetProduct, configuredPetId?: string): ToolContext & { readonly client: OpenPetsClient } {
+  const client = createOpenPetsClient({ target: product });
   return {
+    product,
     configuredPetId: client.transport === "remote" ? undefined : configuredPetId,
     client,
   };
 }
 
+function getContextClient(context: ToolContext): OpenPetsClient {
+  if (context.client) return context.client;
+  if (!context.product) throw new Error("MCP tool context requires an explicit brainpet or openpets product target.");
+  return createOpenPetsClient({ target: context.product });
+}
+
 export async function handleStatus(context: ToolContext): Promise<CallToolResult> {
   await context.leaseReady;
-  const client = context.client ?? createOpenPetsClient();
+  const client = getContextClient(context);
   const leaseId = context.lease?.lease?.leaseId ?? context.lease?.staleLeaseId;
   const status = await client.status({ leaseId });
   const structured = createMcpStatus(status, context.configuredPetId, context.lease?.lease, context.lease?.degradedReason, context.lease?.staleLeaseId);
@@ -135,7 +143,7 @@ async function ensureLease(context: ToolContext): Promise<boolean> {
   if (!lease || lease.closing) return false;
   if (lease.lease) return true;
   try {
-    await recoverLease(context.client ?? createOpenPetsClient(), lease, context.configuredPetId);
+    await recoverLease(getContextClient(context), lease, context.configuredPetId);
   } catch {
     return false;
   }
@@ -150,7 +158,7 @@ export async function handleReact(input: unknown, context: ToolContext): Promise
   if (!(await ensureLease(context))) return toolError(`OpenPets lease is unavailable. ${sanitizeUnavailableReason(context.lease?.degradedReason) ?? "Open OpenPets and try again."}`);
 
   try {
-    const client = context.client ?? createOpenPetsClient();
+    const client = getContextClient(context);
     const result = await client.react(parsed.data.reaction, client.transport === "remote" ? undefined : { leaseId: context.lease!.lease!.leaseId });
     return {
       content: [{ type: "text", text: `OpenPets reaction sent: ${parsed.data.reaction}` }],
@@ -171,7 +179,7 @@ export async function handleSay(input: unknown, context: ToolContext): Promise<C
   if (!(await ensureLease(context))) return toolError(`OpenPets lease is unavailable. ${sanitizeUnavailableReason(context.lease?.degradedReason) ?? "Open OpenPets and try again."}`);
 
   try {
-    const client = context.client ?? createOpenPetsClient();
+    const client = getContextClient(context);
     const result = await client.say(parsed.data.message, client.transport === "remote"
       ? (parsed.data.reaction === undefined ? undefined : { reaction: parsed.data.reaction })
       : { reaction: parsed.data.reaction, leaseId: context.lease!.lease!.leaseId });

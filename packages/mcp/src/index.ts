@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -160,7 +160,8 @@ async function main(): Promise<void> {
   }
 
   const lease: LeaseContext = {};
-  const context = createToolContext(options.petId);
+  if (!options.product) throw new Error("Missing product target.");
+  const context = createToolContext(options.product, options.petId);
   if (context.client.transport === "remote" && options.petId !== undefined) {
     throw new Error("Remote mode does not support --pet; remote control uses the default pet.");
   }
@@ -199,10 +200,12 @@ function sanitizeMcpRuntimeError(error: unknown): string {
   return message.slice(0, 160);
 }
 
-main().catch((error: unknown) => {
-  process.stderr.write(`OpenPets MCP server failed: ${error instanceof Error ? error.message : String(error)}\n`);
-  process.exit(1);
-});
+if (isMainModule()) {
+  main().catch((error: unknown) => {
+    process.stderr.write(`OpenPets MCP server failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  });
+}
 
 function readPackageVersion(): string {
   try {
@@ -216,3 +219,12 @@ function readPackageVersion(): string {
 
 // Re-export LeaseContext for test consumers that build lifecycle fixtures
 export type { LeaseContext, OpenPetsLeaseResult };
+
+function isMainModule(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  }
+}
