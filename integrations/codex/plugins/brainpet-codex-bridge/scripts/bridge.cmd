@@ -13,7 +13,6 @@ if defined HELPER if exist "%HELPER%" (
   exit /b 0
 )
 
-where node >nul 2>nul
-if errorlevel 1 exit /b 0
-node "%SCRIPT_DIR%bridge.mjs"
+rem Published and local Bridge launchers fail open when the native helper is
+rem unavailable. They never fall back to Node/npm on an end-user machine.
 exit /b 0

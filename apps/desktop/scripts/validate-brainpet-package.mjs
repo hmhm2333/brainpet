@@ -50,9 +50,27 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
   assert.deepEqual(appPackage.brainpetDistribution, { profile: "brainpet", appId: "dev.brainpet.app" }, "Packaged runtime identity must be embedded in app.asar.");
   assert.ok(!existsSync(join(appRoot, target.platform === "windows" ? "openpets.exe" : "openpets")), "BrainPet package must not retain the OpenPets executable identity.");
 
-  const bridge = join(resources, "integrations", "codex", "brainpet-codex-bridge");
+  const marketplace = join(resources, "integrations", "codex", "brainpet-marketplace");
+  const bridge = join(marketplace, "plugins", "brainpet-codex-bridge");
+  assert.ok(existsSync(join(marketplace, ".agents", "plugins", "marketplace.json")), "Bundled BrainPet marketplace manifest is missing.");
   for (const path of [".codex-plugin/plugin.json", "brainpet.bridge.json", "hooks/hooks.json", "scripts/bridge.cmd", "scripts/bridge.sh"]) {
     assert.ok(existsSync(join(bridge, path)), `Bundled Codex Bridge source is missing: ${path}`);
+  }
+  const bundleReceipt = JSON.parse(readFileSync(join(marketplace, "brainpet-bundle.json"), "utf8"));
+  assert.equal(bundleReceipt.target, target.id, "Bundled Bridge target does not match the runtime package.");
+  assert.equal(bundleReceipt.nodeFallbackBundled, false, "Packaged Bridge must not rely on Node fallback.");
+  const helper = join(bridge, "bin", target.id, target.helperName);
+  assert.ok(existsSync(helper), `Packaged native Bridge helper is missing: ${target.id}/${target.helperName}`);
+  const helperBytes = readFileSync(helper);
+  assertBrainPetBinary(helperBytes, target, `Packaged Bridge helper ${target.id}`);
+  assert.equal(createHash("sha256").update(helperBytes).digest("hex"), bundleReceipt.helper.sha256, "Packaged helper hash does not match its bundle receipt.");
+  for (const launcher of ["scripts/bridge.cmd", "scripts/bridge.sh"]) {
+    assert.doesNotMatch(readFileSync(join(bridge, launcher), "utf8"), /\b(?:node|npm|npx|pnpm)\b\s+["']?[^\r\n]*bridge\.mjs/i, `Packaged ${launcher} must not contain a Node fallback.`);
+  }
+  if (target.nodePlatform === process.platform && target.arch === process.arch) {
+    const selfTest = spawnSync(helper, ["--self-test"], { encoding: "utf8", timeout: 2_000, windowsHide: true });
+    assert.equal(selfTest.status, 0, selfTest.error?.message || selfTest.stderr || "Packaged native helper self-test failed.");
+    assert.match(selfTest.stdout, /^brainpet-hook \S+ ok/m, "Packaged native helper returned an invalid self-test receipt.");
   }
   const officialPluginsRoot = join(resources, "plugins", "official");
   assert.equal(existsSync(officialPluginsRoot), false, "BrainPet packages must not bundle the removed training facade or any OpenPets plugin runtime payload.");
@@ -72,7 +90,9 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
     executable: relative(resolvedOutput, executable).replaceAll("\\", "/"),
     sha256: createHash("sha256").update(readFileSync(executable)).digest("hex"),
     bridgeSourceBundled: true,
-    nativeBridgeHelpersBundled: false,
+    bridgeMarketplaceBundled: true,
+    nativeBridgeHelpersBundled: true,
+    nativeBridgeHelperSha256: bundleReceipt.helper.sha256,
     installers: artifactRecords,
     installerValidated,
     signatureValidated,

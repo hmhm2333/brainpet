@@ -9,6 +9,8 @@ dist-electron
 apps/desktop/dist-electron
 apps/desktop/dist-brainpet
 apps/desktop/.release-state/
+apps/desktop/.brainpet-package/
+.brainpet-package/
 *.tsbuildinfo
 .DS_Store
 local/

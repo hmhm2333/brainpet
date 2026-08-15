@@ -1,4 +1,5 @@
-import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, posix, win32 } from "node:path";
 
@@ -90,11 +91,9 @@ export function writeBrainPetInstallMarker(marker: BrainPetInstallMarker, path =
   const validated = validateBrainPetInstallMarker(marker);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   try { chmodSync(dirname(path), 0o700); } catch { /* best effort on Windows */ }
-  const temporaryPath = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporaryPath, `${JSON.stringify(validated, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  try { chmodSync(temporaryPath, 0o600); } catch { /* best effort on Windows */ }
-  renameSync(temporaryPath, path);
-  try { chmodSync(path, 0o600); } catch { /* best effort on Windows */ }
+  const bytes = `${JSON.stringify(validated, null, 2)}\n`;
+  writeMarkerFile(`${path}.bak`, bytes);
+  writeMarkerFile(path, bytes);
   return path;
 }
 
@@ -116,4 +115,16 @@ export function readValidBrainPetInstallMarker(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function writeMarkerFile(path: string, bytes: string): void {
+  if (existsSync(path)) {
+    const current = lstatSync(path);
+    if (!current.isFile() || current.isSymbolicLink()) throw new Error("BrainPet install marker target is unsafe.");
+  }
+  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(temporaryPath, bytes, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  try { chmodSync(temporaryPath, 0o600); } catch { /* best effort on Windows */ }
+  renameSync(temporaryPath, path);
+  try { chmodSync(path, 0o600); } catch { /* best effort on Windows */ }
 }

@@ -5,7 +5,7 @@ import test from "node:test";
 
 import { shouldShowBrainPetFirstRunGuide } from "../src/brainpet-first-run.js";
 import { createBrainPetSetupReceipt } from "../src/brainpet-setup-receipt.js";
-import { brainPetBridgeVersion, confirmBrainPetBridge, getBrainPetInstallationState, normalizeBrainPetInstallationState, recordBrainPetLifecycleVerified, resetBrainPetInstallationStateForTests } from "../src/brainpet-installation-state.js";
+import { brainPetBridgeVersion, clearBrainPetBridgeConfirmation, confirmBrainPetBridge, getBrainPetInstallationState, normalizeBrainPetInstallationState, recordBrainPetLifecycleVerified, resetBrainPetInstallationStateForTests } from "../src/brainpet-installation-state.js";
 
 test("first-run guide is limited to a packaged, enabled BrainPet profile", () => {
   assert.equal(shouldShowBrainPetFirstRunGuide({ profile: "brainpet", packaged: true, featureEnabled: true, onboardingCompleted: false }), true);
@@ -37,6 +37,9 @@ test("bridge upgrades invalidate lifecycle evidence until the new bridge emits a
   assert.equal(getBrainPetInstallationState().lifecycleVerifiedAt, null);
   recordBrainPetLifecycleVerified(40, brainPetBridgeVersion);
   assert.equal(getBrainPetInstallationState().lifecycleVerifiedBridgeVersion, brainPetBridgeVersion);
+  clearBrainPetBridgeConfirmation();
+  assert.equal(getBrainPetInstallationState().bridgeConfirmedVersion, null);
+  assert.equal(getBrainPetInstallationState().lifecycleVerifiedAt, null);
   resetBrainPetInstallationStateForTests();
 });
 
@@ -47,6 +50,9 @@ test("setup and recovery keeps the BrainPet pixel UI contract", () => {
   assert.match(html, /border:4px solid #17243b/);
   assert.match(html, /connect-src 'none'/);
   assert.match(html, /卸载 Bridge 不影响离线桌宠与训练/);
-  assert.match(html, /brainpetSetup\.confirmBridge/);
+  assert.match(html, /brainpetSetup\.getAdapterStatus/);
+  assert.match(html, /brainpetSetup\.connectCodex/);
+  assert.match(html, /brainpetSetup\.disconnectCodex/);
+  assert.match(html, /检测并连接/);
   assert.doesNotMatch(html, /border-radius/);
 });

@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { getBrainPetReleaseTarget, resolveHostBrainPetReleaseTarget } from "../../../scripts/brainpet-release-contract.mjs";
+import { assertBrainPetBinary } from "../../../scripts/brainpet-binary-format.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(scriptDir, "..");
+const repoRoot = resolve(appDir, "..", "..");
+const stagingMarketplaceRoot = join(appDir, ".brainpet-package", "marketplace");
 const require = createRequire(import.meta.url);
 const electronDist = dirname(require("electron"));
 const electronBuilderCli = require.resolve("electron-builder/out/cli/cli.js");
@@ -23,6 +27,7 @@ export function parseBrainPetPackageArgs(argv) {
     else if (value === "--target") options.target = argv[++index];
     else if (value === "--dry-run") options.dryRun = true;
     else if (value === "--mode") options.mode = argv[++index];
+    else if (value === "--helper") options.helperPath = argv[++index];
     else throw new Error(`Unknown BrainPet package argument: ${value}`);
   }
   if (!["installer", "portable", "dir"].includes(options.target)) throw new Error(`Unsupported BrainPet package target: ${options.target}`);
@@ -60,6 +65,60 @@ export function validatePublicReleaseEnvironment(releaseTarget, environment = pr
   if (releaseTarget.platform === "linux" && !environment.BRAINPET_LINUX_PROVENANCE) throw new Error("Public Linux release requires BRAINPET_LINUX_PROVENANCE attestation input.");
 }
 
+export function resolveBrainPetHelperArtifact(options) {
+  const { releaseTarget } = options;
+  const candidates = [
+    options.helperPath ? resolve(options.helperPath) : null,
+    join(repoRoot, "native", "brainpet-hook", "target", releaseTarget.rustTarget, "release", releaseTarget.helperName),
+    join(repoRoot, "native", "brainpet-hook", "target", "release", releaseTarget.helperName),
+  ].filter(Boolean);
+  const helperPath = candidates.find((candidate) => existsSync(candidate));
+  if (!helperPath) throw new Error(`BrainPet package requires the ${releaseTarget.id} native helper. Build it or pass --helper <path>. Checked: ${candidates.join(", ")}`);
+  const stat = lstatSync(helperPath);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`BrainPet helper must be a regular file: ${helperPath}`);
+  assertBrainPetBinary(readFileSync(helperPath), releaseTarget, `BrainPet package helper ${releaseTarget.id}`);
+  return helperPath;
+}
+
+export function prepareBrainPetBundledMarketplace(options) {
+  const { releaseTarget } = options;
+  const helperPath = resolveBrainPetHelperArtifact(options);
+  const sourceRoot = join(repoRoot, "integrations", "codex");
+  const sourcePluginRoot = join(sourceRoot, "plugins", "brainpet-codex-bridge");
+  const pluginRoot = join(stagingMarketplaceRoot, "plugins", "brainpet-codex-bridge");
+  const stagedHelper = join(pluginRoot, "bin", releaseTarget.id, releaseTarget.helperName);
+  rmSync(stagingMarketplaceRoot, { recursive: true, force: true });
+  mkdirSync(pluginRoot, { recursive: true });
+  cpSync(join(sourceRoot, ".agents"), join(stagingMarketplaceRoot, ".agents"), { recursive: true });
+  for (const path of [".codex-plugin/plugin.json", "assets/brainpet-plugin-icon.svg", "brainpet.bridge.json", "hooks/hooks.json", "scripts/bridge.cmd", "scripts/bridge.sh"]) {
+    const source = join(sourcePluginRoot, path);
+    const destination = join(pluginRoot, path);
+    mkdirSync(dirname(destination), { recursive: true });
+    cpSync(source, destination);
+  }
+  mkdirSync(dirname(stagedHelper), { recursive: true });
+  cpSync(helperPath, stagedHelper);
+  if (releaseTarget.platform !== "windows") {
+    chmodSync(stagedHelper, 0o755);
+    chmodSync(join(pluginRoot, "scripts", "bridge.sh"), 0o755);
+  }
+  const helperBytes = readFileSync(stagedHelper);
+  const receipt = {
+    schemaVersion: 1,
+    product: "brainpet",
+    target: releaseTarget.id,
+    bridgeVersion: JSON.parse(readFileSync(join(pluginRoot, "brainpet.bridge.json"), "utf8")).bridgeVersion,
+    helper: {
+      path: `plugins/brainpet-codex-bridge/bin/${releaseTarget.id}/${releaseTarget.helperName}`,
+      bytes: helperBytes.length,
+      sha256: createHash("sha256").update(helperBytes).digest("hex"),
+    },
+    nodeFallbackBundled: false,
+  };
+  writeFileSync(join(stagingMarketplaceRoot, "brainpet-bundle.json"), `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+  return { stagingMarketplaceRoot, helperPath, receipt };
+}
+
 function findCachedTool(cacheName, marker) {
   const localAppData = process.env.LOCALAPPDATA;
   if (!localAppData) return undefined;
@@ -75,10 +134,11 @@ async function main() {
   const options = parseBrainPetPackageArgs(process.argv.slice(2));
   const invocation = createBrainPetBuilderInvocation(options);
   if (options.dryRun) {
-    process.stdout.write(`${JSON.stringify({ ...invocation, releaseTarget: options.releaseTarget, releaseMode: options.mode, publicArtifact: options.mode === "public-release" }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ ...invocation, releaseTarget: options.releaseTarget, releaseMode: options.mode, publicArtifact: options.mode === "public-release", helperRequired: true, helperPath: options.helperPath ? resolve(options.helperPath) : null }, null, 2)}\n`);
     return;
   }
   if (options.mode === "public-release") validatePublicReleaseEnvironment(options.releaseTarget);
+  prepareBrainPetBundledMarketplace(options);
   const nsisDir = findCachedTool("nsis-3.0.4.1", join("Bin", "makensis.exe"));
   const nsisResourcesDir = findCachedTool("nsis-resources-3.4.1", join("plugins", "x86-unicode"));
   await new Promise((resolvePromise, reject) => {

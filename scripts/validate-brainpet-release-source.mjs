@@ -26,6 +26,7 @@ assert.match(baseConfig, /^productName: BrainPet$/m);
 assert.match(baseConfig, /^executableName: brainpet$/m);
 assert.match(baseConfig, /brainpet-installer\.nsh/);
 assert.match(baseConfig, /brainpetDistribution:/);
+assert.match(baseConfig, /\.brainpet-package\/marketplace/);
 assert.match(privateConfig, /dist-brainpet\/private-test/);
 assert.match(privateConfig, /signAndEditExecutable: false/);
 assert.match(publicConfig, /dist-brainpet\/public-release/);
@@ -82,7 +83,10 @@ assert.doesNotMatch(brainPetHostSource, /canonicalizeBrainPetTaskResult|getBrain
 assert.doesNotMatch(distributionSource, /brainpet\.training/, "BrainPet must not seed a training plugin.");
 assert.doesNotMatch(baseConfig, /plugins\/official|plugin-sdk-preload|plugin-command-form-preload|panel-preload/, "BrainPet package must not bundle plugin renderer payloads.");
 assert.match(readFileSync(join(desktop, "build", "brainpet-installer.nsh"), "utf8"), /runtime-install\.json/);
+assert.match(readFileSync(join(desktop, "build", "brainpet-installer.nsh"), "utf8"), /runtime-install\.json\.bak/);
 assert.ok(existsSync(join(desktop, "scripts", "validate-brainpet-package.mjs")));
+assert.match(readFileSync(join(desktop, "scripts", "brainpet-package.mjs"), "utf8"), /prepareBrainPetBundledMarketplace/);
+assert.match(readFileSync(join(desktop, "scripts", "validate-brainpet-package.mjs"), "utf8"), /nativeBridgeHelpersBundled: true/);
 assert.match(JSON.parse(readFileSync(join(desktop, "package.json"), "utf8")).scripts["test:brainpet-openpets-isolation"], /BRAINPET_EXPECT_OPENPETS_ISOLATION=1/);
 
 const bridgeRoot = join(root, "integrations", "codex", "plugins", "brainpet-codex-bridge");
@@ -92,7 +96,10 @@ assert.equal(bridgeContract.bridgeVersion, brainPetDistributionContract.bridge.v
 assert.equal(bridgeContract.minimumRuntimeIpcVersion, brainPetDistributionContract.bridge.minimumRuntimeIpcVersion);
 assert.equal(bridgeContract.hookDeadlineMs, brainPetDistributionContract.bridge.hookDeadlineMs);
 assert.equal(bridgeContract.connectAttemptMs, brainPetDistributionContract.bridge.connectAttemptMs);
+assert.deepEqual(bridgeContract.transportPriority, ["native-hook"]);
 assert.match(readFileSync(join(bridgeRoot, "scripts", "bridge.sh"), "utf8"), /Linux\) platform="linux"/);
+for (const launcher of ["bridge.cmd", "bridge.sh"]) assert.doesNotMatch(readFileSync(join(bridgeRoot, "scripts", launcher), "utf8"), /\b(?:node|npm|npx|pnpm)\b\s+["']?[^\r\n]*bridge\.mjs/i);
+assert.ok(existsSync(join(root, "integrations", "codex", ".agents", "plugins", "marketplace.json")));
 assert.ok(existsSync(join(bridgeRoot, "assets", "brainpet-plugin-icon.svg")));
 assert.ok(existsSync(join(root, "PRIVACY.md")));
 assert.deepEqual(bridgeContract.privacy.allowedFields, [...lifecycleContract.requiredFields, ...lifecycleContract.optionalFields]);
@@ -113,7 +120,21 @@ for (const state of lifecycleContract.states) assert.match(`${nativeHookSource}\
 const cargo = readFileSync(join(root, "native", "brainpet-hook", "Cargo.toml"), "utf8");
 assert.match(cargo, new RegExp(`^version = "${brainPetDistributionContract.bridge.version.replaceAll(".", "\\.")}"$`, "m"));
 const installationStateSource = readFileSync(join(desktop, "src", "brainpet-installation-state.ts"), "utf8");
-assert.match(installationStateSource, new RegExp(`brainPetBridgeVersion = "${brainPetDistributionContract.bridge.version.replaceAll(".", "\\.")}"`));
+const installMarkerSource = readFileSync(join(desktop, "src", "brainpet-install-marker.ts"), "utf8");
+const generatedDistributionSource = readFileSync(join(desktop, "src", "generated-brainpet-distribution.ts"), "utf8");
+assert.match(generatedDistributionSource, new RegExp(`brainPetBridgeVersion = "${brainPetDistributionContract.bridge.version.replaceAll(".", "\\.")}"`));
+assert.match(installationStateSource, /from "\.\/generated-brainpet-distribution\.js"/, "Installation evidence must consume the generated Bridge version.");
+const adapterManagerSource = readFileSync(join(desktop, "src", "brainpet-adapter-manager.ts"), "utf8");
+assert.match(adapterManagerSource, /plugin", "marketplace", "add"/, "BrainPet one-click setup must add the bundled marketplace through Codex CLI.");
+assert.match(adapterManagerSource, /plugin", "remove"/, "BrainPet one-click setup must support Bridge removal through Codex CLI.");
+assert.match(adapterManagerSource, /backupConfig/, "BrainPet adapter mutations must create an atomic config backup.");
+assert.match(adapterManagerSource, /rollbackApplied/, "BrainPet adapter mutations must report rollback evidence.");
+assert.doesNotMatch(adapterManagerSource, /config\.toml[^\n]*(?:writeFileSync|appendFileSync)/, "BrainPet setup must not directly edit Codex config.");
+const setupPreloadSource = readFileSync(join(desktop, "brainpet-setup-preload.cjs"), "utf8");
+for (const api of ["getAdapterStatus", "connectCodex", "disconnectCodex"]) assert.match(setupPreloadSource, new RegExp(api), `BrainPet setup preload must expose ${api}.`);
+assert.match(installMarkerSource, /`\$\{path\}\.bak`/, "BrainPet runtime must maintain a marker recovery copy.");
+assert.ok(existsSync(join(desktop, "scripts", "brainpet-single-instance-smoke.mjs")));
+assert.ok(existsSync(join(desktop, "scripts", "brainpet-adapter-ui-smoke.mjs")));
 
 assertBrainPetProviderMatrixCurrent();
 const automaticProviderIds = adapterRegistry.providers.filter((provider) => provider.automaticLifecycle).map((provider) => provider.id);

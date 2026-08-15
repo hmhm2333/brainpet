@@ -1,8 +1,7 @@
 #!/bin/sh
 
-# Public packages carry a native helper for every supported desktop target.
-# The Node fallback keeps source checkouts usable while those artifacts are not
-# present, but release validation must reject a public package that relies on it.
+# Published and local Bridge launchers fail open when the native helper is
+# unavailable. They never fall back to Node/npm on an end-user machine.
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 case "$(uname -s 2>/dev/null)" in
   Darwin) platform="macos" ;;
@@ -22,10 +21,6 @@ fi
 
 if [ -n "$helper" ] && [ -x "$helper" ]; then
   exec "$helper" --agent codex
-fi
-
-if command -v node >/dev/null 2>&1; then
-  exec node "$script_dir/bridge.mjs"
 fi
 
 exit 0

@@ -1,7 +1,8 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-export const brainPetBridgeVersion = "0.3.0";
+export { brainPetBridgeVersion } from "./generated-brainpet-distribution.js";
+import { brainPetBridgeVersion } from "./generated-brainpet-distribution.js";
 const schemaVersion = 2;
 
 export interface BrainPetInstallationState {
@@ -41,7 +42,7 @@ export function recordBrainPetRuntimeReady(runtimeVersion: string, now = Date.no
   return updateState({ ...currentState, runtimeVersion, runtimeReadyAt: now });
 }
 
-export function confirmBrainPetBridge(version = brainPetBridgeVersion, now = Date.now()): BrainPetInstallationState {
+export function confirmBrainPetBridge(version: string = brainPetBridgeVersion, now = Date.now()): BrainPetInstallationState {
   const versionChanged = currentState.bridgeConfirmedVersion !== version;
   return updateState({
     ...currentState,
@@ -52,7 +53,17 @@ export function confirmBrainPetBridge(version = brainPetBridgeVersion, now = Dat
   });
 }
 
-export function recordBrainPetLifecycleVerified(now = Date.now(), version = brainPetBridgeVersion): BrainPetInstallationState {
+export function clearBrainPetBridgeConfirmation(): BrainPetInstallationState {
+  return updateState({
+    ...currentState,
+    bridgeConfirmedVersion: null,
+    bridgeConfirmedAt: null,
+    lifecycleVerifiedAt: null,
+    lifecycleVerifiedBridgeVersion: null,
+  });
+}
+
+export function recordBrainPetLifecycleVerified(now = Date.now(), version: string = brainPetBridgeVersion): BrainPetInstallationState {
   if (currentState.bridgeConfirmedVersion !== version || currentState.bridgeConfirmedAt === null || now < currentState.bridgeConfirmedAt) return getBrainPetInstallationState();
   return updateState({ ...currentState, lifecycleVerifiedAt: now, lifecycleVerifiedBridgeVersion: version });
 }

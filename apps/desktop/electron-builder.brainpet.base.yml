@@ -17,11 +17,10 @@ extraMetadata:
     appId: dev.brainpet.app
 
 extraResources:
-  - from: ../../integrations/codex/plugins/brainpet-codex-bridge
-    to: integrations/codex/brainpet-codex-bridge
+  - from: .brainpet-package/marketplace
+    to: integrations/codex/brainpet-marketplace
     filter:
       - "**/*"
-      - "!bin/**/*"
 
 asar: true
 asarUnpack:

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,7 +9,7 @@ import { assembleBridgeRelease } from "../integrations/codex/scripts/assemble-br
 import { validateBridgeRelease } from "../integrations/codex/scripts/validate-bridge-release.mjs";
 import { brainPetReleaseTargets } from "./brainpet-release-contract.mjs";
 import { assertBrainPetBinary } from "./brainpet-binary-format.mjs";
-import { validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
+import { prepareBrainPetBundledMarketplace, validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const testRoot = join(root, "output", "brainpet-m5-release-test", String(process.pid));
@@ -32,9 +32,18 @@ try {
   assert.throws(() => validatePublicReleaseEnvironment(brainPetReleaseTargets.find((target) => target.id === "windows-x64"), {}), /signing credentials/);
   assert.throws(() => validatePublicReleaseEnvironment(brainPetReleaseTargets.find((target) => target.id === "macos-arm64"), {}), /Developer ID/);
   assert.throws(() => validatePublicReleaseEnvironment(brainPetReleaseTargets.find((target) => target.id === "linux-x64"), {}), /provenance/i);
+  const windowsTarget = brainPetReleaseTargets.find((target) => target.id === "windows-x64");
+  const staged = prepareBrainPetBundledMarketplace({ releaseTarget: windowsTarget, helperPath: join(artifactsRoot, windowsTarget.id, windowsTarget.helperName) });
+  const stagedPlugin = join(staged.stagingMarketplaceRoot, "plugins", "brainpet-codex-bridge");
+  assert.ok(existsSync(join(staged.stagingMarketplaceRoot, ".agents", "plugins", "marketplace.json")));
+  assert.ok(existsSync(join(stagedPlugin, "bin", windowsTarget.id, windowsTarget.helperName)));
+  assert.equal(existsSync(join(stagedPlugin, "scripts", "bridge.mjs")), false);
+  assert.equal(staged.receipt.nodeFallbackBundled, false);
+  assert.doesNotMatch(readFileSync(join(stagedPlugin, "scripts", "bridge.cmd"), "utf8"), /\bnode\b\s+.*bridge\.mjs/i);
   console.log("BrainPet release assembly test passed.");
 } finally {
   rmSync(testRoot, { recursive: true, force: true });
+  rmSync(join(root, "apps", "desktop", ".brainpet-package"), { recursive: true, force: true });
 }
 
 function createExecutableFixture(target, size) {

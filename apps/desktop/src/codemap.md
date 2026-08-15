@@ -224,6 +224,9 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `brainpet/session-authority.ts`: Host-canonical session issuance, scoring, state transitions, and persistence
 - `brainpet/interaction-rig-controller.ts`: Pet/stage anchor ownership, drag transactions, geometry application, and timer disposal
 - `brainpet-installation-state.ts`: Atomic BrainPet runtime/Bridge/lifecycle evidence store and Bridge-version reauthorization policy
+- `generated-brainpet-distribution.ts`: Generated Bridge version, signed-profile identity, and six-target facts consumed by desktop installation code
+- `brainpet-adapter-manager.ts`: Codex CLI detection plus serialized install/upgrade/uninstall transactions, config backup/rollback, bundle hash verification, and redacted receipts
+- `brainpet-setup-guide.ts`: Sender-bound setup IPC that exposes adapter status and explicit one-click connect/remove actions to the sandboxed setup renderer
 - `lifecycle.ts`: Generic app event handlers (quit, window-all-closed, second-instance); delegates focus and one composed disposer without importing concrete services
 - `state.ts`: Simple shell pause state
 - `app-state.ts`: Persistent JSON state with V1 normalization, unknown-field preservation, last-known-good recovery, atomic writes, reaction animation overrides, and the validated waiting animation duration preference
@@ -260,7 +263,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `local-ipc-protocol.ts`: Protocol constants, request/response types, validation functions
 - `local-ipc-paths.ts`: Platform-specific, distribution-isolated OpenPets/BrainPet socket paths and discovery locations
 - `app-state-persistence.ts`: Unknown-field-preserving migration helpers and same-directory atomic JSON replacement
-- `brainpet-install-marker.ts`: Validated per-user packaged-runtime marker used by Agent bridges for bounded cold wake
+- `brainpet-install-marker.ts`: Validated per-user packaged-runtime marker plus atomic recovery copy used by Agent bridges for bounded cold wake
 - `lease-manager.ts`: Lease lifecycle (acquire, heartbeat, release, cleanup), target resolution
 
 **Installation**:

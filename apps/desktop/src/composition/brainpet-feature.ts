@@ -4,7 +4,7 @@ import { configureAgentLifecycleAcceptedHandler } from "../agent-lifecycle-contr
 import { completeOnboarding, isOnboardingCompleted } from "../app-state.js";
 import { createBrainPetInstallMarker, resolveBrainPetMarkerExecutablePath, writeBrainPetInstallMarker } from "../brainpet-install-marker.js";
 import { shouldShowBrainPetFirstRunGuide } from "../brainpet-first-run.js";
-import { configureBrainPetSetupGuide } from "../brainpet-setup-guide.js";
+import { configureBrainPetSetupGuide, openBrainPetSetupGuide } from "../brainpet-setup-guide.js";
 import { initializeBrainPetInstallationState, recordBrainPetLifecycleVerified, recordBrainPetRuntimeReady } from "../brainpet-installation-state.js";
 import { applyExternalPetSay, showDefaultPet } from "../default-pet-controller.js";
 import type { DesktopDistributionSettings } from "../distribution-profile.js";
@@ -19,6 +19,7 @@ export function createBrainPetFeature(
 ): DesktopManagedService {
   let state: DesktopServiceState = "created";
   let guideTimer: NodeJS.Timeout | null = null;
+  let setupGuideTimer: NodeJS.Timeout | null = null;
 
   return {
     id: "brainPetFeature",
@@ -33,6 +34,13 @@ export function createBrainPetFeature(
       }
       configureAgentLifecycleAcceptedHandler(() => recordBrainPetLifecycleVerified());
       initializeBrainPetHost();
+      if (process.argv.includes("--brainpet-open-setup-guide") || app.commandLine.hasSwitch("brainpet-open-setup-guide")) {
+        setupGuideTimer = setTimeout(() => {
+          setupGuideTimer = null;
+          openBrainPetSetupGuide();
+        }, 250);
+        setupGuideTimer.unref?.();
+      }
       const showFirstRunGuide = shouldShowBrainPetFirstRunGuide({
         profile: distribution.profile,
         packaged: app.isPackaged,
@@ -55,6 +63,8 @@ export function createBrainPetFeature(
       if (state === "disposed") return;
       if (guideTimer) clearTimeout(guideTimer);
       guideTimer = null;
+      if (setupGuideTimer) clearTimeout(setupGuideTimer);
+      setupGuideTimer = null;
       configureAgentLifecycleAcceptedHandler(null);
       configureBrainPetSetupGuide({ enabled: false });
       await shutdownBrainPetHost();

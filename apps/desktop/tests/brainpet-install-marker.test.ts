@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createBrainPetInstallMarker, getBrainPetInstallMarkerPath, readValidBrainPetInstallMarker, resolveBrainPetMarkerExecutablePath, validateBrainPetInstallMarker } from "../src/brainpet-install-marker.js";
+import { createBrainPetInstallMarker, getBrainPetInstallMarkerPath, readValidBrainPetInstallMarker, resolveBrainPetMarkerExecutablePath, validateBrainPetInstallMarker, writeBrainPetInstallMarker } from "../src/brainpet-install-marker.js";
 
 test("BrainPet install markers use product-specific per-user paths", () => {
   assert.equal(getBrainPetInstallMarkerPath("win32", { LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local" }, "C:\\Users\\test"), "C:\\Users\\test\\AppData\\Local\\BrainPet\\runtime-install.json");
@@ -42,6 +42,18 @@ test("setup validation rejects stale markers whose executable is missing", () =>
     assert.equal(readValidBrainPetInstallMarker(markerPath, "win32"), null);
     writeFileSync(executablePath, "fixture");
     assert.equal(readValidBrainPetInstallMarker(markerPath, "win32")?.appVersion, "1.0.0");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("marker writes keep an atomic last-known-good recovery copy", () => {
+  const root = mkdtempSync(join(tmpdir(), "brainpet-marker-backup-"));
+  try {
+    const markerPath = join(root, "runtime-install.json");
+    const marker = createBrainPetInstallMarker({ executablePath: "C:\\Program Files\\BrainPet\\brainpet.exe", appVersion: "1.0.0", platform: "win32", arch: "x64", writtenAt: 123 });
+    assert.equal(writeBrainPetInstallMarker(marker, markerPath), markerPath);
+    assert.deepEqual(readFileSync(`${markerPath}.bak`), readFileSync(markerPath));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

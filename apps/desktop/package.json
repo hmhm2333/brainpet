@@ -29,6 +29,8 @@
     "test:brainpet-foundation": "pnpm build && cross-env BRAINPET_SMOKE_TASK=foundation-probe node scripts/brainpet-electron-smoke.mjs ../../output/playwright/brainpet-foundation-probe.png",
     "test:brainpet-stress": "pnpm build && cross-env BRAINPET_LIFECYCLE_CYCLES=100 node scripts/brainpet-electron-smoke.mjs",
     "test:brainpet-rollback": "pnpm build && cross-env BRAINPET_EXPECT_DISABLED=1 node scripts/brainpet-electron-smoke.mjs",
+    "test:brainpet-single-instance": "pnpm build && node scripts/brainpet-single-instance-smoke.mjs",
+    "test:brainpet-adapter-ui": "node scripts/brainpet-adapter-ui-smoke.mjs",
     "test:brainpet-openpets-isolation": "pnpm build && cross-env OPENPETS_DISTRIBUTION_PROFILE=openpets BRAINPET_EXPECT_OPENPETS_ISOLATION=1 node scripts/brainpet-electron-smoke.mjs",
     "test:brainpet-soak": "pnpm build && cross-env BRAINPET_SOAK_MS=1800000 node scripts/brainpet-electron-smoke.mjs",
     "test:brainpet-completion": "pnpm build && cross-env BRAINPET_SMOKE_TASK=cargo-signal BRAINPET_VERIFY_COMPLETION=1 node scripts/brainpet-electron-smoke.mjs ../../output/playwright/brainpet-completion.png",

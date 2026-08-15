@@ -22,7 +22,7 @@ export function validateBridgeRelease(pluginRoot = defaultPluginRoot) {
   assert.equal(contract.minimumRuntimeIpcVersion, brainPetDistributionContract.bridge.minimumRuntimeIpcVersion);
   assert.equal(contract.hookDeadlineMs, brainPetDistributionContract.bridge.hookDeadlineMs);
   assert.equal(contract.connectAttemptMs, brainPetDistributionContract.bridge.connectAttemptMs);
-  assert.deepEqual(contract.transportPriority, ["native-hook", "node-development-fallback"]);
+  assert.deepEqual(contract.transportPriority, ["native-hook"]);
 
   const receiptPath = join(pluginRoot, "brainpet-release.json");
   const receipt = existsSync(receiptPath) ? JSON.parse(readFileSync(receiptPath, "utf8")) : null;
@@ -56,6 +56,10 @@ export function validateBridgeRelease(pluginRoot = defaultPluginRoot) {
   assert.ok(definitions.every((hook) => hook.command.includes("bridge.sh")), "Every Unix hook must use the native-helper launcher.");
   assert.ok(definitions.every((hook) => hook.commandWindows.includes("bridge.cmd")), "Every Windows hook must use the native-helper launcher.");
   assert.ok(definitions.every((hook) => !hook.command.startsWith("node ") && !hook.commandWindows.startsWith("node ")), "Published hook definitions must not directly require Node.");
+  for (const launcher of ["scripts/bridge.cmd", "scripts/bridge.sh"]) {
+    const source = readFileSync(join(pluginRoot, launcher), "utf8");
+    assert.doesNotMatch(source, /\b(?:node|npm|npx|pnpm)\b\s+["']?[^\r\n]*bridge\.mjs/i, `Published ${launcher} must not contain a Node fallback.`);
+  }
   assert.ok(definitions.every((hook) => hook.timeout * 1_000 >= contract.hookDeadlineMs || hook.timeout === 1), "Lifecycle hook timeouts must contain the Bridge deadline; SessionEnd may use the bounded one-second no-wake path.");
   return { targetCount: brainPetReleaseTargets.length, receipt: Boolean(receipt) };
 }

@@ -1,8 +1,8 @@
 # BrainPet 安装与公开发行方案
 
-> 状态：`0dacd88` 的历史分发基线。该基线完成过 Windows x64 私测包与 packaged
-> runtime smoke，但不等于当前 Release 就绪；当前安装、目标路由、跨平台回执与
-> 公开发行门以 `brainpet-release-infrastructure-completion-plan.md` 为准。
+> 状态：RC5 安装与连接实现已落地；Windows x64 原生 Helper/unpacked 包已在本机
+> 验证。它仍不是公开 Release；签名、公证、跨平台安装和物理回执继续以
+> `brainpet-release-infrastructure-completion-plan.md` 的 RC6/RC7 门禁为准。
 
 主宠替代层的分期、Codex 原生控件覆盖和本轮验收门见
 `docs/brainpet-primary-companion-plan.md`。
@@ -20,26 +20,30 @@ BrainPet 需要两个逻辑组件，但最终体验应表现为一次产品安�
 
 1. 用户从官网、GitHub Releases 或应用商店下载带代码签名的 BrainPet 安装包。
 2. 首次启动由宠物提示打开托盘的“BrainPet 安装与恢复”。
-3. 用户从 Codex 插件目录安装 BrainPet Bridge。
-4. Codex 展示 hook 定义，用户审核并信任；BrainPet 不代替用户做安全确认。
+3. 用户点击“检测并连接”，BrainPet 通过已验证的 Codex CLI 安装包内 marketplace
+   完成 Bridge 安装或升级；不要求粘贴路径、打开终端，也不直接编辑 Codex TOML。
+4. 新任务中 Codex 展示 hook 定义，用户审核并信任；BrainPet 不代替用户做安全确认。
 5. 用户新建一个 Codex 任务；BrainPet 开始显示工作、等待授权和完成状态。
 6. 如果要完全替代视觉体验，用户手动收起 Codex 原生宠物。BrainPet 不修改或删除 Codex 原生宠物资源。
 
-可接受的最终人工步骤只有两个：**安装插件**和**信任 hook**。这是安全确认，不应伪装成静默自动化。
+可接受的最终人工安全步骤只有 **信任 hook**；安装、升级和卸载 Bridge 均由
+BrainPet 明确按钮发起，并保留原子配置备份和脱敏 receipt。
 
 ## 分阶段分发
 
-### 开发验证（当前）
+### 开发验证
 
-- 个人 marketplace：`brainpet-codex-bridge@personal`。
-- Hook 使用本机 Node.js 运行 `bridge.mjs`。
-- 适合开发机验证事件映射、隐私边界和 BrainPet IPC；不适合普通用户。
+- 历史个人 marketplace `brainpet-codex-bridge@personal` 只用于旧回执兼容和升级测试。
+- 当前仓库 launcher 仅调用对应目标的 native helper；helper 缺失时静默退出，不再
+  回退到 Node/npm。`bridge.mjs` 只保留为源码合同测试夹具，不进入 runtime 包。
+- 单元测试使用隔离的假 Codex home；不会修改开发者当前 Codex 配置。
 
 ### 封闭测试
 
-- 在 BrainPet GitHub 仓库提供 repo marketplace。
-- 测试用户安装签名测试包后，通过 Codex 插件页或一条 marketplace 命令安装桥接。
-- BrainPet 内提供连接状态、插件版本、hook 是否待信任和一键打开相应 Codex 页面；不直接改 Codex 配置文件。
+- runtime 包内置名为 `brainpet` 的本地 marketplace 和当前平台 helper。
+- “BrainPet 安装与恢复”页检测 Codex、执行安装/升级/卸载并显示待信任/已验证状态。
+- 每次变更先备份 `CODEX_HOME/config.toml`，失败时恢复精确字节；receipt 不保存配置
+  正文、prompt、任务内容或工作目录。
 
 ### 公开发行
 
@@ -65,7 +69,7 @@ brainpet-codex-bridge/
     └── linux-arm64/brainpet-hook
 ```
 
-Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discovery 发送一次本机 IPC。每次连接尝试最多 350ms；热连接、冷启动轮询和最终发送共享 2600ms 内部 deadline，为 Codex 的 3 秒 Hook 预算保留启动与退出余量。若 runtime 未运行，helper 会读取 per-user 安装标记，验证它只指向当前平台的 BrainPet 可执行文件后再启动。Linux AppImage 记录原始 `APPIMAGE` 路径，而不是临时挂载目录。它不启动游戏、不访问网络、不写用户任务内容。
+Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discovery 发送一次本机 IPC。每次连接尝试最多 350ms；热连接、冷启动轮询和最终发送共享 2600ms 内部 deadline，为 Codex 的 3 秒 Hook 预算保留启动与退出余量。若 runtime 未运行，helper 会读取 per-user 安装标记，验证它只指向当前平台的 BrainPet 可执行文件后再启动。runtime 同时原子写入 `.bak`；主 marker 损坏或陈旧时 helper 只接受该备份或平台固定 BrainPet 安装位置，不采信损坏内容中的路径。Linux AppImage 记录原始 `APPIMAGE` 路径，而不是临时挂载目录。它不启动游戏、不访问网络、不写用户任务内容。
 
 ## `0dacd88` 历史发行合同
 
@@ -76,7 +80,7 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
 - `brainpet:bridge:validate-release` 是二进制发行门；源码 checkout 没有六个 helper 时失败是正确行为。`brainpet:release:test` 是本地源码与装配逻辑门，不替代签名或实机验证。
 - `.github/workflows/brainpet-portability-gate.yml` 构建六类 runtime/helper 私测产物，不发布 Release，也不把未签名包称为公开安装包。
 
-托盘“BrainPet 安装与恢复”页给出三类分离证据：runtime 标记与运行版本、用户明确确认已审核 Bridge、新任务是否真的送达首条 lifecycle。状态保存在 BrainPet 独立用户目录，Bridge 版本变化会转为重新确认。暂停或卸载 Bridge 不影响离线宠物与训练；卸载 runtime 会删除安装标记并让 Bridge 快速 no-op，但默认保留用户训练进度。
+托盘“BrainPet 安装与恢复”页给出三类分离证据：runtime 标记与运行版本、Codex/Bridge 检测安装状态、新任务是否真的送达首条 lifecycle。状态、配置备份和操作 receipt 均保存在 BrainPet 独立用户目录；Bridge 版本变化会使旧 lifecycle 证据失效。暂停或卸载 Bridge 不影响离线宠物与训练；卸载 runtime 会删除主/备安装标记并让 Bridge 快速 no-op，但默认保留用户训练进度。
 
 BrainPet 与 OpenPets 使用独立 discovery 命名空间，避免两款应用同时运行时把 Agent 事件发错进程。macOS 使用 `~/Library/Application Support/BrainPet/runtime/ipc.json`，Windows 使用 `%APPDATA%\\BrainPet\\runtime\\ipc.json`，Linux 优先使用 `$XDG_RUNTIME_DIR/brainpet/ipc.json`。安装标记位于系统的 per-user BrainPet 配置目录；源码 checkout 也只接受 `product=brainpet`、`appId=dev.brainpet.app` 的 discovery，缺失时 fail-open，不回退到 OpenPets。各端使用相同的 `agent.activity` schema v1 和 discovery token。
 

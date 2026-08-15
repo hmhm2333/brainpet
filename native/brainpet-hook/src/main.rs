@@ -346,40 +346,11 @@ enum LaunchStatus {
 }
 
 fn launch_installed_runtime(marker_path: &Path) -> LaunchStatus {
-    let metadata = match fs::symlink_metadata(marker_path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return LaunchStatus::Missing,
-        Err(_) => return LaunchStatus::Invalid,
+    let executable = match resolve_runtime_executable(marker_path) {
+        Ok(Some(path)) => path,
+        Ok(None) => return LaunchStatus::Missing,
+        Err(()) => return LaunchStatus::Invalid,
     };
-    if !metadata.is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.len() as usize > MAX_IPC_MESSAGE_BYTES
-    {
-        return LaunchStatus::Invalid;
-    }
-    let marker: Value = match fs::read(marker_path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-    {
-        Some(marker) => marker,
-        None => return LaunchStatus::Invalid,
-    };
-    let executable = match validate_install_marker(&marker) {
-        Some(path) => path,
-        None => return LaunchStatus::Invalid,
-    };
-    let executable_metadata = match fs::symlink_metadata(&executable) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let _ = fs::remove_file(marker_path);
-            return LaunchStatus::Missing;
-        }
-        Err(_) => return LaunchStatus::Invalid,
-    };
-    if !executable_metadata.is_file() || executable_metadata.file_type().is_symlink() {
-        return LaunchStatus::Invalid;
-    }
-
     let mut command = Command::new(executable);
     command
         .stdin(Stdio::null())
@@ -395,6 +366,127 @@ fn launch_installed_runtime(marker_path: &Path) -> LaunchStatus {
     match command.spawn() {
         Ok(_) => LaunchStatus::Launched,
         Err(_) => LaunchStatus::Invalid,
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum MarkerRuntime {
+    Found(PathBuf),
+    Missing,
+    Corrupt,
+    Unsafe,
+}
+
+fn resolve_runtime_executable(marker_path: &Path) -> Result<Option<PathBuf>, ()> {
+    match read_marker_runtime(marker_path) {
+        MarkerRuntime::Found(path) => return Ok(Some(path)),
+        MarkerRuntime::Unsafe => return Err(()),
+        MarkerRuntime::Missing | MarkerRuntime::Corrupt => {}
+    }
+
+    let backup_path = install_marker_backup_path(marker_path);
+    match read_marker_runtime(&backup_path) {
+        MarkerRuntime::Found(path) => return Ok(Some(path)),
+        MarkerRuntime::Unsafe => return Err(()),
+        MarkerRuntime::Missing | MarkerRuntime::Corrupt => {}
+    }
+
+    for candidate in default_runtime_candidates(marker_path) {
+        if is_regular_executable(&candidate) {
+            return Ok(Some(candidate));
+        }
+    }
+
+    remove_regular_marker(marker_path);
+    remove_regular_marker(&backup_path);
+    Ok(None)
+}
+
+fn read_marker_runtime(path: &Path) -> MarkerRuntime {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return MarkerRuntime::Missing,
+        Err(_) => return MarkerRuntime::Unsafe,
+    };
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() as usize > MAX_IPC_MESSAGE_BYTES
+    {
+        return MarkerRuntime::Unsafe;
+    }
+    let marker: Value = match fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    {
+        Some(marker) => marker,
+        None => return MarkerRuntime::Corrupt,
+    };
+    let executable = match validate_install_marker(&marker) {
+        Some(path) => path,
+        None => return MarkerRuntime::Corrupt,
+    };
+    if is_regular_executable(&executable) {
+        MarkerRuntime::Found(executable)
+    } else {
+        MarkerRuntime::Missing
+    }
+}
+
+fn is_regular_executable(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+fn install_marker_backup_path(marker_path: &Path) -> PathBuf {
+    let mut value = marker_path.as_os_str().to_os_string();
+    value.push(".bak");
+    PathBuf::from(value)
+}
+
+fn remove_regular_marker(path: &Path) {
+    if fs::symlink_metadata(path)
+        .map(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn default_runtime_candidates(marker_path: &Path) -> Vec<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        return marker_path
+            .parent()
+            .and_then(Path::parent)
+            .map(|local_app_data| {
+                vec![local_app_data
+                    .join("Programs")
+                    .join("brainpet")
+                    .join("brainpet.exe")]
+            })
+            .unwrap_or_default();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut candidates = vec![PathBuf::from(
+            "/Applications/BrainPet.app/Contents/MacOS/brainpet",
+        )];
+        if let Some(home) = marker_path.ancestors().nth(4) {
+            candidates.push(
+                home.join("Applications")
+                    .join("BrainPet.app/Contents/MacOS/brainpet"),
+            );
+        }
+        return candidates;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = marker_path;
+        vec![
+            PathBuf::from("/opt/BrainPet/brainpet"),
+            PathBuf::from("/opt/brainpet/brainpet"),
+        ]
     }
 }
 
@@ -700,6 +792,98 @@ mod tests {
                 "sh"
             }));
         assert_eq!(validate_install_marker(&invalid), None);
+    }
+
+    #[test]
+    fn corrupt_primary_marker_recovers_from_last_known_good_copy() {
+        let root = env::temp_dir().join(format!(
+            "brainpet-hook-marker-backup-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let executable = root.join(if cfg!(target_os = "windows") {
+            "brainpet.exe"
+        } else {
+            "brainpet"
+        });
+        fs::write(&executable, b"fixture").unwrap();
+        let marker_path = root.join("runtime-install.json");
+        fs::write(&marker_path, b"{broken-json").unwrap();
+        let marker = json!({
+            "schemaVersion": 1,
+            "product": "brainpet",
+            "executablePath": executable,
+            "appVersion": "1.0.0",
+            "channel": "stable",
+            "platform": current_platform_id(),
+            "arch": if cfg!(target_arch = "x86_64") { "x64" } else { "arm64" },
+            "writtenAt": 123
+        });
+        fs::write(
+            install_marker_backup_path(&marker_path),
+            serde_json::to_vec(&marker).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_runtime_executable(&marker_path).unwrap(),
+            marker
+                .get("executablePath")
+                .and_then(Value::as_str)
+                .map(PathBuf::from)
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unrecoverable_regular_markers_are_removed_without_trusting_their_paths() {
+        let root = env::temp_dir().join(format!(
+            "brainpet-hook-marker-corrupt-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let marker_path = root.join("runtime-install.json");
+        let backup_path = install_marker_backup_path(&marker_path);
+        fs::write(&marker_path, b"{broken-primary").unwrap();
+        fs::write(&backup_path, b"{broken-backup").unwrap();
+        assert_eq!(resolve_runtime_executable(&marker_path), Ok(None));
+        assert!(!marker_path.exists());
+        assert!(!backup_path.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn default_runtime_recovery_candidates_are_install_profile_bound() {
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            default_runtime_candidates(Path::new(
+                r"C:\Users\test\AppData\Local\BrainPet\runtime-install.json"
+            )),
+            vec![PathBuf::from(
+                r"C:\Users\test\AppData\Local\Programs\brainpet\brainpet.exe"
+            )]
+        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            default_runtime_candidates(Path::new(
+                "/Users/test/Library/Application Support/BrainPet/runtime-install.json"
+            )),
+            vec![
+                PathBuf::from("/Applications/BrainPet.app/Contents/MacOS/brainpet"),
+                PathBuf::from("/Users/test/Applications/BrainPet.app/Contents/MacOS/brainpet"),
+            ]
+        );
+        #[cfg(all(unix, not(target_os = "macos")))]
+        assert_eq!(
+            default_runtime_candidates(Path::new(
+                "/home/test/.config/BrainPet/runtime-install.json"
+            )),
+            vec![
+                PathBuf::from("/opt/BrainPet/brainpet"),
+                PathBuf::from("/opt/brainpet/brainpet"),
+            ]
+        );
     }
 
     #[test]

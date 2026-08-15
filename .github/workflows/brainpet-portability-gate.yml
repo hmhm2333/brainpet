@@ -56,16 +56,17 @@ jobs:
           if-no-files-found: error
 
   runtime-package:
+    needs: native-helper
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { id: windows-x64, os: windows-latest, platform: windows, arch: x64 }
-          - { id: windows-arm64, os: windows-11-arm, platform: windows, arch: arm64 }
-          - { id: macos-x64, os: macos-15-intel, platform: macos, arch: x64 }
-          - { id: macos-arm64, os: macos-14, platform: macos, arch: arm64 }
-          - { id: linux-x64, os: ubuntu-latest, platform: linux, arch: x64 }
-          - { id: linux-arm64, os: ubuntu-24.04-arm, platform: linux, arch: arm64 }
+          - { id: windows-x64, os: windows-latest, platform: windows, arch: x64, file: brainpet-hook.exe }
+          - { id: windows-arm64, os: windows-11-arm, platform: windows, arch: arm64, file: brainpet-hook.exe }
+          - { id: macos-x64, os: macos-15-intel, platform: macos, arch: x64, file: brainpet-hook }
+          - { id: macos-arm64, os: macos-14, platform: macos, arch: arm64, file: brainpet-hook }
+          - { id: linux-x64, os: ubuntu-latest, platform: linux, arch: x64, file: brainpet-hook }
+          - { id: linux-arm64, os: ubuntu-24.04-arm, platform: linux, arch: arm64, file: brainpet-hook }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -77,8 +78,12 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.id }}
+          path: output/brainpet-helper
       - run: pnpm --filter @open-pets/desktop build
-      - run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode private-test
+      - run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode private-test --helper output/brainpet-helper/${{ matrix.file }}
       - run: node apps/desktop/scripts/validate-brainpet-package.mjs --target ${{ matrix.id }} --mode private-test
       - uses: actions/upload-artifact@v4
         with:
