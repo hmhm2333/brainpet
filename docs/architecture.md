@@ -75,22 +75,26 @@ is `config/brainpet-release-capabilities.json`; the generated provider matrix is
 | `@open-pets/opencode` | OpenCode plugin runtime + config management | [Agent integrations](/agent-integrations) |
 | `@open-pets/cursor` | Cursor MCP config + project rules management | [Agent integrations](/agent-integrations) |
 | `@open-pets/pi` | Pi coding-agent extension + `/openpets` commands | [Agent integrations](/agent-integrations) |
-| `@open-pets/agent-events` | Shared, validated speech pools for agent feedback | [Agent integrations](/agent-integrations) |
+| `@open-pets/adapter-core` | TargetProfile, adapter descriptor, event mapper, and installer-plan contracts | [Agent integrations](/agent-integrations) |
+| `@open-pets/agent-events` | Generated lifecycle schema, privacy boundary, and optional manual speech pools | [Agent integrations](/agent-integrations) |
 | `@open-pets/plugin-sdk` | Public SDK v3 type contract + deterministic test harness | [Plugin SDK v3](/sdk) |
 | `install-pet` | Product-targeted installer client; the selected desktop host must be running | [Pets](/pets) |
 | `pet-format` | Tiny marker/identity type for pet packages | - |
 
-The dependency spine: every integration depends on `@open-pets/client`; the
+The dependency spine starts at `@open-pets/adapter-core`; the client re-exports
+its product-target resolver, and automatic integrations share the generated
+lifecycle schema from `agent-events`. The
 `cli` composes `claude`, `opencode`, `cursor`, and `mcp`; `claude`/`opencode`/`pi`
-depend on `agent-events` for safe speech.
+depend on `agent-events` for bounded event fields.
 
 ## End-to-end flows
 
 These are the flows worth holding in memory. Each links to the doc that details it.
 
-- **Agent reaction → visible pet.** Agent activity is classified into a reaction
-  category, sent via the client over IPC, the lease manager routes it to a pet
-  window, and the window plays the mapped animation with localized speech.
+- **Automatic agent activity → visible pet.** Provider activity is normalized
+  into one `agent.activity` event; the host lifecycle reducer chooses companion
+  state and presentation. Automatic adapters never also call `pet.react` or
+  `pet.say`.
   See [IPC and remote control](/ipc) and [Pets](/pets).
 - **Remote agent reaction → default pet.** A paired remote client uses the
   separate versioned protocol. Scope checks, bounded payloads, timeouts, and

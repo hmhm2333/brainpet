@@ -4,7 +4,7 @@ Claude Code integration for OpenPets.
 
 ## Responsibility
 
-Provides Claude Code editor integration via MCP configuration and lifecycle hooks. Manages hook installation, event handling, and speech feedback during Claude Code sessions.
+Provides Claude Code editor integration via MCP configuration and lifecycle hooks. Manages hook installation and privacy-minimal `agent.activity` delivery during Claude Code sessions.
 
 ## Design
 
@@ -15,11 +15,8 @@ Provides Claude Code editor integration via MCP configuration and lifecycle hook
 
 **Hook Execution** (`hooks.ts`):
 - `runClaudeHookFromStdin()` - Main entry for Claude hook protocol
-- Event mapping: `UserPromptSubmit` → thinking, `PermissionRequest` → waiting, `Stop` → success, `StopFailure` → error, `PreToolUse` → tool-specific
-- Tool classification: Edit/Write/MultiEdit → "editing", Bash with test commands → "testing"
+- Lifecycle mapping: prompt/tool use → working, permission → waiting, stop → ready, stop failure → blocked, session end → idle
 - Project-local detection: Checks `.claude/settings.local.json` for `--openpets-managed --project-local`
-- Throttling: 20s speech, 3s permission, 10s reaction cooldowns via JSON state file
-- Lease acquisition for targeted pets
 - Error handling: Debug logging, graceful degradation
 
 **Hook Settings Management** (`hook-settings.ts`):
@@ -49,17 +46,15 @@ Claude Hook Event (stdin JSON)
     ↓
 runClaudeHookFromStdin() → readLimitedStdin()
     ↓
-parseHookPayload() → mapClaudeHookEvent()
+parseHookPayload() → mapClaudeLifecycleEvent()
     ↓
-Decision: { reaction?, speechCategory? }
+NormalizedAgentLifecycleEvent | null
     ↓
 hasProjectLocalOpenPetsHook() → Skip if project-local exists
     ↓
 shouldSendSpeech() / shouldSendReaction() → Throttle check
     ↓
-acquireHookLease() → Get leaseId for targeted pet
-    ↓
-client.say(message, { reaction, leaseId }) or client.react(reaction, { leaseId })
+client.reportAgentActivity(event) exactly once
 ```
 
 ## Integration Points

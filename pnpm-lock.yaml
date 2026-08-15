@@ -106,6 +106,15 @@ importers:
         specifier: ^9.0.10
         version: 9.0.10
 
+  packages/adapter-core:
+    devDependencies:
+      '@types/node':
+        specifier: ^25.6.2
+        version: 25.6.2
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+
   packages/agent-events:
     devDependencies:
       '@types/node':
@@ -117,6 +126,9 @@ importers:
 
   packages/claude:
     dependencies:
+      '@open-pets/adapter-core':
+        specifier: workspace:*
+        version: link:../adapter-core
       '@open-pets/agent-events':
         specifier: workspace:*
         version: link:../agent-events
@@ -157,6 +169,13 @@ importers:
         version: 6.0.3
 
   packages/client:
+    dependencies:
+      '@open-pets/adapter-core':
+        specifier: workspace:*
+        version: link:../adapter-core
+      '@open-pets/agent-events':
+        specifier: workspace:*
+        version: link:../agent-events
     devDependencies:
       '@types/node':
         specifier: ^25.6.2
@@ -212,6 +231,9 @@ importers:
 
   packages/opencode:
     dependencies:
+      '@open-pets/adapter-core':
+        specifier: workspace:*
+        version: link:../adapter-core
       '@open-pets/agent-events':
         specifier: workspace:*
         version: link:../agent-events

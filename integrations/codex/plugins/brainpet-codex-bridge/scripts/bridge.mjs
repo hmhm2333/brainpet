@@ -5,6 +5,7 @@ import net from "node:net";
 import { homedir } from "node:os";
 
 import { selectLifecycleEvent, shouldWriteJsonResult } from "./bridge-core.mjs";
+import { agentActivityMethod, brainPetTarget, ipcProtocolVersion } from "./generated-contract.mjs";
 import { connectAttemptMs, getRuntimePaths, hookDeadlineMs, remainingDeadlineMs, runtimePollIntervalMs, shouldWakeRuntime, validateInstallMarker } from "./runtime-core.mjs";
 
 const maxHookInputBytes = 8 * 1024 * 1024;
@@ -65,9 +66,9 @@ async function sendLifecycleEvent(event, deadline) {
 async function sendToDiscovery(event, discovery, deadline) {
   const request = {
     id: randomUUID(),
-    version: 1,
+    version: ipcProtocolVersion,
     token: discovery.token,
-    method: "agent.activity",
+    method: agentActivityMethod,
     params: event,
   };
   const line = `${JSON.stringify(request)}\n`;
@@ -79,7 +80,7 @@ async function readDiscovery(path) {
   const raw = await readFile(path, "utf8");
   if (Buffer.byteLength(raw, "utf8") > maxIpcMessageBytes) throw new Error("Invalid discovery file.");
   const value = JSON.parse(raw);
-  if (!value || value.protocol !== "openpets-ipc" || value.protocolVersion !== 1 || value.product !== "brainpet" || value.appId !== "dev.brainpet.app" || typeof value.endpoint !== "string" || typeof value.token !== "string" || value.token.length < 16 || value.token.length > 256) {
+  if (!value || value.protocol !== "openpets-ipc" || value.protocolVersion !== ipcProtocolVersion || value.product !== "brainpet" || value.appId !== brainPetTarget.appId || typeof value.endpoint !== "string" || typeof value.token !== "string" || value.token.length < 16 || value.token.length > 256) {
     throw new Error("Invalid discovery file.");
   }
   return { endpoint: value.endpoint, token: value.token };
@@ -158,8 +159,8 @@ function parseEndpoint(endpoint) {
     if (url.protocol !== "tcp:" || !isPrivateIpv4(url.hostname) || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid IPC endpoint.");
     return { kind: "tcp", host: url.hostname, port };
   }
-  if (process.platform === "win32" && !endpoint.startsWith("\\\\.\\pipe\\openpets-") && !endpoint.startsWith("\\\\.\\pipe\\brainpet-")) throw new Error("Invalid IPC endpoint.");
-  if (process.platform !== "win32" && (!endpoint.startsWith("/") || endpoint.includes(".."))) throw new Error("Invalid IPC endpoint.");
+  if (process.platform === "win32" && !endpoint.startsWith("\\\\.\\pipe\\brainpet-")) throw new Error("Invalid IPC endpoint.");
+  if (process.platform !== "win32" && (!endpoint.startsWith("/") || endpoint.includes("..") || !endpoint.split("/").at(-1)?.startsWith("brainpet-") || !endpoint.endsWith(".sock"))) throw new Error("Invalid IPC endpoint.");
   return { kind: "path", path: endpoint };
 }
 

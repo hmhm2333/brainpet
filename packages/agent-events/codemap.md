@@ -1,10 +1,12 @@
 # packages/agent-events/
 
-Speech pools and validation for agent feedback messages.
+Generated lifecycle/privacy facts plus optional speech validation.
 
 ## Responsibility
 
-Provides categorized speech pools (thinking, success, error, permission) and validation logic for agent-facing messages. Ensures messages are safe (no code, URLs, paths, secrets) and appropriately sized (1-140 chars, single line).
+Provides the canonical automatic lifecycle states, schema/method constants,
+privacy rejected-field list, normalized event builder, and categorized manual
+speech pools. Automatic adapters use only the lifecycle contract.
 
 ## Design
 
@@ -32,11 +34,13 @@ Agent Event → pickHookSpeech(category, randomFn) → validateHookSpeech(messag
 ## Integration Points
 
 **Consumers**:
-- `@open-pets/claude` - Hook message generation
-- `@open-pets/opencode` - Plugin speech events
+- `@open-pets/client` and desktop protocol - lifecycle validation
+- `@open-pets/claude` and `@open-pets/opencode` - automatic event normalization
 
 **Exports**:
 - `hookSpeechPools` - Readonly record of message arrays
 - `pickHookSpeech()` - Random selection with bounds checking
 - `validateHookSpeech()` - Security validation
 - `HookSpeechCategory` - Type union for categories
+- `normalizedAgentLifecycleStates` / `agentActivityMethod` - generated protocol facts
+- `agentActivityPrivacyRejectedFields` - shared privacy boundary

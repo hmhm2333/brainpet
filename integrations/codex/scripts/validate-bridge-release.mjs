@@ -8,11 +8,13 @@ import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract, brainPetReleaseTargets, brainPetReleaseTargetIds } from "../../../scripts/brainpet-release-contract.mjs";
 import { assertBrainPetBinary } from "../../../scripts/brainpet-binary-format.mjs";
+import { assertBrainPetAdapterContractsCurrent } from "../../../scripts/generate-brainpet-adapter-contracts.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const defaultPluginRoot = resolve(scriptDir, "..", "plugins", "brainpet-codex-bridge");
 
 export function validateBridgeRelease(pluginRoot = defaultPluginRoot) {
+  assertBrainPetAdapterContractsCurrent();
   const contract = JSON.parse(readFileSync(join(pluginRoot, "brainpet.bridge.json"), "utf8"));
   assert.equal(contract.schemaVersion, 1);
   assert.deepEqual(contract.releaseTargets, brainPetReleaseTargetIds);

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "adapterVersion": "1.0.0",
+  "products": {
+    "brainpet": {
+      "appId": "dev.brainpet.app",
+      "productDirectory": "BrainPet",
+      "runtimeNamespace": "brainpet",
+      "updateChannel": "hmhm2333/brainpet"
+    },
+    "openpets": {
+      "appId": "dev.openpets.app",
+      "productDirectory": "OpenPets",
+      "runtimeNamespace": "openpets",
+      "updateChannel": "alvinunreal/openpets"
+    }
+  }
+}

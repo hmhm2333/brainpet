@@ -1,11 +1,13 @@
-export type HookSpeechCategory = "thinking" | "success" | "error" | "permission";
+import { agentActivityPrivacyRejectedFields, agentActivitySchemaVersion, normalizedAgentLifecycleStates } from "./generated-contract.js";
 
-export const normalizedAgentLifecycleStates = ["idle", "working", "waiting", "ready", "blocked"] as const;
+export { agentActivityMethod, agentActivityOptionalFields, agentActivityPrivacyRejectedFields, agentActivityRequiredFields, agentActivitySchemaVersion, normalizedAgentLifecycleStates } from "./generated-contract.js";
+
+export type HookSpeechCategory = "thinking" | "success" | "error" | "permission";
 export type NormalizedAgentLifecycleState = typeof normalizedAgentLifecycleStates[number];
 export type NormalizedAgentRequestKind = "permission" | "question" | "review" | "openLink" | "stop" | "continue";
 
 export interface NormalizedAgentLifecycleEvent {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: typeof agentActivitySchemaVersion;
   readonly agent: string;
   readonly sessionId: string;
   readonly turnId?: string;
@@ -34,7 +36,7 @@ export function createNormalizedAgentLifecycleEvent(input: {
   const occurredAt = input.occurredAt ?? Date.now();
   if (!Number.isSafeInteger(occurredAt) || occurredAt <= 0) throw new TypeError("Agent lifecycle timestamp is invalid.");
   return {
-    schemaVersion: 1,
+    schemaVersion: agentActivitySchemaVersion,
     agent: input.agent,
     sessionId: input.sessionId,
     ...(input.turnId ? { turnId: input.turnId } : {}),
@@ -43,6 +45,13 @@ export function createNormalizedAgentLifecycleEvent(input: {
     capabilities: ["observeLifecycle"],
     ...(input.requestKind ? { request: { kind: input.requestKind } } : {}),
   };
+}
+
+export function assertNoRejectedAgentActivityFields(value: unknown): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Agent lifecycle event must be an object.");
+  for (const field of agentActivityPrivacyRejectedFields) {
+    if (field in value) throw new TypeError(`Agent lifecycle event contains rejected field: ${field}`);
+  }
 }
 
 export const hookSpeechPools: Record<HookSpeechCategory, readonly string[]> = {

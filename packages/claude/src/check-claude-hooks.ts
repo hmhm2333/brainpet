@@ -7,7 +7,10 @@ import { fileURLToPath } from "node:url";
 
 import { addOpenPetsHooks, assertInstalledClaudeCliPath, claudeHookEvents, createOpenPetsHookCommand, createOpenPetsHookSettingsPreview, doctorClaudeHooks, findInstalledOpenPetsClaudeCli, getBundledClaudeCliPath, getLocalClaudeCliPath, installClaudeHooks, openPetsHookMarker, removeOpenPetsHooks, uninstallClaudeHooks } from "./hook-settings.js";
 import { hookSpeechPools } from "./hook-messages.js";
-import { handleClaudeHookPayload, hasProjectLocalOpenPetsHook, mapClaudeHookEvent, mapClaudeLifecycleEvent, validateHookSpeech } from "./hooks.js";
+import { claudeAdapterDescriptor, createClaudeInstallerPlan, handleClaudeHookPayload, hasProjectLocalOpenPetsHook, mapClaudeHookEvent, mapClaudeLifecycleEvent, validateHookSpeech } from "./hooks.js";
+
+assert.equal(claudeAdapterDescriptor.lifecycleMethod, "agent.activity");
+assert.equal(createClaudeInstallerPlan("brainpet", "global").target.product, "brainpet");
 
 assert.equal(mapClaudeHookEvent({ hook_event_name: "UserPromptSubmit" })?.reaction, "thinking");
 assert.equal(mapClaudeHookEvent({ hook_event_name: "UserPromptSubmit" })?.speechCategory, undefined);
@@ -60,10 +63,8 @@ const dir = mkdtempSync(join(tmpdir(), "openpets-hooks-"));
 try {
 await handleClaudeHookPayload(JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: "claude-session", prompt: "never shown" }), { client, configuredPetId: "fixer", throttlePath: join(dir, "throttle.json"), now: () => 100_000, random: () => 0 });
 assert.deepEqual(lifecycleCalls[0], { schemaVersion: 1, agent: "claude", sessionId: "claude-session", state: "working", occurredAt: 100_000, capabilities: ["observeLifecycle"] });
-assert.deepEqual(calls[0], { kind: "lease", value: "acquire", requestedPetId: "fixer" });
-assert.deepEqual(calls[1], { kind: "react", value: "thinking", leaseId: "lease-fixer" });
+assert.deepEqual(calls, [], "automatic Claude lifecycle must not use lease, pet.react, or pet.say");
 await handleClaudeHookPayload(JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "npm test -- --secret" } }), { client, throttlePath: join(dir, "throttle.json"), now: () => 101_000 });
-assert.deepEqual(calls[2], { kind: "react", value: "testing", leaseId: undefined });
 const beforeSilentBash = calls.length;
 await handleClaudeHookPayload(JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" } }), { client, throttlePath: join(dir, "throttle.json"), now: () => 102_000 });
 assert.equal(calls.length, beforeSilentBash);
@@ -76,14 +77,16 @@ mkdirSync(join(projectDir, ".claude"), { recursive: true });
 writeFileSync(join(projectDir, ".claude", "settings.local.json"), JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: "openpets hook --openpets-managed --project-local --pet fixer" }] }] } }), "utf8");
 assert.equal(hasProjectLocalOpenPetsHook(projectDir), true);
 const beforeSkippedGlobal = calls.length;
+const lifecycleBeforeSkippedGlobal = lifecycleCalls.length;
 const previousProjectDir = process.env.CLAUDE_PROJECT_DIR;
 process.env.CLAUDE_PROJECT_DIR = projectDir;
 try {
-  await handleClaudeHookPayload(JSON.stringify({ hook_event_name: "PermissionRequest" }), { client, throttlePath: join(dir, "project-skip-throttle.json"), now: () => 102_000, debug: true, random: () => 0 });
+  await handleClaudeHookPayload(JSON.stringify({ hook_event_name: "PermissionRequest", session_id: "global-duplicate" }), { client, throttlePath: join(dir, "project-skip-throttle.json"), now: () => 102_000, debug: true, random: () => 0 });
   assert.equal(calls.length, beforeSkippedGlobal);
-  await handleClaudeHookPayload(JSON.stringify({ hook_event_name: "PermissionRequest" }), { client, projectLocal: true, configuredPetId: "fixer", throttlePath: join(dir, "throttle.json"), now: () => 103_000, random: () => 0 });
-  assert.deepEqual(calls.at(-2), { kind: "lease", value: "acquire", requestedPetId: "fixer" });
-  assert.deepEqual(calls.at(-1), { kind: "say", value: "Approval needed", leaseId: "lease-fixer" });
+  assert.equal(lifecycleCalls.length, lifecycleBeforeSkippedGlobal, "global hook must not duplicate a project-local lifecycle hook");
+  await handleClaudeHookPayload(JSON.stringify({ hook_event_name: "PermissionRequest", session_id: "project-session" }), { client, projectLocal: true, configuredPetId: "fixer", throttlePath: join(dir, "throttle.json"), now: () => 103_000, random: () => 0 });
+  assert.equal(lifecycleCalls.length, lifecycleBeforeSkippedGlobal + 1);
+  assert.equal(calls.length, beforeSkippedGlobal, "project lifecycle must still use agent.activity only");
 } finally {
   if (previousProjectDir === undefined) delete process.env.CLAUDE_PROJECT_DIR;
   else process.env.CLAUDE_PROJECT_DIR = previousProjectDir;

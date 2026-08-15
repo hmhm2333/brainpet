@@ -7,8 +7,10 @@ import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract, brainPetReleaseTargetIds } from "./brainpet-release-contract.mjs";
 import { assertBrainPetProviderMatrixCurrent } from "./generate-brainpet-provider-matrix.mjs";
+import { assertBrainPetAdapterContractsCurrent } from "./generate-brainpet-adapter-contracts.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+assertBrainPetAdapterContractsCurrent();
 const desktop = join(root, "apps", "desktop");
 const lifecycleContract = JSON.parse(readFileSync(join(root, "config", "brainpet-agent-lifecycle.json"), "utf8"));
 const releaseCapabilities = JSON.parse(readFileSync(join(root, "config", "brainpet-release-capabilities.json"), "utf8"));
@@ -50,7 +52,7 @@ assert.deepEqual(bridgeContract.privacy.rejectedFields, lifecycleContract.privac
 const privacyText = readFileSync(join(root, "PRIVACY.md"), "utf8");
 for (const rejectedField of lifecycleContract.privacyRejectedFields) assert.match(privacyText.toLowerCase(), new RegExp(rejectedField.replace(/[A-Z]/g, (letter) => `.?${letter.toLowerCase()}`)), `Privacy policy must name rejected field ${rejectedField}.`);
 const ipcProtocolSource = readFileSync(join(desktop, "src", "local-ipc-protocol.ts"), "utf8");
-assert.ok(ipcProtocolSource.replaceAll(/\s/g, "").includes(`exportconstallowedAgentLifecycleStates=${JSON.stringify(lifecycleContract.states)}asconst;`), "Desktop lifecycle states drifted from the release contract.");
+assert.match(ipcProtocolSource, /allowedAgentLifecycleStates\s*=\s*normalizedAgentLifecycleStates/, "Desktop lifecycle states must consume the generated release contract.");
 const bridgeCoreSource = readFileSync(join(bridgeRoot, "scripts", "bridge-core.mjs"), "utf8");
 assert.ok(Array.isArray(bridgeContract.emittedStates) && bridgeContract.emittedStates.length > 0, "Bridge must declare the lifecycle states it can actually emit.");
 for (const state of bridgeContract.emittedStates) {
@@ -58,7 +60,8 @@ for (const state of bridgeContract.emittedStates) {
   assert.match(bridgeCoreSource, new RegExp(`\\b${state}\\b`), `Bridge lifecycle mapping is missing ${state}.`);
 }
 const nativeHookSource = readFileSync(join(root, "native", "brainpet-hook", "src", "main.rs"), "utf8");
-for (const state of lifecycleContract.states) assert.match(nativeHookSource, new RegExp(`"${state}"`), `Native lifecycle mapping is missing ${state}.`);
+const nativeGeneratedContract = readFileSync(join(root, "native", "brainpet-hook", "src", "generated_contract.rs"), "utf8");
+for (const state of lifecycleContract.states) assert.match(`${nativeHookSource}\n${nativeGeneratedContract}`, new RegExp(`"${state}"`), `Native lifecycle mapping is missing ${state}.`);
 const cargo = readFileSync(join(root, "native", "brainpet-hook", "Cargo.toml"), "utf8");
 assert.match(cargo, new RegExp(`^version = "${brainPetDistributionContract.bridge.version.replaceAll(".", "\\.")}"$`, "m"));
 const installationStateSource = readFileSync(join(desktop, "src", "brainpet-installation-state.ts"), "utf8");

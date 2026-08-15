@@ -1,8 +1,8 @@
 import { posix, win32 } from "node:path";
 
-export const hookDeadlineMs = 2_600;
-export const connectAttemptMs = 350;
-export const runtimePollIntervalMs = 50;
+import { brainPetTarget, connectAttemptMs, hookDeadlineMs, runtimePollIntervalMs } from "./generated-contract.mjs";
+
+export { connectAttemptMs, hookDeadlineMs, runtimePollIntervalMs } from "./generated-contract.mjs";
 
 export function remainingDeadlineMs(deadline, now = Date.now()) {
   return Math.max(0, deadline - now);
@@ -21,23 +21,23 @@ export function getRuntimePaths(platform, environment, homeDirectory) {
     const local = environment.LOCALAPPDATA ?? win32.join(homeDirectory, "AppData", "Local");
     return {
       explicitDiscovery: null,
-      brainPetDiscovery: win32.join(roaming, "BrainPet", "runtime", "ipc.json"),
-      installMarker: win32.join(local, "BrainPet", "runtime-install.json"),
+      brainPetDiscovery: win32.join(roaming, brainPetTarget.productDirectory, "runtime", "ipc.json"),
+      installMarker: win32.join(local, brainPetTarget.productDirectory, "runtime-install.json"),
     };
   }
   if (platform === "darwin") {
     return {
       explicitDiscovery: null,
-      brainPetDiscovery: posix.join(homeDirectory, "Library", "Application Support", "BrainPet", "runtime", "ipc.json"),
-      installMarker: posix.join(homeDirectory, "Library", "Application Support", "BrainPet", "runtime-install.json"),
+      brainPetDiscovery: posix.join(homeDirectory, "Library", "Application Support", brainPetTarget.productDirectory, "runtime", "ipc.json"),
+      installMarker: posix.join(homeDirectory, "Library", "Application Support", brainPetTarget.productDirectory, "runtime-install.json"),
     };
   }
   const config = environment.XDG_CONFIG_HOME ?? posix.join(homeDirectory, ".config");
   const runtime = environment.XDG_RUNTIME_DIR;
   return {
     explicitDiscovery: null,
-    brainPetDiscovery: runtime ? posix.join(runtime, "brainpet", "ipc.json") : posix.join(config, "BrainPet", "runtime", "ipc.json"),
-    installMarker: posix.join(config, "BrainPet", "runtime-install.json"),
+    brainPetDiscovery: runtime ? posix.join(runtime, brainPetTarget.runtimeNamespace, "ipc.json") : posix.join(config, brainPetTarget.productDirectory, "runtime", "ipc.json"),
+    installMarker: posix.join(config, brainPetTarget.productDirectory, "runtime-install.json"),
   };
 }
 

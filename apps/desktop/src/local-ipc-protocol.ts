@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { extname, isAbsolute } from "node:path";
 
+import { agentActivityPrivacyRejectedFields, agentActivitySchemaVersion, normalizedAgentLifecycleStates } from "@open-pets/agent-events";
+
 export const openPetsIpcProtocol = "openpets-ipc";
 export const openPetsIpcVersion = 1;
 export const maxIpcMessageBytes = 16 * 1024;
@@ -25,8 +27,8 @@ export const allowedReactions = [
   "celebrating",
 ] as const;
 
-export const allowedAgentLifecycleStates = ["working", "waiting", "ready", "blocked", "idle"] as const;
-export const agentActivitySchemaVersion = 1;
+export const allowedAgentLifecycleStates = normalizedAgentLifecycleStates;
+export { agentActivitySchemaVersion };
 export const allowedAgentCompanionCapabilities = ["observeLifecycle", "listActivity", "openTask", "stopTask", "respondToRequest", "sendMessage", "voice", "detailActivity"] as const;
 export const allowedAgentCompanionRequestKinds = ["permission", "question", "review", "openLink", "stop", "continue"] as const;
 export const allowedAgentCompanionRequestOptionIntents = ["allow", "deny", "runOnce", "apply", "answer", "review", "open", "stop", "continue"] as const;
@@ -99,6 +101,9 @@ export function parseIpcRequest(raw: string, expectedToken: string): OpenPetsIpc
 
 export function validateAgentLifecycleParams(value: unknown): AgentLifecycleParams {
   if (!isRecord(value)) throw new IpcProtocolError("invalid_params", "Agent lifecycle payload must be an object.");
+  for (const field of agentActivityPrivacyRejectedFields) {
+    if (field in value) throw new IpcProtocolError("invalid_params", `Agent lifecycle payload contains rejected field: ${field}`);
+  }
   if (value.schemaVersion !== undefined && value.schemaVersion !== agentActivitySchemaVersion) {
     throw new IpcProtocolError("invalid_params", "Agent activity schema version is invalid.");
   }

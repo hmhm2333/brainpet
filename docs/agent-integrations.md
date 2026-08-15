@@ -4,10 +4,10 @@ description: Connect Claude Code, OpenCode, Cursor, Pi, and MCP-capable assistan
 
 # Agent integrations
 
-OpenPets reacts to coding agents. Each supported agent has an integration
-package that does two jobs: **configure** the agent to talk to OpenPets, and at
-runtime **translate** the agent's activity into safe pet reactions sent over
-local IPC or an explicitly configured remote client. This doc covers the
+OpenPets observes coding agents. Each supported agent has an integration
+package that does two jobs: **configure** the agent to talk to a specific product,
+and at runtime **translate** automatic activity into the privacy-minimal
+`agent.activity` lifecycle contract. This doc covers the
 published integrations (Claude Code, MCP, OpenCode, Cursor, Pi), the BrainPet
 Codex bridge, the shared speech-safety
 layer, and the CLI commands that orchestrate them.
@@ -25,13 +25,13 @@ Every integration follows the same contract, which is worth internalizing once:
   removed without clobbering the user's own config. Status is always classified
   (`missing`/`installed`/`needs-update`/`conflict`/`invalid`/…), so the UI and
   CLI can offer the right action.
-- **Runtime is fire-and-forget.** Agent events are classified into a reaction
-  and/or a speech category, dispatched non-blocking, and any IPC failure is
-  swallowed. The pet must never slow down or break the agent.
-- **Speech is always safe.** Automatic messages come from validated pools (see
-  below), never from raw prompt/output text.
-- **Leases route the pet.** Integrations acquire a lease on first activity,
-  heartbeat it, and release on shutdown. See the lease model in [IPC and remote control](/ipc).
+- **Runtime is fire-and-forget.** Automatic events send exactly one
+  `agent.activity` request; any IPC failure is swallowed within the provider
+  deadline. The pet must never slow down or break the agent.
+- **Manual feedback remains explicit.** `pet.react` and `pet.say` are available
+  only through an explicit CLI/MCP/plugin command. Automatic hooks never call them.
+- **Leases route explicit commands.** MCP and CLI integrations can acquire a
+  lease for a chosen pet. Automatic lifecycle adapters do not acquire one.
 
 Remote mode is the explicit exception to the lease rule: it is default-pet-only
 and does not acquire, heartbeat, or release leases. It is selected only through
@@ -113,17 +113,19 @@ their own pet from a user-configured ordered list.
 default. Broken or uninstalled pets are skipped silently.
 
 **Cross-platform and agent-agnostic.** Pool assignment is pure lease logic with
-no platform dependency - it works on macOS, Windows, and Linux. Any agent that
-acquires a lease through the shared OpenPets client benefits automatically: Claude
-Code CLI, opencode, Cursor, and any other MCP client all go through the same
-`lease.acquire` path.
+no platform dependency - it works on macOS, Windows, and Linux. Any explicit
+CLI/MCP command that acquires a lease through the shared client benefits: Claude
+Code MCP, OpenCode MCP, Cursor, and other MCP clients use the same
+`lease.acquire` path. Automatic lifecycle hooks deliberately do not use this path.
 
 When the pool is disabled (the default), behavior is unchanged: all sessions
 without `--pet` share the single default pet.
 
 ## Safe speech: `@open-pets/agent-events`
 
-`packages/agent-events/` is the shared guardrail. It provides curated speech
+`packages/agent-events/` is the shared lifecycle and privacy guardrail. It owns
+the generated lifecycle states, schema version, method, and rejected-field list.
+It also provides curated speech
 pools by category - `thinking`, `success`, `error`, `permission` - and the
 validators that keep messages safe: single line, 1–140 chars, and rejecting
 code, URLs, file paths, and secret-like tokens. `pickHookSpeech(category)`
@@ -144,17 +146,15 @@ The deepest integration, because Claude Code has a rich hook system.
   `PreToolUse`, `PermissionRequest`, `Notification`, `Stop`, `StopFailure`,
   `SessionEnd`. Each
   managed entry carries the `--openpets-managed` marker. `runClaudeHookFromStdin()`
-  maps an event to a reaction: prompt submit → thinking, permission → waiting,
-  stop → success, stop-failure → error, and `PreToolUse` is classified by tool
-  (Edit/Write/MultiEdit → editing, Bash test commands → testing).
-  The same hooks also send the shared privacy-minimal lifecycle contract, so
+  maps each supported event directly to the shared privacy-minimal lifecycle
+  contract: prompt/tool use → working, permission → waiting, stop → ready,
+  stop-failure → blocked, and session end → idle. The hooks send no automatic
+  reaction or speech, so
   BrainPet can aggregate Claude with Codex and OpenCode instead of showing only
   transient reactions.
 - **Project-local awareness**: if a project defines its own OpenPets hook
   (`.claude/settings.local.json` with `--project-local`), the global hook stands
   down to avoid double-firing.
-- **Throttling**: ~20s speech / ~3s permission / ~10s reaction cooldowns via a
-  JSON state file, so the pet doesn't chatter.
 - **Memory**: the desktop's `claude-memory.ts` manages `~/.claude/openpets.md`
   (the instructions file telling Claude how to use the pet).
 
@@ -205,11 +205,11 @@ Ships both a config manager and a runtime plugin.
   `~/.config/opencode/` location on Windows as well; it does not use
   `%APPDATA%\opencode`.
 - **Runtime** (`opencode-plugin-runtime.ts`, plugin id `open-pets-opencode`):
-  hooks `event`, `chat.message`, `tool.execute.before/after`, classifies them to
-  reactions/speech, manages a lease (renew with a 2s buffer), and applies the
-  same throttle windows as Claude. The optional `excludeReactions` plugin option is an
-  array of reactions to suppress before IPC or throttling. It can be used without a
-  `pet` target: `["@open-pets/opencode", { "excludeReactions": ["success", "thinking"] }]`.
+  hooks `event`, `chat.message`, `tool.execute.before/after` and emits one
+  ordered `agent.activity` update for each recognized event. It does not acquire
+  a pet lease or send automatic reaction/speech. Existing `pet` and
+  `excludeReactions` config keys remain parse-compatible during migration but do
+  not create a second lifecycle channel.
 - **Windows detection**: the desktop app checks user and global Scoop shim
   directories before falling back to `opencode` / `opencode.cmd` on `PATH`, so
   a Scoop installation is detectable even when Electron inherited an older

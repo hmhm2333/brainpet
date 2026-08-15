@@ -42,6 +42,9 @@ for (const invalidLifecycle of [
   { agent: "codex", sessionId: "session-1", state: "working", occurredAt: 123, request: { kind: "permission" } },
   { agent: "codex", sessionId: "session-1", state: "waiting", occurredAt: 123, request: { kind: "private" } },
 ]) assert.throws(() => validateAgentLifecycleParams(invalidLifecycle));
+for (const field of ["prompt", "transcript", "cwd", "toolInput", "toolOutput", "response"]) {
+  assert.throws(() => validateAgentLifecycleParams({ agent: "codex", sessionId: "session-1", state: "working", occurredAt: 123, [field]: "private" }));
+}
 
 validateReaction("testing");
 validateReaction("waving");

@@ -36,6 +36,7 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
+    "@open-pets/adapter-core": "workspace:*",
     "@open-pets/agent-events": "workspace:*",
     "@open-pets/client": "workspace:*"
   }

@@ -15,10 +15,9 @@ Provides comprehensive OpenCode editor integration including: MCP server configu
 
 **Plugin Runtime** (`opencode-plugin-runtime.ts`):
 - Event hooks: `event`, `chat.message`, `tool.execute.before`, `tool.execute.after`
-- Event classification: Maps OpenCode bus events to reactions/speech
-- Tool classification: Edit → "editing", Bash test commands → "testing"
-- Lease management: Acquires on first use, 2s buffer before expiry
-- Throttling: 20s speech cooldown, 3s permission cooldown, 10s reaction cooldown
+- Event mapping: recognized OpenCode events become privacy-minimal `agent.activity`
+- Delivery: exactly one ordered lifecycle request; failure is a bounded no-op
+- Automatic lease, reaction, and speech transports are absent
 - Async scheduling via `queueMicrotask`
 
 **Config Management** (`opencode-config.ts`):

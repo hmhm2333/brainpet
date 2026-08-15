@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "occurredAt": 123456789,
+  "rejectedFields": ["prompt", "transcript", "cwd", "toolInput", "toolOutput", "response"],
+  "cases": [
+    {
+      "id": "codex-working",
+      "provider": "codex",
+      "input": { "hook_event_name": "UserPromptSubmit", "session_id": "codex-session", "turn_id": "codex-turn", "prompt": "private", "cwd": "private" },
+      "expected": { "schemaVersion": 1, "agent": "codex", "sessionId": "codex-session", "turnId": "codex-turn", "state": "working", "occurredAt": 123456789, "capabilities": ["observeLifecycle"] }
+    },
+    {
+      "id": "codex-blocked",
+      "provider": "codex",
+      "input": { "hook_event_name": "ErrorOccurred", "session_id": "codex-session", "toolInput": "private", "toolOutput": "private" },
+      "expected": { "schemaVersion": 1, "agent": "codex", "sessionId": "codex-session", "state": "blocked", "occurredAt": 123456789, "capabilities": ["observeLifecycle"] }
+    },
+    {
+      "id": "codex-invalid",
+      "provider": "codex",
+      "input": { "hook_event_name": "Stop", "prompt": "missing session" },
+      "expected": null
+    },
+    {
+      "id": "claude-waiting",
+      "provider": "claude",
+      "input": { "hook_event_name": "PermissionRequest", "session_id": "claude-session", "prompt": "private", "response": "private" },
+      "expected": { "schemaVersion": 1, "agent": "claude", "sessionId": "claude-session", "state": "waiting", "occurredAt": 123456789, "capabilities": ["observeLifecycle"], "request": { "kind": "permission" } }
+    },
+    {
+      "id": "claude-ready",
+      "provider": "claude",
+      "input": { "hook_event_name": "Stop", "session_id": "claude-session", "transcript": "private" },
+      "expected": { "schemaVersion": 1, "agent": "claude", "sessionId": "claude-session", "state": "ready", "occurredAt": 123456789, "capabilities": ["observeLifecycle"] }
+    },
+    {
+      "id": "claude-invalid",
+      "provider": "claude",
+      "input": { "hook_event_name": "Stop", "toolOutput": "missing session" },
+      "expected": null
+    },
+    {
+      "id": "opencode-working",
+      "provider": "opencode",
+      "input": { "type": "session.status", "properties": { "sessionID": "opencode-session", "status": { "type": "busy" } }, "prompt": "private" },
+      "expected": { "schemaVersion": 1, "agent": "opencode", "sessionId": "opencode-session", "state": "working", "occurredAt": 123456789, "capabilities": ["observeLifecycle"] }
+    },
+    {
+      "id": "opencode-waiting",
+      "provider": "opencode",
+      "input": { "type": "question.asked", "properties": { "sessionID": "opencode-session" }, "response": "private" },
+      "expected": { "schemaVersion": 1, "agent": "opencode", "sessionId": "opencode-session", "state": "waiting", "occurredAt": 123456789, "capabilities": ["observeLifecycle"], "request": { "kind": "question" } }
+    },
+    {
+      "id": "opencode-blocked",
+      "provider": "opencode",
+      "input": { "type": "session.error", "properties": { "sessionID": "opencode-session" }, "transcript": "private" },
+      "expected": { "schemaVersion": 1, "agent": "opencode", "sessionId": "opencode-session", "state": "blocked", "occurredAt": 123456789, "capabilities": ["observeLifecycle"] }
+    },
+    {
+      "id": "opencode-invalid",
+      "provider": "opencode",
+      "input": { "type": "session.error", "cwd": "missing session" },
+      "expected": null
+    }
+  ]
+}

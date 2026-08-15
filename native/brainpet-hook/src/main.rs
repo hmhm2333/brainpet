@@ -9,15 +9,27 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod generated_contract;
+use generated_contract::{
+    AGENT_ACTIVITY_METHOD, AGENT_ACTIVITY_SCHEMA_VERSION, BRAINPET_APP_ID,
+    BRAINPET_PRODUCT_DIRECTORY, CONNECT_ATTEMPT_MS, HOOK_DEADLINE_MS, IPC_PROTOCOL_VERSION,
+    LIFECYCLE_STATES, RUNTIME_POLL_INTERVAL_MS,
+};
+
 const MAX_HOOK_INPUT_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_IPC_MESSAGE_BYTES: usize = 16 * 1024;
-const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(350);
-const HOOK_DEADLINE: Duration = Duration::from_millis(2_600);
-const RUNTIME_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(CONNECT_ATTEMPT_MS);
+const HOOK_DEADLINE: Duration = Duration::from_millis(HOOK_DEADLINE_MS);
+const RUNTIME_POLL_INTERVAL: Duration = Duration::from_millis(RUNTIME_POLL_INTERVAL_MS);
 
 fn main() {
+    let _contract_identity = (
+        generated_contract::ADAPTER_VERSION,
+        generated_contract::BRAINPET_RUNTIME_NAMESPACE,
+    );
     if env::args().any(|argument| argument == "--self-test") {
-        let _ = io::stdout().write_all(concat!("brainpet-hook ", env!("CARGO_PKG_VERSION"), " ok\n").as_bytes());
+        let _ = io::stdout()
+            .write_all(concat!("brainpet-hook ", env!("CARGO_PKG_VERSION"), " ok\n").as_bytes());
         return;
     }
     let deadline = Instant::now() + HOOK_DEADLINE;
@@ -98,12 +110,15 @@ fn map_hook_event(agent: AgentKind, input: &Value, occurred_at: u64) -> Option<V
         (_, "SessionEnd") => "idle",
         _ => return None,
     };
+    if !LIFECYCLE_STATES.contains(&state) {
+        return None;
+    }
     let session_id = valid_identifier(object.get("session_id")?, 160)?;
     let turn_id = object
         .get("turn_id")
         .and_then(|value| valid_identifier(value, 160));
     let mut event = Map::new();
-    event.insert("schemaVersion".into(), json!(1));
+    event.insert("schemaVersion".into(), json!(AGENT_ACTIVITY_SCHEMA_VERSION));
     event.insert("agent".into(), json!(agent.id()));
     event.insert("sessionId".into(), json!(session_id));
     if let Some(turn_id) = turn_id {
@@ -132,8 +147,8 @@ fn valid_identifier(value: &Value, max_len: usize) -> Option<&str> {
 fn send_event(event: &Value, deadline: Instant) -> io::Result<()> {
     let paths = runtime_paths().ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
     if let Some(explicit) = paths.explicit_discovery.as_deref() {
-        let discovery = read_discovery_at(explicit)
-            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+        let discovery =
+            read_discovery_at(explicit).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
         return send_event_to_discovery(event, &discovery, deadline);
     }
 
@@ -149,7 +164,11 @@ fn send_event(event: &Value, deadline: Instant) -> io::Result<()> {
         return Err(io::Error::from(io::ErrorKind::NotFound));
     }
 
-    match paths.install_marker.as_deref().map(launch_installed_runtime) {
+    match paths
+        .install_marker
+        .as_deref()
+        .map(launch_installed_runtime)
+    {
         Some(LaunchStatus::Launched) => {
             while Instant::now() < deadline {
                 thread::sleep(remaining_timeout(deadline)?.min(RUNTIME_POLL_INTERVAL));
@@ -174,25 +193,36 @@ fn send_event(event: &Value, deadline: Instant) -> io::Result<()> {
     }
 }
 
-fn send_event_to_discovery(event: &Value, discovery: &Discovery, deadline: Instant) -> io::Result<()> {
+fn send_event_to_discovery(
+    event: &Value,
+    discovery: &Discovery,
+    deadline: Instant,
+) -> io::Result<()> {
     let request = json!({
         "id": request_id(),
         "version": 1,
         "token": discovery.token.as_str(),
-        "method": "agent.activity",
+        "method": AGENT_ACTIVITY_METHOD,
         "params": event,
     });
-    let mut line = serde_json::to_vec(&request)
-        .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+    let mut line =
+        serde_json::to_vec(&request).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
     line.push(b'\n');
     if line.len() > MAX_IPC_MESSAGE_BYTES {
         return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
-    write_endpoint(&discovery.endpoint, &line, remaining_timeout(deadline)?.min(CONNECT_ATTEMPT_TIMEOUT))
+    write_endpoint(
+        &discovery.endpoint,
+        &line,
+        remaining_timeout(deadline)?.min(CONNECT_ATTEMPT_TIMEOUT),
+    )
 }
 
 fn remaining_timeout(deadline: Instant) -> io::Result<Duration> {
-    deadline.checked_duration_since(Instant::now()).filter(|duration| !duration.is_zero()).ok_or_else(|| io::Error::from(io::ErrorKind::TimedOut))
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|duration| !duration.is_zero())
+        .ok_or_else(|| io::Error::from(io::ErrorKind::TimedOut))
 }
 
 struct Discovery {
@@ -202,14 +232,17 @@ struct Discovery {
 
 fn read_discovery_at(path: &Path) -> Option<Discovery> {
     let metadata = fs::symlink_metadata(path).ok()?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() as usize > MAX_IPC_MESSAGE_BYTES {
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() as usize > MAX_IPC_MESSAGE_BYTES
+    {
         return None;
     }
     let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
     if value.get("protocol")?.as_str()? != "openpets-ipc"
-        || value.get("protocolVersion")?.as_u64()? != 1
+        || value.get("protocolVersion")?.as_u64()? != IPC_PROTOCOL_VERSION
         || value.get("product")?.as_str()? != "brainpet"
-        || value.get("appId")?.as_str()? != "dev.brainpet.app"
+        || value.get("appId")?.as_str()? != BRAINPET_APP_ID
     {
         return None;
     }
@@ -241,8 +274,16 @@ fn runtime_paths() -> Option<RuntimePaths> {
         let local = env::var_os("LOCALAPPDATA")?;
         return Some(RuntimePaths {
             explicit_discovery: None,
-            brainpet_discovery: Some(PathBuf::from(&roaming).join("BrainPet/runtime/ipc.json")),
-            install_marker: Some(PathBuf::from(local).join("BrainPet/runtime-install.json")),
+            brainpet_discovery: Some(
+                PathBuf::from(&roaming)
+                    .join(BRAINPET_PRODUCT_DIRECTORY)
+                    .join("runtime/ipc.json"),
+            ),
+            install_marker: Some(
+                PathBuf::from(local)
+                    .join(BRAINPET_PRODUCT_DIRECTORY)
+                    .join("runtime-install.json"),
+            ),
         });
     }
     #[cfg(target_os = "macos")]
@@ -250,8 +291,18 @@ fn runtime_paths() -> Option<RuntimePaths> {
         let home = env::var_os("HOME")?;
         return Some(RuntimePaths {
             explicit_discovery: None,
-            brainpet_discovery: Some(PathBuf::from(&home).join("Library/Application Support/BrainPet/runtime/ipc.json")),
-            install_marker: Some(PathBuf::from(home).join("Library/Application Support/BrainPet/runtime-install.json")),
+            brainpet_discovery: Some(
+                PathBuf::from(&home)
+                    .join("Library/Application Support")
+                    .join(BRAINPET_PRODUCT_DIRECTORY)
+                    .join("runtime/ipc.json"),
+            ),
+            install_marker: Some(
+                PathBuf::from(home)
+                    .join("Library/Application Support")
+                    .join(BRAINPET_PRODUCT_DIRECTORY)
+                    .join("runtime-install.json"),
+            ),
         });
     }
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -263,14 +314,30 @@ fn runtime_paths() -> Option<RuntimePaths> {
         if let Some(runtime) = env::var_os("XDG_RUNTIME_DIR") {
             return Some(RuntimePaths {
                 explicit_discovery: None,
-                brainpet_discovery: Some(PathBuf::from(&runtime).join("brainpet/ipc.json")),
-                install_marker: Some(config.join("BrainPet/runtime-install.json")),
+                brainpet_discovery: Some(
+                    PathBuf::from(&runtime)
+                        .join(generated_contract::BRAINPET_RUNTIME_NAMESPACE)
+                        .join("ipc.json"),
+                ),
+                install_marker: Some(
+                    config
+                        .join(BRAINPET_PRODUCT_DIRECTORY)
+                        .join("runtime-install.json"),
+                ),
             });
         }
         Some(RuntimePaths {
             explicit_discovery: None,
-            brainpet_discovery: Some(config.join("BrainPet/runtime/ipc.json")),
-            install_marker: Some(config.join("BrainPet/runtime-install.json")),
+            brainpet_discovery: Some(
+                config
+                    .join(BRAINPET_PRODUCT_DIRECTORY)
+                    .join("runtime/ipc.json"),
+            ),
+            install_marker: Some(
+                config
+                    .join(BRAINPET_PRODUCT_DIRECTORY)
+                    .join("runtime-install.json"),
+            ),
         })
     }
 }
@@ -318,7 +385,10 @@ fn launch_installed_runtime(marker_path: &Path) -> LaunchStatus {
     }
 
     let mut command = Command::new(executable);
-    command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -343,7 +413,10 @@ fn validate_install_marker(value: &Value) -> Option<PathBuf> {
     if !executable.is_absolute() {
         return None;
     }
-    let executable_name = executable.file_name()?.to_string_lossy().to_ascii_lowercase();
+    let executable_name = executable
+        .file_name()?
+        .to_string_lossy()
+        .to_ascii_lowercase();
     let valid_name = if cfg!(target_os = "windows") {
         executable_name == "brainpet.exe"
     } else if cfg!(target_os = "linux") {
@@ -363,7 +436,9 @@ fn validate_install_marker(value: &Value) -> Option<PathBuf> {
         || !matches!(channel, "stable" | "beta" | "dev")
         || architecture.len() < 2
         || architecture.len() > 32
-        || !architecture.chars().all(|character| character.is_ascii_alphanumeric() || character == '_' || character == '-')
+        || !architecture.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+        })
         || written_at == 0
     {
         return None;
@@ -378,7 +453,9 @@ fn valid_linux_appimage_name(name: &str) -> bool {
     let middle = &name["brainpet".len()..name.len() - ".appimage".len()];
     middle.is_empty()
         || matches!(middle.as_bytes().first().copied(), Some(b'-' | b'_' | b'.'))
-            && middle.chars().all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+            && middle.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+            })
 }
 
 fn current_platform_id() -> &'static str {
@@ -400,7 +477,7 @@ fn valid_endpoint(endpoint: &str) -> bool {
     }
     #[cfg(target_os = "windows")]
     {
-        (endpoint.starts_with(r"\\.\pipe\openpets-") || endpoint.starts_with(r"\\.\pipe\brainpet-")) && !endpoint.contains('/')
+        endpoint.starts_with(r"\\.\pipe\brainpet-") && !endpoint.contains('/')
     }
     #[cfg(unix)]
     {
@@ -411,7 +488,7 @@ fn valid_endpoint(endpoint: &str) -> bool {
             && Path::new(endpoint)
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| (name.starts_with("openpets-") || name.starts_with("brainpet-")) && name.ends_with(".sock"))
+                .is_some_and(|name| name.starts_with("brainpet-") && name.ends_with(".sock"))
     }
 }
 
@@ -429,7 +506,10 @@ fn write_path_endpoint(endpoint: &str, line: &[u8], timeout: Duration) -> io::Re
     let line = line.to_vec();
     run_io_with_timeout(timeout, move || {
         #[cfg(target_os = "windows")]
-        return OpenOptions::new().write(true).open(endpoint).and_then(|mut pipe| pipe.write_all(&line));
+        return OpenOptions::new()
+            .write(true)
+            .open(endpoint)
+            .and_then(|mut pipe| pipe.write_all(&line));
         #[cfg(unix)]
         {
             use std::os::unix::net::UnixStream;
@@ -446,11 +526,15 @@ where
     F: FnOnce() -> io::Result<()> + Send + 'static,
 {
     let (sender, receiver) = mpsc::sync_channel(1);
-    thread::spawn(move || { let _ = sender.send(operation()); });
-    receiver.recv_timeout(timeout).map_err(|error| match error {
-        mpsc::RecvTimeoutError::Timeout => io::Error::from(io::ErrorKind::TimedOut),
-        mpsc::RecvTimeoutError::Disconnected => io::Error::from(io::ErrorKind::BrokenPipe),
-    })?
+    thread::spawn(move || {
+        let _ = sender.send(operation());
+    });
+    receiver
+        .recv_timeout(timeout)
+        .map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => io::Error::from(io::ErrorKind::TimedOut),
+            mpsc::RecvTimeoutError::Disconnected => io::Error::from(io::ErrorKind::BrokenPipe),
+        })?
 }
 
 fn parse_tcp_endpoint(endpoint: &str) -> Option<SocketAddrV4> {
@@ -518,6 +602,50 @@ mod tests {
     }
 
     #[test]
+    fn shared_adapter_conformance_fixture_matches_native_mappers() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../config/brainpet-adapter-conformance.json"
+        ))
+        .unwrap();
+        let occurred_at = fixture.get("occurredAt").and_then(Value::as_u64).unwrap();
+        let rejected = fixture
+            .get("rejectedFields")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert_eq!(
+            rejected.len(),
+            generated_contract::PRIVACY_REJECTED_FIELDS.len()
+        );
+        for case in fixture.get("cases").and_then(Value::as_array).unwrap() {
+            let provider = case.get("provider").and_then(Value::as_str).unwrap();
+            let agent = match provider {
+                "codex" => AgentKind::Codex,
+                "claude" => AgentKind::Claude,
+                _ => continue,
+            };
+            let actual = map_hook_event(agent, case.get("input").unwrap(), occurred_at);
+            let expected = case
+                .get("expected")
+                .filter(|value| !value.is_null())
+                .cloned();
+            assert_eq!(
+                actual,
+                expected,
+                "conformance case {}",
+                case.get("id").and_then(Value::as_str).unwrap()
+            );
+            if let Some(Value::Object(event)) = actual {
+                for field in generated_contract::PRIVACY_REJECTED_FIELDS {
+                    assert!(
+                        !event.contains_key(*field),
+                        "native mapper leaked rejected field {field}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn claude_and_workbuddy_share_the_same_hook_shape() {
         let input = json!({
             "hook_event_name": "PermissionRequest",
@@ -539,7 +667,8 @@ mod tests {
     fn unsupported_events_are_ignored() {
         let input = json!({"hook_event_name": "Unknown", "session_id": "session-1"});
         assert_eq!(map_hook_event(AgentKind::Codex, &input, 123), None);
-        let claude_only = json!({"hook_event_name": "PermissionRequest", "session_id": "session-1"});
+        let claude_only =
+            json!({"hook_event_name": "PermissionRequest", "session_id": "session-1"});
         assert_eq!(map_hook_event(AgentKind::Codex, &claude_only, 123), None);
         let codex_error = json!({"hook_event_name": "ErrorOccurred", "session_id": "session-1"});
         assert_eq!(
@@ -551,8 +680,16 @@ mod tests {
 
     #[test]
     fn install_marker_never_accepts_an_arbitrary_executable() {
-        let valid_name = if cfg!(target_os = "windows") { "brainpet.exe" } else { "brainpet" };
-        let root = if cfg!(target_os = "windows") { r"C:\\Program Files\\BrainPet" } else { "/Applications/BrainPet" };
+        let valid_name = if cfg!(target_os = "windows") {
+            "brainpet.exe"
+        } else {
+            "brainpet"
+        };
+        let root = if cfg!(target_os = "windows") {
+            r"C:\\Program Files\\BrainPet"
+        } else {
+            "/Applications/BrainPet"
+        };
         let marker = json!({
             "schemaVersion": 1,
             "product": "brainpet",
@@ -565,13 +702,22 @@ mod tests {
         });
         assert!(validate_install_marker(&marker).is_some());
         let mut invalid = marker;
-        invalid["executablePath"] = json!(PathBuf::from(root).join(if cfg!(target_os = "windows") { "cmd.exe" } else { "sh" }));
+        invalid["executablePath"] =
+            json!(PathBuf::from(root).join(if cfg!(target_os = "windows") {
+                "cmd.exe"
+            } else {
+                "sh"
+            }));
         assert_eq!(validate_install_marker(&invalid), None);
     }
 
     #[test]
     fn discovery_identity_must_match_brainpet() {
-        let root = env::temp_dir().join(format!("brainpet-hook-target-{}-{}", std::process::id(), now_ms()));
+        let root = env::temp_dir().join(format!(
+            "brainpet-hook-target-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
         fs::create_dir_all(&root).unwrap();
         let discovery_path = root.join("ipc.json");
         let base = json!({

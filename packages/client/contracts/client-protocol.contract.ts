@@ -83,6 +83,7 @@ try {
   const [openPetsHello, brainPetHello] = await Promise.all([openPetsClient.hello(), brainPetClient.hello()]);
   assert.deepEqual(openPetsHello, { ok: true, product: "openpets", appId: "dev.openpets.app" });
   assert.deepEqual(brainPetHello, { ok: true, product: "brainpet", appId: "dev.brainpet.app" });
+  assert.throws(() => brainPetClient.reportAgentActivity({ agent: "codex", sessionId: "session-private", state: "working", occurredAt: 123, capabilities: ["observeLifecycle"], prompt: "private" } as never), /rejected field/);
   assert.deepEqual(openPetsHost.requests, [{ method: "hello", token: openPetsHost.token }]);
   assert.deepEqual(brainPetHost.requests, [{ method: "hello", token: brainPetHost.token }]);
 } finally {

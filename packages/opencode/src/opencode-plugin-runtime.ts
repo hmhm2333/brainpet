@@ -1,17 +1,17 @@
 import { homedir, tmpdir, userInfo } from "node:os";
-import { dirname, join } from "node:path";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { createOpenPetsClient, type OpenPetsClient, type OpenPetsReaction, type TargetProduct } from "@open-pets/client";
-import { createNormalizedAgentLifecycleEvent, pickHookSpeech, type HookSpeechCategory, type NormalizedAgentLifecycleEvent, validateHookSpeech } from "@open-pets/agent-events";
+import { createNormalizedAgentLifecycleEvent, type HookSpeechCategory, type NormalizedAgentLifecycleEvent } from "@open-pets/agent-events";
+import { createInstallerPlan, defineAdapterDescriptor, type InstallerPlan, type TargetProfile } from "@open-pets/adapter-core";
 
-import { sanitizeOpenCodeExcludedReactions, validateOpenPetsPetArg } from "./opencode-previews.js";
+import { validateOpenPetsPetArg } from "./opencode-previews.js";
 
 export interface OpenCodePluginOptions {
   readonly product?: TargetProduct;
   readonly pet?: string;
   readonly debug?: boolean;
-  /** Reactions the user wants suppressed. Excluded reactions are silently dropped before any IPC or throttle work. */
+  /** @deprecated Retained for config compatibility; automatic lifecycle no longer emits reactions. */
   readonly excludeReactions?: readonly OpenPetsReaction[];
 }
 
@@ -22,6 +22,20 @@ export interface OpenCodePluginRuntimeOptions extends OpenCodePluginOptions {
   readonly random?: () => number;
   readonly throttlePath?: string;
   readonly debugLog?: (message: string) => void;
+}
+
+export const openCodeAdapterDescriptor = defineAdapterDescriptor({
+  id: "opencode",
+  displayName: "OpenCode",
+  supportedProducts: ["brainpet", "openpets"],
+  automaticLifecycle: true,
+  lifecycleMethod: "agent.activity",
+  installerKind: "opencode-plugin",
+  capabilities: { lifecycle: "implemented", taskNavigation: "unavailable", requestActions: "unavailable", message: "unavailable", voice: "unavailable" },
+});
+
+export function createOpenCodeInstallerPlan(target: TargetProduct | TargetProfile, scope: "global" | "project", mode: InstallerPlan["mode"] = "install"): InstallerPlan {
+  return createInstallerPlan({ providerId: openCodeAdapterDescriptor.id, installerKind: openCodeAdapterDescriptor.installerKind, target, scope, mode });
 }
 
 export interface OpenCodePluginDecision {
@@ -36,16 +50,12 @@ export type OpenCodeHooks = {
   readonly "tool.execute.after": (input: { readonly tool?: string }, output: unknown) => void;
 };
 
-const speechCooldownMs = 20_000;
-const permissionCooldownMs = 3_000;
-const reactionCooldownMs = 10_000;
-
 export function isReactionExcluded(reaction: OpenPetsReaction, excludedSet: ReadonlySet<string>): boolean {
   return excludedSet.has(reaction);
 }
 
 export function createOpenPetsOpenCodeHooks(options: OpenCodePluginRuntimeOptions = {}): OpenCodeHooks {
-  const pet = options.pet === undefined ? undefined : validateOpenPetsPetArg(options.pet);
+  if (options.pet !== undefined) validateOpenPetsPetArg(options.pet);
   const clientFactory = options.clientFactory ?? (() => {
     if (!options.product) throw new Error("OpenCode plugin requires an explicit brainpet or openpets product target.");
     return createOpenPetsClient({ target: options.product, connectTimeoutMs: 500, responseTimeoutMs: 500 });
@@ -53,35 +63,19 @@ export function createOpenPetsOpenCodeHooks(options: OpenCodePluginRuntimeOption
   const schedule = options.schedule ?? defaultSchedule;
   const debug = options.debug === true || process.env.OPENPETS_DEBUG === "1";
   const debugLog = options.debugLog ?? ((message) => { if (debug) process.stderr.write(`${message}\n`); });
-  const excludedReactions = buildExcludedReactionsSet(options.excludeReactions);
   let client: OpenPetsClient | undefined;
-  let lease: { readonly leaseId: string; readonly expiresAt?: number } | undefined;
   let scheduledTail: Promise<void> | undefined;
 
-  const run = (decision: OpenCodePluginDecision | undefined, lifecycle?: NormalizedAgentLifecycleEvent | null): void => {
-    const reaction = decision?.reaction && !isReactionExcluded(decision.reaction, excludedReactions) ? decision.reaction : undefined;
-    if (!reaction && !lifecycle) return;
+  const run = (lifecycle?: NormalizedAgentLifecycleEvent | null): void => {
+    if (!lifecycle) return;
     try {
       schedule(async () => {
         const work = async () => {
           try {
             client ??= clientFactory();
-            if (lifecycle) {
-              try { await client.reportAgentActivity(lifecycle); }
-              catch (error) { debugLog(`OpenPets OpenCode lifecycle ignored error: ${sanitizeDebugError(error)}`); }
-            }
-            if (!reaction) return;
-            const shouldSpeak = decision?.speechCategory ? shouldSendSpeech(decision.speechCategory, options) : false;
-            const shouldReact = shouldSendReaction(reaction, options);
-            if (!shouldSpeak && !shouldReact) return;
-            const leaseId = pet ? await getLeaseId(client, pet) : undefined;
-            if (decision?.speechCategory && shouldSpeak) {
-              await client.say(validateHookSpeech(pickHookSpeech(decision.speechCategory, options.random)), { reaction, leaseId });
-              return;
-            }
-            await client.react(reaction, { leaseId });
+            await client.reportAgentActivity(lifecycle);
           } catch (error) {
-            debugLog(`OpenPets OpenCode plugin ignored error: ${sanitizeDebugError(error)}`);
+            debugLog(`OpenPets OpenCode lifecycle ignored error: ${sanitizeDebugError(error)}`);
           }
         };
         const current = scheduledTail ? scheduledTail.then(work) : work();
@@ -93,33 +87,21 @@ export function createOpenPetsOpenCodeHooks(options: OpenCodePluginRuntimeOption
     }
   };
 
-  const getLeaseId = async (hit: OpenPetsClient, requestedPetId: string): Promise<string | undefined> => {
-    if (lease && (!lease.expiresAt || lease.expiresAt - Date.now() > 2_000)) return lease.leaseId;
-    try {
-      const next = await hit.acquireLease({ requestedPetId });
-      lease = { leaseId: next.leaseId, expiresAt: next.expiresAt };
-      return next.leaseId;
-    } catch (error) {
-      debugLog(`OpenPets OpenCode lease unavailable: ${sanitizeDebugError(error)}`);
-      return undefined;
-    }
-  };
-
   return {
     event(input) {
       try {
-        run(classifyOpenCodeBusEvent(input.event), mapOpenCodeLifecycleEvent(input.event, options.now?.() ?? Date.now()));
+        run(mapOpenCodeLifecycleEvent(input.event, options.now?.() ?? Date.now()));
       } catch (error) {
         debugLog(`OpenPets OpenCode event ignored error: ${sanitizeDebugError(error)}`);
       }
     },
     "chat.message"(input) {
-      run({ reaction: "thinking" }, mapOpenCodeSyntheticLifecycle(input, "working", options.now?.() ?? Date.now()));
+      run(mapOpenCodeSyntheticLifecycle(input, "working", options.now?.() ?? Date.now()));
     },
     "tool.execute.before"(input, output) {
       const tool = typeof input.tool === "string" ? input.tool : "";
       if (shouldIgnoreOpenPetsTool(tool)) return;
-      run({ reaction: classifyOpenCodeToolReaction(tool, output.args) }, mapOpenCodeSyntheticLifecycle(input, "working", options.now?.() ?? Date.now()));
+      run(mapOpenCodeSyntheticLifecycle(input, "working", options.now?.() ?? Date.now()));
     },
     "tool.execute.after"() {
       // Intentionally quiet for now; session.error/session.status events provide less noisy completion signals.
@@ -182,33 +164,6 @@ export function getDefaultOpenCodeThrottlePath(): string {
   return join(tmpdir(), `openpets-${safeUid()}`, "opencode-hook-throttle.json");
 }
 
-function shouldSendSpeech(category: HookSpeechCategory, options: OpenCodePluginRuntimeOptions): boolean {
-  const now = options.now?.() ?? Date.now();
-  const cooldown = category === "permission" ? permissionCooldownMs : speechCooldownMs;
-  return shouldSendThrottleKey(category, cooldown, now, options.throttlePath ?? getDefaultOpenCodeThrottlePath());
-}
-
-function shouldSendReaction(reaction: OpenPetsReaction, options: OpenCodePluginRuntimeOptions): boolean {
-  const now = options.now?.() ?? Date.now();
-  return shouldSendThrottleKey(`reaction:${reaction}`, reactionCooldownMs, now, options.throttlePath ?? getDefaultOpenCodeThrottlePath());
-}
-
-function shouldSendThrottleKey(key: string, cooldown: number, now: number, path: string): boolean {
-  const state = readThrottleState(path);
-  const previous = typeof state[key] === "number" ? state[key] : 0;
-  if (now - previous < cooldown) return false;
-  state[key] = now;
-  writeThrottleState(path, state);
-  return true;
-}
-
-function buildExcludedReactionsSet(excludeReactions?: readonly OpenPetsReaction[]): ReadonlySet<string> {
-  const valid = sanitizeOpenCodeExcludedReactions(excludeReactions);
-  return valid.length > 0 ? new Set(valid) : emptySet;
-}
-
-const emptySet: ReadonlySet<string> = new Set();
-
 function isTestLikeToolArgs(args: unknown): boolean {
   const command = isRecord(args) && typeof args.command === "string" ? args.command.slice(0, 300) : "";
   return /\b(test|vitest|jest|pytest|npm\s+test|pnpm\s+test|yarn\s+test|cargo\s+test|go\s+test)\b/i.test(command);
@@ -245,31 +200,6 @@ function getEventPermission(event: unknown): string | undefined {
     if (typeof hit === "string") return hit;
   }
   return undefined;
-}
-
-function readThrottleState(path: string): Record<string, number> {
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    if (!isRecord(parsed)) return {};
-    const state: Record<string, number> = {};
-    for (const [key, value] of Object.entries(parsed)) {
-      if ((key === "thinking" || key === "success" || key === "error" || key === "permission" || key.startsWith("reaction:")) && typeof value === "number" && Number.isFinite(value)) state[key] = value;
-    }
-    return state;
-  } catch {
-    return {};
-  }
-}
-
-function writeThrottleState(path: string, state: Record<string, number>): void {
-  try {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    const tempPath = `${path}.${process.pid}.tmp`;
-    writeFileSync(tempPath, `${JSON.stringify(state)}\n`, { encoding: "utf8", mode: 0o600 });
-    renameSync(tempPath, path);
-  } catch {
-    // Best effort only; throttling must never break hooks.
-  }
 }
 
 function defaultSchedule(work: () => Promise<void>): void {

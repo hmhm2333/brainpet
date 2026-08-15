@@ -5,8 +5,9 @@ Monorepo workspace containing all OpenPets npm packages. Each package is publish
 ## Responsibility
 
 Provides modular, reusable components for the OpenPets ecosystem:
+- **adapter-core**: TargetProfile, AdapterDescriptor, EventMapper, and InstallerPlan contracts
 - **pet-format**: Package marker interface for type identification
-- **agent-events**: Speech pools and validation for agent feedback messages
+- **agent-events**: Generated lifecycle/privacy contract plus optional speech validation
 - **client**: Core IPC client for communicating with OpenPets desktop app
 - **cli**: Main CLI tool for configuring agents, creating plugins from templates, and managing pets
 - **mcp**: MCP stdio server implementation for agent integration (status, reaction, speak)
@@ -65,6 +66,7 @@ SDK Type definitions & Test Harness (packages/sdk/)
 ## Integration Points
 
 **Inter-Package Dependencies**:
+- `client`, `claude`, and `opencode` depend on: `adapter-core`
 - `cli` depends on: `client`, `claude`, `mcp`, `opencode`, `cursor`
 - `mcp` depends on: `client`
 - `claude` depends on: `client`, `agent-events`
@@ -88,7 +90,8 @@ All packages ultimately communicate with the OpenPets desktop app via the IPC pr
 
 | Directory | Responsibility Summary | Detailed Map |
 |-----------|------------------------|--------------|
-| `agent-events/` | Shared agent event message pools and validators. | [View Map](agent-events/codemap.md) |
+| `adapter-core/` | Product targets and minimal provider-adapter interfaces. | [View Map](adapter-core/codemap.md) |
+| `agent-events/` | Shared lifecycle/privacy contract and optional speech validators. | [View Map](agent-events/codemap.md) |
 | `claude/` | Claude Code hook/MCP/settings integration package. | [View Map](claude/codemap.md) |
 | `client/` | Desktop IPC discovery and client API package. | [View Map](client/codemap.md) |
 | `cli/` | User CLI for setup, pet commands, MCP launch, plugin scaffolding, and plugin validation. | [View Map](cli/codemap.md) |

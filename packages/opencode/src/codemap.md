@@ -4,7 +4,7 @@
 
 - **index.ts**: Barrel export (6 lines). Re-exports all public modules.
 - **plugin.ts**: OpenCode plugin definition (10 lines). Default export with `id` and `server` factory.
-- **opencode-plugin-runtime.ts**: Plugin hooks map official `permission`, `question`, `session`, chat, and tool events onto both reactions and the shared lifecycle contract. Stable `sessionID` is required; private prompt/question/tool content is discarded. Lease management and throttling remain reaction-only.
+- **opencode-plugin-runtime.ts**: Plugin hooks map official `permission`, `question`, `session`, chat, and tool events onto one ordered `agent.activity` lifecycle stream. Stable `sessionID` is required; private prompt/question/tool content is discarded; automatic lease/reaction/speech calls are forbidden.
 - **opencode-config.ts**: Config file management (221 lines). Path resolution, JSONC parsing, safe file operations, atomic writes with backups.
 - **opencode-project-setup.ts**: Project-level setup (182 lines). `prepareOpenCodeProjectSetup()`, `writePreparedOpenCodeProjectSetup()`, instruction block management.
 - **opencode-global-setup.ts**: Global setup management (354 lines). `prepareOpenCodeGlobalSetup()`, `prepareOpenCodeGlobalRemove()`, cleanup writes, doctor command, config precedence handling, global state classification.

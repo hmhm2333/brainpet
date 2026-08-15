@@ -1,3 +1,5 @@
+import { agentActivitySchemaVersion, normalizedAgentLifecycleStates } from "@open-pets/agent-events";
+
 export const openPetsIpcProtocol = "openpets-ipc";
 export const openPetsIpcVersion = 1;
 export const maxIpcMessageBytes = 16 * 1024;
@@ -18,8 +20,8 @@ export const allowedReactions = [
   "celebrating",
 ] as const;
 
-export const allowedAgentLifecycleStates = ["working", "waiting", "ready", "blocked", "idle"] as const;
-export const agentActivitySchemaVersion = 1;
+export const allowedAgentLifecycleStates = normalizedAgentLifecycleStates;
+export { agentActivitySchemaVersion };
 export const allowedAgentCompanionCapabilities = ["observeLifecycle", "listActivity", "openTask", "stopTask", "respondToRequest", "sendMessage", "voice", "detailActivity"] as const;
 export const allowedAgentCompanionRequestKinds = ["permission", "question", "review", "openLink", "stop", "continue"] as const;
 export const allowedAgentCompanionRequestOptionIntents = ["allow", "deny", "runOnce", "apply", "answer", "review", "open", "stop", "continue"] as const;
