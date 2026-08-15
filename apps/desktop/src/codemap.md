@@ -22,6 +22,7 @@ BrainPet adds an infrastructure-first training path under `brainpet/`: pure stag
 - **Distribution Profiles**: `distribution-profile.ts` keeps normal OpenPets bundled-plugin defaults while giving BrainPet a separate identity with no bundled plugins.
 - **Composition Root**: `main.ts` selects `HostCore`, lazy `OptionalOpenPetsServices`, and the injected `BrainPetFeature`; `lifecycle.ts` only invokes the composed disposer.
 - **Built-in Training Entry**: BrainPet registers training directly in its feature and opens the host-owned stage without a plugin command/bus facade or hidden plugin renderer.
+- **BrainPet Host Controllers**: `brainpet/host.ts` is only the Electron composition and IPC aggregate; `training-entry.ts`, `stage-window-controller.ts`, `session-authority.ts`, and `interaction-rig-controller.ts` independently own their lifecycle and disposal.
 - **Sprite Timing**: `pet-animation-timing.ts` defines the testable held-idle/short-blink timeline used by pet renderers.
 - **Localized Runtime Content**: `i18n/` and plugin locale catalogs resolve host UI text, pet reaction messages, and plugin `$t:` strings through fallback-aware message catalogs.
 - **Motion Engine Abstraction**: Advanced pet movement uses a small physics/interpolation engine rather than embedding movement math in window or SDK routing code.
@@ -214,6 +215,11 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `composition/host-core.ts`: Minimal state, tray, pet, local IPC, and Agent lifecycle host
 - `composition/openpets-runtime.ts`: Lazy Control Center, plugin, LAN, remote, and voice service factory
 - `composition/brainpet-feature.ts`: Built-in training, install marker, setup, and onboarding feature factory
+- `brainpet/host.ts`: Thin Electron composition and IPC aggregate for the four BrainPet controllers
+- `brainpet/training-entry.ts`: Direct built-in training registration and toggle lifecycle
+- `brainpet/stage-window-controller.ts`: Hardened stage BrowserWindow, sender identity, hit testing, and close/cache lifecycle
+- `brainpet/session-authority.ts`: Host-canonical session issuance, scoring, state transitions, and persistence
+- `brainpet/interaction-rig-controller.ts`: Pet/stage anchor ownership, drag transactions, geometry application, and timer disposal
 - `brainpet-installation-state.ts`: Atomic BrainPet runtime/Bridge/lifecycle evidence store and Bridge-version reauthorization policy
 - `lifecycle.ts`: Generic app event handlers (quit, window-all-closed, second-instance); delegates focus and one composed disposer without importing concrete services
 - `state.ts`: Simple shell pause state
@@ -236,7 +242,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 
 **Pets**:
 - `pet-window.ts`: Window creation (transparent, frameless, always-on-top), HTML/CSS generation, sprite animation states, speech bubbles, status badges, transient displays
-- `default-pet-controller.ts`: Default pet visibility, position persistence, transient reactions, status badges, logging
+- `default-pet-controller.ts`: Default pet visibility, position persistence, transient reactions, status badges, logging, and the BrainPet-only post-training window replacement entry
 - `agent-pet-controller.ts`: Lease-triggered pet windows, dismissal tracking, transient displays, status badges, logging
 - `pet-motion-engine.ts`: Interpolated movement vector/tick engine for plugin-driven pet motion and target-following behavior
 - `pet-animation-timing.ts`: Validated idle sprite timeline and CSS keyframe generation

@@ -55,12 +55,23 @@ const compositionSource = readFileSync(join(desktop, "src", "composition", "desk
 const mainSource = readFileSync(join(desktop, "src", "main.ts"), "utf8");
 const lifecycleSource = readFileSync(join(desktop, "src", "lifecycle.ts"), "utf8");
 const brainPetHostSource = readFileSync(join(desktop, "src", "brainpet", "host.ts"), "utf8");
+const brainPetControllerSources = Object.fromEntries([
+  "training-entry",
+  "stage-window-controller",
+  "session-authority",
+  "interaction-rig-controller",
+].map((name) => [name, readFileSync(join(desktop, "src", "brainpet", `${name}.ts`), "utf8")]));
 const distributionSource = readFileSync(join(desktop, "src", "distribution-profile.ts"), "utf8");
 assert.match(compositionSource, /layers: enabled \? \["hostCore", "brainPetFeature"\] : \["hostCore"\]/, "BrainPet must not compose OptionalOpenPetsServices.");
 assert.match(mainSource, /import\("\.\/composition\/openpets-runtime\.js"\)/, "Optional OpenPets services must be dynamically loaded.");
 assert.match(mainSource, /if \(distribution\.profile === "brainpet"\) app\.disableHardwareAcceleration\(\);/, "BrainPet must avoid the dedicated hardware compositor working set without changing OpenPets.");
 assert.doesNotMatch(lifecycleSource, /plugin-service|brainpet\/host|remote-control-service|lan-controller|local-ipc|windows\.js/, "App lifecycle must only call the composition disposer.");
 assert.doesNotMatch(brainPetHostSource, /brainpet\.training|plugin-service|plugin-runtime|plugin-events-source/, "BrainPet TrainingEntry must not use the removed plugin facade.");
+for (const [name, source] of Object.entries(brainPetControllerSources)) {
+  assert.match(source, /\bdispose\(\)/, `BrainPet ${name} must expose an independent disposer.`);
+  assert.match(brainPetHostSource, new RegExp(name.split("-").map((part) => part[0].toUpperCase() + part.slice(1)).join("")), `BrainPet Host must compose ${name}.`);
+}
+assert.doesNotMatch(brainPetHostSource, /canonicalizeBrainPetTaskResult|getBrainPetTaskDefinition|trialKindsForSession|createBrainPetInteractionRig|reanchorBrainPetInteractionRig|reflowBrainPetInteractionRig|translateBrainPetStageInRig/, "BrainPet Host aggregate must not own task rules or interaction-rig geometry.");
 assert.doesNotMatch(distributionSource, /brainpet\.training/, "BrainPet must not seed a training plugin.");
 assert.doesNotMatch(baseConfig, /plugins\/official|plugin-sdk-preload|plugin-command-form-preload|panel-preload/, "BrainPet package must not bundle plugin renderer payloads.");
 assert.match(readFileSync(join(desktop, "build", "brainpet-installer.nsh"), "utf8"), /runtime-install\.json/);

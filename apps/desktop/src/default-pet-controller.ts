@@ -7,7 +7,7 @@ import { motionMoveTo } from "./pet-motion-engine.js";
 import { registerRoamingPet } from "./pet-roaming-controller.js";
 import { debug, info } from "./logger.js";
 import { transientDisplayMs, type OpenPetsReaction } from "./local-ipc-protocol.js";
-import { clearTransientReaction, createDefaultPetWindow, getSafeDefaultPetPosition, getTransientDisplayDurationMs, getTransientReactionAnimationMs, isPetWindowDragging, isPetWindowPositionLocked, loadDefaultPetContent, mergePetTransientDisplay, readWindowPosition, recoverPetMouseInterop, setPetReactionState, type PetPluginBubbles, type PetShowMediaOptions, type PetStatusBadgeReaction, type PetTransientDisplay } from "./pet-window.js";
+import { clearTransientReaction, createDefaultPetWindow, getSafeDefaultPetPosition, getTransientDisplayDurationMs, getTransientReactionAnimationMs, isPetWindowDragging, isPetWindowPositionLocked, loadDefaultPetContent, mergePetTransientDisplay, readWindowPosition, recoverPetMouseInterop, setPetReactionState, setPetWindowStaticIdle, type PetPluginBubbles, type PetShowMediaOptions, type PetStatusBadgeReaction, type PetTransientDisplay } from "./pet-window.js";
 import { PetBubbleArbiter, type ActiveBubble, type PetBubbleSink } from "./plugin-bubble-arbiter.js";
 import { reclampAgentPetWindows } from "./agent-pet-controller.js";
 import { publishOptionalPluginPetEvent, reclampOptionalPluginPetWindows } from "./pet-plugin-port.js";
@@ -30,6 +30,7 @@ const maxPluginMoveDistance = 160;
 const minPluginMoveDurationMs = 250;
 const maxPluginMoveDurationMs = 1_500;
 let movementInProgress = false;
+let postTrainingStaticIdle = false;
 
 primaryCompanionActionBroker.subscribe(() => refreshDefaultPetContent());
 
@@ -139,8 +140,16 @@ export function refreshDefaultPetContent(): void {
     return;
   }
 
-  debug("pet.default", "refresh content", { windowId: defaultPetWindow.id, paused, hasDisplay: Boolean(transientDisplay), badge: statusBadge, petId: getAppStateSnapshot().preferences.defaultPetId });
+  if (!canUsePostTrainingStaticIdle()) postTrainingStaticIdle = false;
+  setPetWindowStaticIdle(defaultPetWindow, postTrainingStaticIdle);
+  debug("pet.default", "refresh content", { windowId: defaultPetWindow.id, paused, hasDisplay: Boolean(transientDisplay), badge: statusBadge, staticIdle: postTrainingStaticIdle, petId: getAppStateSnapshot().preferences.defaultPetId });
   void loadDefaultPetContent(defaultPetWindow, paused, transientDisplay, statusBadge, getCurrentDismissToken(), getDefaultPetPluginBubbles(), primaryCompanionActivity, primaryCompanionTrayOpen, getPrimaryCompanionActionPrompt());
+}
+
+export function prepareDefaultPetWindowForTraining(): void {
+  if (!postTrainingStaticIdle) return;
+  postTrainingStaticIdle = false;
+  refreshDefaultPetContent();
 }
 
 export function recoverDefaultPetMouseInterop(reason: string): void {
@@ -189,6 +198,22 @@ export function applyExternalPetStatusReaction(reaction: OpenPetsReaction | null
   if (reaction === null || reaction === "idle") clearStatusBadge();
   else setStatusBadge(reaction);
   refreshDefaultPetContent();
+}
+
+export function recycleDefaultPetWindowAfterTraining(): void {
+  const previous = defaultPetWindow;
+  if (!previous || previous.isDestroyed()) return;
+  const position = readWindowPosition(previous);
+  const wasVisible = previous.isVisible();
+  debug("pet.default", "recycle window after training", { windowId: previous.id, position, wasVisible, petId: getAppStateSnapshot().preferences.defaultPetId });
+  handlePositionChanged(position);
+  postTrainingStaticIdle = canUsePostTrainingStaticIdle();
+  defaultPetWindow = null;
+  previous.setIgnoreMouseEvents(false);
+  previous.destroy();
+  const replacement = getOrCreateDefaultPetWindow();
+  if (wasVisible) replacement.showInactive();
+  registerRoamingPet("default", getDefaultPetWindowForPlugins);
 }
 
 export function wakePrimaryCompanion(): void {
@@ -401,6 +426,7 @@ function getOrCreateDefaultPetWindow(): BrowserWindow {
     companionActivity: primaryCompanionActivity,
     companionTrayOpen: primaryCompanionTrayOpen,
     companionActionPrompt: getPrimaryCompanionActionPrompt(),
+    staticIdle: postTrainingStaticIdle,
     onPositionChanged: handlePositionChanged,
     onHideRequested: hideDefaultPet,
     onBubbleDismissed: handleBubbleDismissed,
@@ -414,9 +440,10 @@ function getOrCreateDefaultPetWindow(): BrowserWindow {
   const windowId = defaultPetWindow.id;
   info("pet.default", "created", { windowId, position, paused, petId: getAppStateSnapshot().preferences.defaultPetId });
 
+  const createdWindow = defaultPetWindow;
   defaultPetWindow.on("closed", () => {
     info("pet.default", "closed", { windowId });
-    defaultPetWindow = null;
+    if (defaultPetWindow === createdWindow) defaultPetWindow = null;
   });
 
   return defaultPetWindow;
@@ -543,6 +570,14 @@ function setStatusBadge(reaction: OpenPetsReaction, durationOverrideMs?: number 
       refreshDefaultPetContent();
     }, durationMs);
   }
+}
+
+function canUsePostTrainingStaticIdle(): boolean {
+  return !transientDisplay
+    && !statusBadge
+    && !primaryCompanionActivity?.totalCount
+    && !primaryCompanionTrayOpen
+    && !getDefaultPetPluginBubbles();
 }
 
 function clearStatusBadge(): void {

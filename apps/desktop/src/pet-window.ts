@@ -43,6 +43,7 @@ export interface DefaultPetWindowOptions extends PetWindowInteractionHooks {
   readonly companionActivity?: AgentCompanionActivitySummary | null;
   readonly companionTrayOpen?: boolean;
   readonly companionActionPrompt?: PrimaryCompanionActionPrompt | null;
+  readonly staticIdle?: boolean;
   readonly onPositionChanged: (position: Point) => void;
   readonly onHideRequested: () => void;
 }
@@ -103,6 +104,7 @@ interface PetContentRender {
 }
 
 const petWindowRenderCache = new WeakMap<BrowserWindow, string>();
+const staticIdlePetWindows = new WeakSet<BrowserWindow>();
 let brainPetSurfaceEnabled = false;
 let petProductName = "OpenPets";
 let petControlCenterEnabled = true;
@@ -184,6 +186,7 @@ export function createDefaultPetWindow(options: DefaultPetWindowOptions, dismiss
   const window = createBasePetWindow(`${petProductName} — Default Pet`, options.position, {
     hasInteractiveInput: petPluginBubblesHaveInteractiveInput(options.pluginBubbles ?? null) || options.companionTrayOpen === true,
   });
+  setPetWindowStaticIdle(window, options.staticIdle === true);
   info("pet.window", "default window create", { windowId: window.id, position: options.position, paused: options.paused, hasDisplay: Boolean(options.display), badge: options.badge });
   installMousePassthroughAndDrag(window, options);
   installMotionStatePublisher(window);
@@ -314,6 +317,11 @@ async function buildPetContextMenuTemplate(window: BrowserWindow, action: { read
   if (petControlCenterEnabled) template.push({ label: t("pet.menu.openControlCenter"), click: () => openControlCenter("dashboard") });
   if (!brainPetEnabled) template.push({ label: action.label, click: action.click });
   return template;
+}
+
+export function setPetWindowStaticIdle(window: BrowserWindow, enabled: boolean): void {
+  if (enabled) staticIdlePetWindows.add(window);
+  else staticIdlePetWindows.delete(window);
 }
 
 async function openPluginCommandForm(command: { readonly pluginId: string; readonly commandId: string; readonly commandTitle: string; readonly form?: PluginCommandForm }): Promise<void> {
@@ -850,7 +858,7 @@ export async function loadDefaultPetContent(window: BrowserWindow, paused: boole
   const sequence = allocateWindowLoadSequence(window);
   debug("pet.window", "default content render begin", { windowId: window.id, sequence, paused, hasDisplay: Boolean(display), reaction: display?.reaction, hasMessage: Boolean(display?.message), badge, hasPluginBubble: Boolean(pluginBubbles?.transient), hasPinned: Boolean(pluginBubbles?.pinned), defaultPetId: getAppStateSnapshot().preferences.defaultPetId });
   applyPetWindowFocusPolicy(window, petPluginBubblesHaveInteractiveInput(pluginBubbles) || companionTrayOpen);
-  const render = await createDefaultPetRender(paused, display, badge, dismissToken, pluginBubbles, companionActivity, companionTrayOpen, companionActionPrompt);
+  const render = await createDefaultPetRender(paused, display, badge, dismissToken, pluginBubbles, companionActivity, companionTrayOpen, companionActionPrompt, staticIdlePetWindows.has(window));
   applyNativePetWindowShape(window, getAppStateSnapshot().preferences.petScale as PetScaleValue, Boolean(display?.message || display?.reactionMessage || display?.reaction || display?.mediaPath || badge && !companionActivity?.totalCount || paused || pluginBubbles?.transient || pluginBubbles?.pinned || companionTrayOpen));
   if (tryUpdateLoadedPetContent(window, render, "default", sequence)) return;
   await loadPetHtmlFile(window, render.html, "default", sequence).then(() => {
@@ -1044,27 +1052,27 @@ function applyNativePetWindowShape(window: BrowserWindow, scale: PetScaleValue, 
   }
 }
 
-async function createDefaultPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false, companionActionPrompt: PrimaryCompanionActionPrompt | null = null): Promise<PetContentRender> {
+async function createDefaultPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false, companionActionPrompt: PrimaryCompanionActionPrompt | null = null, staticIdle = false): Promise<PetContentRender> {
   const installedPetRender = await tryCreateInstalledPetRender(paused, display, badge, dismissToken, pluginBubbles, companionActivity, companionTrayOpen, companionActionPrompt);
   if (installedPetRender) {
     return installedPetRender;
   }
 
   const scale = getAppStateSnapshot().preferences.petScale as PetScaleValue;
-  return createBuiltInPetRender(paused, display, badge, scale, "default:builtin", dismissToken, pluginBubbles, companionActivity, companionTrayOpen, companionActionPrompt);
+  return createBuiltInPetRender(paused, display, badge, scale, "default:builtin", dismissToken, pluginBubbles, companionActivity, companionTrayOpen, companionActionPrompt, staticIdle);
 }
 
-function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, scale: PetScaleValue, cachePrefix: string, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false, companionActionPrompt: PrimaryCompanionActionPrompt | null = null): PetContentRender {
-  const spriteUrl = pathToFileURL(join(app.getAppPath(), "assets", defaultPetSprite.fileName)).toString();
+function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, scale: PetScaleValue, cachePrefix: string, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, companionActivity: AgentCompanionActivitySummary | null = null, companionTrayOpen = false, companionActionPrompt: PrimaryCompanionActionPrompt | null = null, staticIdle = false): PetContentRender {
+  const spriteUrl = pathToFileURL(join(app.getAppPath(), "assets", staticIdle ? "default-pet-thumbnail.png" : defaultPetSprite.fileName)).toString();
   const hasPinned = Boolean(pluginBubbles?.pinned);
   const companionMarkup = createPrimaryCompanionMarkup(companionActivity, companionTrayOpen, companionActionPrompt);
-  const bodyHtml = createPetBodyMarkup(`${petProductName} default pet`, createBubbleMarkup(display, paused, companionActivity?.totalCount ? null : badge, dismissToken, pluginBubbles), `<div class="sprite" role="img" aria-label="${petProductName} animated default pet"></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned, companionMarkup);
+  const bodyHtml = createPetBodyMarkup(`${petProductName} default pet`, createBubbleMarkup(display, paused, companionActivity?.totalCount ? null : badge, dismissToken, pluginBubbles), `<div class="sprite" role="img" aria-label="${petProductName} ${staticIdle ? "idle" : "animated"} default pet"></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned, companionMarkup);
   const reactionState = getReactionSpriteState(display?.reaction ?? getPrimaryCompanionReaction(companionActivity) ?? badge ?? undefined);
   const waitingAnimationDurationMs = getAppStateSnapshot().preferences.waitingAnimationDurationMs;
   const stateRows = getConfiguredSpriteStates(waitingAnimationDurationMs);
 
   return {
-    cacheKey: `${cachePrefix}:${paused}:${scale}:${getConfiguredSpriteCacheKey(waitingAnimationDurationMs)}:${getActiveLocale()}`,
+    cacheKey: `${cachePrefix}:${paused}:${scale}:${staticIdle ? "static-idle" : getConfiguredSpriteCacheKey(waitingAnimationDurationMs)}:${getActiveLocale()}`,
     bodyHtml,
     reactionState,
     html: `<!doctype html>
@@ -1080,7 +1088,7 @@ function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | 
             width: ${defaultPetSprite.frameWidth}px;
             height: ${defaultPetSprite.frameHeight}px;
             background-image: url("${escapeCssUrl(spriteUrl)}");
-            background-size: ${defaultPetSprite.frameWidth * defaultPetSprite.columns}px ${defaultPetSprite.frameHeight * defaultPetSprite.rows}px;
+            background-size: ${staticIdle ? `${defaultPetSprite.frameWidth}px ${defaultPetSprite.frameHeight}px` : `${defaultPetSprite.frameWidth * defaultPetSprite.columns}px ${defaultPetSprite.frameHeight * defaultPetSprite.rows}px`};
             background-repeat: no-repeat;
             --sprite-row-y: 0px;
             --sprite-frames: ${stateRows.idle.frames};
@@ -1092,6 +1100,7 @@ function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | 
             transform: scale(${scale});
             transform-origin: top left;
           }
+          ${staticIdle ? ".sprite { background-position: 0 0 !important; animation: none !important; }" : ""}
           ${createSpriteStateCss(".sprite", stateRows)}
           html[data-reaction-state="idle"][data-motion-state="idle"] .sprite { animation-name: pet-idle; animation-timing-function: step-end; }
           ${createIdleSpriteKeyframes("pet-idle", defaultPetSprite.frameWidth)}

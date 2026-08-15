@@ -333,12 +333,23 @@ rejects `agent.activity`, omits Primary Companion/training UI, and does not
 refresh an install marker. OpenPets keeps its existing feature surface through
 lazy optional-service factories.
 
+The BrainPet main-process Host only composes IPC and injected Electron adapters.
+`TrainingEntry`, `StageWindowController`, `SessionAuthority`, and
+`InteractionRigController` own the four independent lifecycles; every controller
+has a direct Node test and an idempotent disposer.
+
 On BrainPet, Electron hardware acceleration is disabled before readiness. The
 two bounded transparent pixel surfaces use software composition, which avoids
 retaining a dedicated hardware compositor while the foundation smoke still
 enforces the interactive frame-quality floor. Stage WebGL and spellcheck are
 disabled, its isolated cache is released on close, and the short Web Audio
-context is closed after each tone.
+context is closed after each tone. A normal Stage close also performs one
+BrainPet-only replacement of the pet BrowserWindow at the same saved position
+and with the same controller state, so the old Renderer process and page
+resources actually exit. A built-in pet with no active Agent, bubble, or status
+then uses its matching static thumbnail instead of retaining the decoded 8x9
+spritesheet; the next training request or live state restores full animation.
+The OpenPets profile never installs this close callback.
 
 BrainPet packaging uses base, private-test and public-release configs. Local
 Windows builds go to `dist-brainpet/private-test`; the unpacked runtime is

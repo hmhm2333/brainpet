@@ -65,6 +65,11 @@ enabled. The machine-readable current snapshot is
 `config/brainpet-release-capabilities.json`; the generated provider matrix is
 `integrations/brainpet-provider-support.json`.
 
+Inside `BrainPetFeature`, `brainpet/host.ts` is a thin composition/IPC aggregate.
+Training registration, hardened Stage window ownership, Host-authoritative
+session/scoring state, and interaction-rig geometry are owned by four disposable,
+Node-testable controllers instead of one Host monolith.
+
 ## The packages, and what each is for
 
 | Package | Role | Doc |

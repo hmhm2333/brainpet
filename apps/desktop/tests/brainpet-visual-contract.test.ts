@@ -12,6 +12,10 @@ const stageCss = readFileSync(resolve(desktopRoot, "src/renderer/src/brainpet/st
 const stageMain = readFileSync(resolve(desktopRoot, "src/renderer/src/brainpet/main.ts"), "utf8");
 const stageHtml = readFileSync(resolve(desktopRoot, "src/renderer/brainpet.html"), "utf8");
 const stageHost = readFileSync(resolve(desktopRoot, "src/brainpet/host.ts"), "utf8");
+const defaultPetController = readFileSync(resolve(desktopRoot, "src/default-pet-controller.ts"), "utf8");
+const stageWindowController = readFileSync(resolve(desktopRoot, "src/brainpet/stage-window-controller.ts"), "utf8");
+const interactionRigController = readFileSync(resolve(desktopRoot, "src/brainpet/interaction-rig-controller.ts"), "utf8");
+const trainingEntry = readFileSync(resolve(desktopRoot, "src/brainpet/training-entry.ts"), "utf8");
 const stagePreload = readFileSync(resolve(desktopRoot, "brainpet-preload.cjs"), "utf8");
 const petPreload = readFileSync(resolve(desktopRoot, "pet-preload.cjs"), "utf8");
 const fusionPixelFontPath = resolve(desktopRoot, "assets/FusionPixel12ProportionalSC.woff2");
@@ -79,6 +83,15 @@ test("V1 visual and sound states have explicit production behavior", () => {
   assert.doesNotMatch(stageMain, /placeholder|lorem ipsum/i);
 });
 
+test("post-training idle releases the animated spritesheet without changing live training", () => {
+  assert.match(petWindow, /staticIdle \? "default-pet-thumbnail\.png" : defaultPetSprite\.fileName/);
+  assert.match(petWindow, /static-idle/);
+  assert.match(petWindow, /animation: none !important/);
+  assert.match(defaultPetController, /postTrainingStaticIdle = canUsePostTrainingStaticIdle\(\)/);
+  assert.match(defaultPetController, /prepareDefaultPetWindowForTraining[\s\S]*postTrainingStaticIdle = false[\s\S]*refreshDefaultPetContent/);
+  assert.match(stageHost, /prepareDefaultPetWindowForTraining\(\); openBrainPetStage\(sourceWindow\)/);
+});
+
 test("BrainPet stage permits only the internal custom-pet image schemes", () => {
   assert.match(stageHtml, /img-src[^;]*openpets-codex:[^;]*openpets-installed:/);
   assert.match(stageHtml, /font-src 'self'/);
@@ -94,13 +107,13 @@ test("desktop overlay paints no full-window card and passes through transparent 
   assert.match(stageCss, /\.stage-scene\{[^}]*background:transparent;[^}]*box-shadow:none/);
   assert.match(stageMain, /INTERACTIVE_SELECTOR/);
   assert.match(stagePreload, /brainpet:stage-interactive/);
-  assert.match(stageHost, /setIgnoreMouseEvents\(!interactive, \{ forward: true \}\)/);
+  assert.match(stageWindowController, /setIgnoreMouseEvents\(!interactive, \{ forward: true \}\)/);
   assert.match(stageCss, /--brainpet-playfield-x/);
   assert.match(stageMain, /data-rig-drag-surface/);
   assert.match(stageMain, /rig\.throwOriginScreen/);
   assert.match(stageMain, /rig\.reactionBoundsScreen/);
   assert.match(stagePreload, /brainpet:rig-drag-start/);
-  assert.match(stageHost, /stageWindow\.focus\(\);[\s\S]*rig-drag-end/);
+  assert.match(interactionRigController, /stage\.focus\(\);[\s\S]*rig-drag-end/);
 });
 
 test("cargo signal is rendered as a real overlay scene rather than a symbol card", () => {
@@ -121,13 +134,13 @@ test("cargo signal is rendered as a real overlay scene rather than a symbol card
   assert.match(stageMain, /点击 \/ SPACE 开始/);
   assert.match(stageMain, /setTimeout\(\(\) => \{ void startTask\(currentSession\); \}, 650\)/);
   assert.doesNotMatch(stageMain, /session\.level === 1/);
-  assert.match(stageHost, /requestBrainPetTraining\(sourceWindow[\s\S]*toggleBrainPetStage\(sourceWindow, "built-in-training-entry"\)/);
+  assert.match(trainingEntry, /isOpen\(\)[\s\S]*close\("built-in-training-entry"\)[\s\S]*open\(sourceWindow\)/);
   assert.doesNotMatch(stageHost, /executeDefaultPetPluginCommand|connectBrainPetTrainingPluginRuntime|brainpet\.training|plugin-fallback/);
-  assert.match(stageHost, /openpets:brainpet-stage-state/);
+  assert.match(stageWindowController, /openpets:brainpet-stage-state/);
   assert.match(petPreload, /brainpetStageOpen/);
   assert.match(stageCss, /\.stage-input-surface\{[^}]*background:transparent/);
   assert.match(stageCss, /--pixel-font/);
-  assert.match(stageHost, /rig\.stageBoundsScreen, 3/);
+  assert.match(stageWindowController, /rig\.stageBoundsScreen, 3/);
   assert.match(stagePreload, /brainpet:pet-throw/);
   assert.match(petPreload, /openpets:brainpet-throw/);
   assert.match(petWindow, /brainpet-throw-right/);

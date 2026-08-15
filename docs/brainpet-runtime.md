@@ -19,7 +19,7 @@ Task Module（Go/No-Go、持续更新、后续任务）
 
 - 宠物层不知道游戏规则，只发送一次训练请求。
 - Codex Bridge 只把任务生命周期映射为本地 `agent.activity`，不读取或转发提示词、工具输入输出、transcript 与工作目录；Host 按 Agent/session 聚合状态，使一个任务结束不会覆盖另一个仍在运行或等待授权的任务。
-- Host Adapter 独占 session 签发和结果裁决，并管理舞台窗口、互动组合几何、显示器锚定、生命周期、崩溃隔离和本地持久化；Renderer 自报的正确性、汇总分和 `new-best` 不被信任。
+- Host Adapter 由薄聚合层和四个可独立测试、可独立释放的控制器组成：`TrainingEntry`、`StageWindowController`、`SessionAuthority`、`InteractionRigController`。`SessionAuthority` 独占 session 签发、结果裁决和本地持久化；窗口安全与命中检测、互动组合几何和入口注册分别由对应控制器持有。Renderer 自报的正确性、汇总分和 `new-best` 不被信任。
 - Runtime Core 不依赖 Electron 和 DOM，可通过 Node 单元测试验证全部状态转换。
 - Stage 只实现通用反馈、计时、暂停、结算和输入路由。
 - Task Module 只通过 `Task Contract v1` 接入；不允许直接操作 Electron、文件系统或任意 IPC。
@@ -52,7 +52,9 @@ idle → opening → ready → running ⇄ paused → settling → ready
 
 正式舞台默认采用桌面叠加模式：BrowserWindow 是连接宠物与 640×360 游戏区的联合透明覆盖层，游戏区由 Host 几何快照定位在覆盖层内部；根节点、全窗卡片、边框和系统标题背景均透明。宠物仍由自己的 BrowserWindow 绘制，宠物与游戏区可以分别摆放，但投掷路径、拖动暂停和边界约束仍由同一 `Interaction Rig` 管理。正式 scene 游戏运行中不绘制标题栏、关闭按钮、说明牌、累计分数、进度条或底栏，只保留当前可选择对象与必要落点；Esc 退出、P 暂停。透明像素默认通过 `setIgnoreMouseEvents(..., { forward: true })` 穿透到桌面；鼠标移入 scene target 或拖动面时，Renderer 经窄 IPC 临时恢复窗口交互。第一关可以显示一次按键提示，单次判定只在反应区显示 `+/-` 分值；结果页限制为局部两行结算牌，整块点击重试，4 秒无操作自动收起。
 
-互动组合的纯几何与边界约束由 [`apps/desktop/src/brainpet/interaction-rig.ts`](../apps/desktop/src/brainpet/interaction-rig.ts) 持有；Host 只接受有限屏幕坐标，并通过 `rig-geometry-changed / rig-drag-start / rig-drag-end / rig-invalidated` 通知 Renderer。拖动几何事件最多约 30Hz，空闲完整性检查为 1 秒一次。默认宠物在组合存续期间拒绝插件发起的位置移动，但保留用户拖动；舞台关闭后释放位置锁。
+互动组合的纯几何与边界约束由 [`apps/desktop/src/brainpet/interaction-rig.ts`](../apps/desktop/src/brainpet/interaction-rig.ts) 持有，几何状态、锚点监听与定时器由 [`apps/desktop/src/brainpet/interaction-rig-controller.ts`](../apps/desktop/src/brainpet/interaction-rig-controller.ts) 持有；Host 聚合层只接受有限屏幕坐标，并通过 `rig-geometry-changed / rig-drag-start / rig-drag-end / rig-invalidated` 通知 Renderer。拖动几何事件最多约 30Hz，空闲完整性检查为 1 秒一次。默认宠物在组合存续期间拒绝插件发起的位置移动，但保留用户拖动；舞台关闭后释放位置锁。
+
+正常关闭舞台后，BrainPet 在原位置重建默认宠物窗口以终止旧 Renderer；当内置宠物没有 Agent、气泡、状态或托盘活动时，新窗口使用同形静态缩略图释放 8×9 spritesheet 的解码工作集。下一次训练请求或活动状态会先恢复完整动画。该回收回调只由 BrainPet Host 注入，不改变 OpenPets profile。
 
 ## Task Contract v1
 

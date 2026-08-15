@@ -46,7 +46,7 @@ child.stdout?.on("data", (chunk) => logs.push(String(chunk)));
 child.stderr?.on("data", (chunk) => logs.push(String(chunk)));
 
 try {
-  const petTarget = await waitForTarget(port, (target) => target.title === petWindowTitle, startupTimeoutMs);
+  let petTarget = await waitForTarget(port, (target) => target.title === petWindowTitle, startupTimeoutMs);
   const petReadyMs = Date.now() - spawnedAt;
   await delay(500);
   const coldRendererTargets = (await listTargets(port)).filter((target) => target.type === "page");
@@ -146,7 +146,7 @@ try {
   assert.match(trigger.label, /训练|training/i);
   assert.equal(trigger.width >= 28 && trigger.height >= 28, true, "pet training trigger must remain easy to click");
   const clickedAtMs = await clickPetTrigger(petTarget, trigger);
-  await waitForEvaluation(petTarget, `document.documentElement.dataset.brainpetLaunching === 'true'`, 500);
+  await waitForEvaluation(petTarget, `document.documentElement.dataset.brainpetLaunching === 'true' || document.documentElement.dataset.brainpetStageOpen === 'true'`, 500);
 
   let stageTarget = await waitForTarget(port, (target) => target.title === "BrainPet", 10_000);
   const expectedTaskText = forcedTask === "cargo-signal" ? "装箱，还是放过" : forcedTask === "pack-refresh" ? "行囊不重样" : forcedTask === "foundation-probe" ? "异构舞台探针" : "舞台校验器";
@@ -330,6 +330,8 @@ try {
     // measured session so the quality gate reflects play rather than CDP tooling.
     await evaluate(petTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
     await waitForTargetToDisappear(port, stageTarget.id, 10_000);
+    const previousPetTargetId = petTarget.id;
+    petTarget = await waitForTarget(port, (target) => target.title === petWindowTitle && target.id !== previousPetTargetId, 5_000);
     await waitForEvaluation(petTarget, `document.documentElement.dataset.brainpetStageOpen !== 'true'`, 2_000);
     petToggleCloseVerified = true;
     await evaluate(petTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
@@ -414,9 +416,11 @@ try {
   }
   assert.doesNotMatch(logs.join(""), /invalid stage event rejected|stage event transition rejected/, "host must accept every validated session event during smoke and soak");
 
-  const togglePetTarget = await waitForTarget(port, (target) => target.title === petWindowTitle, 5_000);
+  let togglePetTarget = await waitForTarget(port, (target) => target.title === petWindowTitle, 5_000);
   await evaluate(togglePetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
   await waitForTargetToDisappear(port, stageTarget.id, 10_000);
+  const closedPetTargetId = togglePetTarget.id;
+  togglePetTarget = await waitForTarget(port, (target) => target.title === petWindowTitle && target.id !== closedPetTargetId, 5_000);
   await waitForEvaluation(togglePetTarget, `document.documentElement.dataset.brainpetStageOpen !== 'true'`, 2_000);
   petToggleCloseVerified = true;
   await delay(15_000);
