@@ -7,14 +7,16 @@ param(
   [switch]$RunInteractive,
 
   [string]$PortablePath = "",
-  [string]$OutputDirectory = ""
+  [string]$OutputDirectory = "",
+  [ValidateSet("windows-x64", "windows-arm64")]
+  [string]$TargetId = "windows-x64"
 )
 
 $ErrorActionPreference = "Stop"
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrWhiteSpace($PortablePath)) { $PortablePath = Join-Path $scriptDirectory "..\dist-electron\BrainPet-3.4.0-win-x64.exe" }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path $scriptDirectory "..\..\..\output\physical-acceptance" }
-$scriptVersion = "brainpet-release-v1.2"
+$scriptVersion = "brainpet-release-v2.0"
 $startedAt = Get-Date
 $runId = $startedAt.ToString("yyyyMMdd-HHmmss")
 $receiptDirectory = Join-Path ([System.IO.Path]::GetFullPath($OutputDirectory)) $runId
@@ -179,8 +181,10 @@ if ($RunInteractive) {
 }
 
 $receipt = [pscustomobject]@{
-  schemaVersion = 1
+  schemaVersion = 2
   scriptVersion = $scriptVersion
+  target = $TargetId
+  sourceCommit = if ($env:GITHUB_SHA -match '^[a-fA-F0-9]{40}$') { $env:GITHUB_SHA } else { $null }
   runId = $runId
   startedAt = $startedAt.ToUniversalTime().ToString("o")
   completedAt = (Get-Date).ToUniversalTime().ToString("o")
@@ -194,6 +198,7 @@ $receipt = [pscustomobject]@{
     displays = $displays
   }
   portable = $portable
+  artifactSha256 = $portable.sha256
   checks = $checks
 }
 

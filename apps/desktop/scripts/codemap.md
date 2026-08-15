@@ -2,7 +2,7 @@
 
 ## Responsibility
 
-Build and release automation scripts for the OpenPets desktop application. Handles packaging cleanup and local release orchestration (macOS-focused).
+Build, validate, install-test, and release automation for OpenPets and BrainPet desktop distributions. BrainPet package receipts are target-specific and fail closed; aggregate public readiness is owned by the repository release-evidence script.
 
 ## Design
 
@@ -40,10 +40,11 @@ Load/validate checkpoint in .release-state/v<version>.json (discarded when HEAD 
 Check preload syntax → Compile tests to .test-dist → Run behavior tests → Run contract tests → Run remaining dist checks
 ```
 
-**BrainPet Windows validation**:
+**BrainPet package and lifecycle validation**:
 ```
 brainpet-electron-smoke.mjs → isolated profile → native hotspot click → stage/lifecycle assertions → scoped process-tree cleanup
-brainpet-package-unpacked.mjs → branded BrainPet win-unpacked directory without portable self-extraction
+brainpet-package.mjs → stage exact target helper → electron-builder → automatic validate-brainpet-package.mjs
+brainpet-package-lifecycle.mjs → disposable GitHub-hosted runner → real install/start/default discovery/helper/upgrade/uninstall receipt
 ```
 
 ## Integration Points
@@ -60,7 +61,10 @@ brainpet-package-unpacked.mjs → branded BrainPet win-unpacked directory withou
 - `release-local.mjs`: Full release orchestration with preflight validation, multi-platform builds, and GitHub draft creation
 - `run-tests.mjs`: Desktop test runner for preload syntax checks, `.test-dist` behavior/contract tests, and remaining runtime checks
 - `brainpet-electron-smoke.mjs`: BrainPet native-entry, stage, performance, crash-isolation, and cleanup smoke
-- `brainpet-package-unpacked.mjs`: Fast-starting branded Windows test directory builder
+- `brainpet-package.mjs`: Six-target BrainPet builder that cannot complete without automatic package validation
+- `validate-brainpet-package.mjs`: Runtime/asar/helper/installer/signing/notarization/provenance validator and target receipt writer
+- `brainpet-package-lifecycle.mjs`: CI-only real NSIS/DMG/AppImage/deb install, cold-wake, upgrade, Adapter, and uninstall exerciser
+- `brainpet-physical-acceptance.ps1`: Windows display/DPI/manual acceptance inventory and schema-v2 physical receipt writer
 
 ## Build Plan (release-local.mjs)
 

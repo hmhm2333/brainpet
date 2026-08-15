@@ -13,6 +13,9 @@ test("physical acceptance harness is receipt-driven and does not automate destru
   assert.match(script, /RunInteractive/);
   assert.match(script, /Get-AuthenticodeSignature/);
   assert.match(script, /GetEffectiveDpi/);
+  assert.match(script, /schemaVersion = 2/);
+  assert.match(script, /TargetId/);
+  assert.match(script, /artifactSha256/);
   assert.doesNotMatch(script, /LockWorkStation|rundll32|Set-DisplayResolution|Stop-Process|Remove-Item/);
 });
 

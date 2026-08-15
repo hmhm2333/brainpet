@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { getBrainPetReleaseTarget, resolveHostBrainPetReleaseTarget } from "../../../scripts/brainpet-release-contract.mjs";
 import { assertBrainPetBinary } from "../../../scripts/brainpet-binary-format.mjs";
+import { validateBrainPetPackage } from "./validate-brainpet-package.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(scriptDir, "..");
@@ -28,6 +29,10 @@ export function parseBrainPetPackageArgs(argv) {
     else if (value === "--dry-run") options.dryRun = true;
     else if (value === "--mode") options.mode = argv[++index];
     else if (value === "--helper") options.helperPath = argv[++index];
+    else if (value === "--output") options.outputRoot = argv[++index];
+    else if (value === "--app-version") options.appVersion = argv[++index];
+    else if (value === "--provenance") options.provenancePath = argv[++index];
+    else if (value === "--defer-trust") options.deferTrust = true;
     else throw new Error(`Unknown BrainPet package argument: ${value}`);
   }
   if (!["installer", "portable", "dir"].includes(options.target)) throw new Error(`Unsupported BrainPet package target: ${options.target}`);
@@ -36,7 +41,12 @@ export function parseBrainPetPackageArgs(argv) {
     ? getBrainPetReleaseTarget(options.platform ?? resolveHostBrainPetReleaseTarget().platform, options.arch ?? process.arch)
     : resolveHostBrainPetReleaseTarget();
   if (options.target === "portable" && releaseTarget.platform !== "windows") throw new Error("BrainPet portable packages are Windows-only.");
-  return { ...options, releaseTarget };
+  if (options.appVersion && !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(options.appVersion)) throw new Error("BrainPet package version override must be valid SemVer.");
+  const outputRoot = resolve(options.outputRoot ?? join(appDir, "dist-brainpet", options.mode));
+  const relativeOutput = outputRoot.startsWith(`${appDir}\\`) || outputRoot.startsWith(`${appDir}/`);
+  if (!relativeOutput) throw new Error("BrainPet package output must stay inside the desktop app directory.");
+  if (options.deferTrust && (options.mode !== "public-release" || process.env.GITHUB_ACTIONS !== "true")) throw new Error("Deferred public trust validation is restricted to GitHub Actions public-release builds.");
+  return { ...options, outputRoot, releaseTarget };
 }
 
 export function createBrainPetBuilderInvocation(options) {
@@ -48,7 +58,9 @@ export function createBrainPetBuilderInvocation(options) {
     "--config",
     options.mode === "public-release" ? "electron-builder.brainpet.public.yml" : "electron-builder.brainpet.private.yml",
     `--config.electronDist=${electronDist}`,
+    `--config.directories.output=${options.outputRoot}`,
   ];
+  if (options.appVersion) args.push(`--config.extraMetadata.version=${options.appVersion}`);
   if (options.target === "dir") args.push("--dir");
   else if (options.target === "portable") args.push("portable");
   return { command: process.execPath, args, cwd: appDir };
@@ -134,10 +146,11 @@ async function main() {
   const options = parseBrainPetPackageArgs(process.argv.slice(2));
   const invocation = createBrainPetBuilderInvocation(options);
   if (options.dryRun) {
-    process.stdout.write(`${JSON.stringify({ ...invocation, releaseTarget: options.releaseTarget, releaseMode: options.mode, publicArtifact: options.mode === "public-release", helperRequired: true, helperPath: options.helperPath ? resolve(options.helperPath) : null }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ ...invocation, releaseTarget: options.releaseTarget, releaseMode: options.mode, publicArtifact: options.mode === "public-release", helperRequired: true, helperPath: options.helperPath ? resolve(options.helperPath) : null, outputRoot: options.outputRoot, validatorAutomatic: true }, null, 2)}\n`);
     return;
   }
-  if (options.mode === "public-release") validatePublicReleaseEnvironment(options.releaseTarget);
+  if (options.mode === "public-release" && !options.deferTrust) validatePublicReleaseEnvironment(options.releaseTarget);
+  rmSync(options.outputRoot, { recursive: true, force: true });
   prepareBrainPetBundledMarketplace(options);
   const nsisDir = findCachedTool("nsis-3.0.4.1", join("Bin", "makensis.exe"));
   const nsisResourcesDir = findCachedTool("nsis-resources-3.4.1", join("plugins", "x86-unicode"));
@@ -151,6 +164,15 @@ async function main() {
     child.once("error", reject);
     child.once("exit", (code, signal) => signal ? reject(new Error(`electron-builder terminated by ${signal}`)) : code === 0 ? resolvePromise() : reject(new Error(`electron-builder exited with ${code ?? "unknown"}`)));
   });
+  const receipt = validateBrainPetPackage({
+    outputRoot: options.outputRoot,
+    targetId: options.releaseTarget.id,
+    mode: options.mode,
+    packageTarget: options.target,
+    provenancePath: options.provenancePath,
+    allowPendingTrust: Boolean(options.deferTrust),
+  });
+  console.log(`BrainPet package and automatic validation passed (${receipt.target}, publicReleaseReady=${receipt.publicReleaseReady}).`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

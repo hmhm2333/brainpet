@@ -9,10 +9,19 @@ mac:
   hardenedRuntime: true
   gatekeeperAssess: true
   notarize: true
+  target:
+    - dmg
 
 win:
   signAndEditExecutable: true
   verifyUpdateCodeSignature: true
+  target:
+    - nsis
 
 nsis:
   artifactName: BrainPet-${version}-win-${arch}-setup.${ext}
+
+linux:
+  target:
+    - AppImage
+    - deb

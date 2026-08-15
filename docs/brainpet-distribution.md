@@ -1,8 +1,9 @@
 # BrainPet 安装与公开发行方案
 
-> 状态：RC5 安装与连接实现已落地；Windows x64 原生 Helper/unpacked 包已在本机
-> 验证。它仍不是公开 Release；签名、公证、跨平台安装和物理回执继续以
-> `brainpet-release-infrastructure-completion-plan.md` 的 RC6/RC7 门禁为准。
+> 状态：RC6 发行门实现中。默认 package 已自动执行真实 validator，Windows x64
+> private-test 的 unpacked、NSIS 与包内 Helper 已在本机验证；六目标 GitHub runner、
+> DMG/AppImage/deb 生命周期、签名、公证和物理回执未全部通过前，聚合结果必须保持
+> `publicReleaseReady=false`。
 
 主宠替代层的分期、Codex 原生控件覆盖和本轮验收门见
 `docs/brainpet-primary-companion-plan.md`。
@@ -79,6 +80,39 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
 - `integrations/codex/scripts/assemble-bridge-release.mjs` 只从 CI helper 产物装配插件，并生成逐文件 SHA-256 回执。
 - `brainpet:bridge:validate-release` 是二进制发行门；源码 checkout 没有六个 helper 时失败是正确行为。`brainpet:release:test` 是本地源码与装配逻辑门，不替代签名或实机验证。
 - `.github/workflows/brainpet-portability-gate.yml` 构建六类 runtime/helper 私测产物，不发布 Release，也不把未签名包称为公开安装包。
+
+## RC6 真实产物与可信回执
+
+- `brainpet-package.mjs` 是默认打包入口；builder 成功后会直接调用
+  `validate-brainpet-package.mjs`。不能再通过只运行 builder 绕过产物校验。
+- package receipt 记录支持等级、app 版本、精确 source commit、CI 身份、runtime、
+  包内 native helper 和每个 installer 的 SHA-256。单目标回执固定写
+  `publicReleaseReady=false`，不能越权代替聚合门。
+- 私测 portability workflow 在 GitHub 托管的干净 runner 上，对 Windows x64 NSIS、
+  macOS arm64 DMG、Linux x64 AppImage/deb 运行真实安装、默认 discovery、包内 helper、
+  Adapter 安装/升级/卸载、冷唤醒、状态保留升级和 runtime 卸载。
+- 公开 workflow 还要求 Windows Authenticode、macOS Developer ID + notarization ticket，
+  并用 GitHub OIDC/Sigstore 为所有 installer 生成 build provenance；聚合器会离线绑定
+  artifact hash，再通过 `gh attestation verify` 验证 repository、signer workflow、
+  source commit 和 GitHub-hosted runner。
+- `aggregate-brainpet-release-receipt.mjs` 聚合六目标 runtime、四种真实 installer
+  lifecycle、六 helper Bridge、Adapter 和人工物理回执。Stable 目标仍缺任何签名、
+  公证、安装或物理证据时，只列出 `missingEvidence`，绝不写公开就绪。
+
+当前机器事实：`hmhm2333/brainpet` 尚未配置 BrainPet Windows/macOS 签名凭据；因此
+公开 workflow 现在应 fail closed。这是外部发行凭据缺口，不得以 self-signed、ad-hoc
+签名或伪造 receipt 替代。
+
+## Runtime 支持等级
+
+| 目标 | 当前等级 | 升级条件 |
+| --- | --- | --- |
+| Windows x64 | Stable | Authenticode、NSIS 生命周期和物理回执全部绑定同一 commit |
+| macOS arm64 | Stable | Developer ID、公证 DMG、生命周期和物理回执全部绑定同一 commit |
+| macOS x64 | Beta | 完成独立真实安装与物理回执后再评估 Stable |
+| Linux x64 | Beta | AppImage/deb 生命周期与可信 provenance 已进入 RC6 门；仍按首发扩展门管理 |
+| Windows arm64 | Preview | 原生 runner、安装/卸载和厂商信任回执齐全后升级 |
+| Linux arm64 | Preview | 原生 runner、安装/卸载回执齐全后升级 |
 
 托盘“BrainPet 安装与恢复”页给出三类分离证据：runtime 标记与运行版本、Codex/Bridge 检测安装状态、新任务是否真的送达首条 lifecycle。状态、配置备份和操作 receipt 均保存在 BrainPet 独立用户目录；Bridge 版本变化会使旧 lifecycle 证据失效。暂停或卸载 Bridge 不影响离线宠物与训练；卸载 runtime 会删除主/备安装标记并让 Bridge 快速 no-op，但默认保留用户训练进度。
 

@@ -1,6 +1,6 @@
 # BrainPet Release 基础设施收工计划
 
-> 状态：实施中。RC-0 已通过本地退出门；本文定义从当前 `0dacd88` 收敛到可发行版本的工作，
+> 状态：实施中。RC-0～RC-5 已通过对应退出门，RC-6 正在执行真实跨平台 CI；本文定义从当前 `0dacd88` 收敛到可发行版本的工作，
 > 不代表相关能力已经完成，也不命名为新的产品里程碑。当前冻结新游戏、积分、
 > 天梯、商业化和未经验证的新 Agent，直到本文全部退出门通过。
 
@@ -8,8 +8,12 @@
 
 | 工作包 | 状态 | 本地证据 |
 | --- | --- | --- |
-| RC-0 | 已通过 | AdapterRegistry、证据回执、runtime capability snapshot 与生成矩阵一致；`brainpet:release:validate-source`、全工作区 typecheck、桌面完整测试通过 |
-| RC-1～RC-7 | 待实施 | 未满足对应退出门前不得标记完成 |
+| RC-0 | 已通过 | `d80f01b`；AdapterRegistry、证据回执、runtime capability snapshot 与生成矩阵一致 |
+| RC-1～RC-2 | 已通过 | `80dc0a3`、`36083ce`；Audit A 整改与独立复审在 `a23270e`、`6cf53bd` 通过 |
+| RC-3～RC-4 | 已通过 | `6464fe3`、`b8d87fa`；Audit B 整改与独立复审在 `73ffb47`、`9e6a691` 通过 |
+| RC-5 | 已通过 | `f9802a9`；Windows x64 native-only 包、一次点击 Codex、single-instance、冷唤醒恢复与真实 packaged UI smoke 通过 |
+| RC-6 | 进行中 | 默认 package 自动 validator、真实 installer lifecycle、可信 provenance 和聚合回执代码已完成本地门；远端六目标/四格式回执未通过前不标完成 |
+| RC-7 | 待实施 | 未满足对应退出门前不得标记完成 |
 
 ## 1. 最终目标
 

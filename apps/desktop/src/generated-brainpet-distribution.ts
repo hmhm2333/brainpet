@@ -10,7 +10,8 @@ export const brainPetReleaseTargets = [
     "rustTarget": "x86_64-pc-windows-msvc",
     "helperName": "brainpet-hook.exe",
     "binaryFormat": "pe",
-    "machine": 34404
+    "machine": 34404,
+    "supportLevel": "stable"
   },
   {
     "id": "windows-arm64",
@@ -21,7 +22,8 @@ export const brainPetReleaseTargets = [
     "rustTarget": "aarch64-pc-windows-msvc",
     "helperName": "brainpet-hook.exe",
     "binaryFormat": "pe",
-    "machine": 43620
+    "machine": 43620,
+    "supportLevel": "preview"
   },
   {
     "id": "macos-x64",
@@ -32,7 +34,8 @@ export const brainPetReleaseTargets = [
     "rustTarget": "x86_64-apple-darwin",
     "helperName": "brainpet-hook",
     "binaryFormat": "mach-o",
-    "machine": 16777223
+    "machine": 16777223,
+    "supportLevel": "beta"
   },
   {
     "id": "macos-arm64",
@@ -43,7 +46,8 @@ export const brainPetReleaseTargets = [
     "rustTarget": "aarch64-apple-darwin",
     "helperName": "brainpet-hook",
     "binaryFormat": "mach-o",
-    "machine": 16777228
+    "machine": 16777228,
+    "supportLevel": "stable"
   },
   {
     "id": "linux-x64",
@@ -54,7 +58,8 @@ export const brainPetReleaseTargets = [
     "rustTarget": "x86_64-unknown-linux-gnu",
     "helperName": "brainpet-hook",
     "binaryFormat": "elf",
-    "machine": 62
+    "machine": 62,
+    "supportLevel": "beta"
   },
   {
     "id": "linux-arm64",
@@ -65,7 +70,8 @@ export const brainPetReleaseTargets = [
     "rustTarget": "aarch64-unknown-linux-gnu",
     "helperName": "brainpet-hook",
     "binaryFormat": "elf",
-    "machine": 183
+    "machine": 183,
+    "supportLevel": "preview"
   }
 ] as const;
 export const brainPetDistributionIdentity = {

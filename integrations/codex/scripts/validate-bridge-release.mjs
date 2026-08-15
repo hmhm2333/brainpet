@@ -26,7 +26,11 @@ export function validateBridgeRelease(pluginRoot = defaultPluginRoot) {
 
   const receiptPath = join(pluginRoot, "brainpet-release.json");
   const receipt = existsSync(receiptPath) ? JSON.parse(readFileSync(receiptPath, "utf8")) : null;
-  if (receipt) assert.equal(receipt.bridgeVersion, contract.bridgeVersion);
+  if (receipt) {
+    assert.equal(receipt.product, "brainpet");
+    assert.equal(receipt.bridgeVersion, contract.bridgeVersion);
+    assert.match(receipt.source?.commit, /^[a-f0-9]{40}$/i, "Bridge release receipt must bind an exact source commit.");
+  }
 
   for (const target of brainPetReleaseTargets) {
     const path = join(pluginRoot, "bin", target.id, target.helperName);

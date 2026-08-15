@@ -43,6 +43,7 @@
     "brainpet:providers:check": "node scripts/generate-brainpet-provider-matrix.mjs --check",
     "brainpet:release:validate-source": "node scripts/validate-brainpet-release-source.mjs",
     "brainpet:release:test": "pnpm brainpet:release:validate-source && pnpm brainpet:adapter-contracts:check && pnpm brainpet:adapters:check && pnpm --filter @open-pets/desktop package:brainpet:matrix && node scripts/test-brainpet-release.mjs",
+    "brainpet:release:aggregate": "node scripts/aggregate-brainpet-release-receipt.mjs",
     "test": "pnpm build && pnpm -r --if-present test",
     "check": "pnpm -r check && pnpm brainpet:adapter-contracts:check && pnpm brainpet:adapters:check",
     "typecheck": "pnpm -r typecheck",

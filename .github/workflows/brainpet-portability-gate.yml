@@ -84,11 +84,46 @@ jobs:
           path: output/brainpet-helper
       - run: pnpm --filter @open-pets/desktop build
       - run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode private-test --helper output/brainpet-helper/${{ matrix.file }}
-      - run: node apps/desktop/scripts/validate-brainpet-package.mjs --target ${{ matrix.id }} --mode private-test
       - uses: actions/upload-artifact@v4
         with:
-          name: brainpet-runtime-${{ matrix.id }}
+          name: brainpet-runtime-current-${{ matrix.id }}
           path: apps/desktop/dist-brainpet/private-test/
+          if-no-files-found: error
+      - run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode private-test --helper output/brainpet-helper/${{ matrix.file }} --app-version 3.3.999 --output apps/desktop/dist-brainpet/upgrade-fixture-${{ matrix.id }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brainpet-upgrade-fixture-${{ matrix.id }}
+          path: apps/desktop/dist-brainpet/upgrade-fixture-${{ matrix.id }}/
+          if-no-files-found: error
+
+  installer-lifecycle:
+    needs: runtime-package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { id: windows-x64, os: windows-latest, kind: nsis }
+          - { id: macos-arm64, os: macos-14, kind: dmg }
+          - { id: linux-x64, os: ubuntu-latest, kind: appimage }
+          - { id: linux-x64, os: ubuntu-latest, kind: deb }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: brainpet-runtime-current-${{ matrix.id }}
+          path: output/current
+      - uses: actions/download-artifact@v4
+        with:
+          name: brainpet-upgrade-fixture-${{ matrix.id }}
+          path: output/previous
+      - if: runner.os == 'Linux'
+        run: which xvfb-run
+      - run: node apps/desktop/scripts/brainpet-package-lifecycle.mjs --target ${{ matrix.id }} --artifact-kind ${{ matrix.kind }} --current-output output/current --previous-output output/previous --receipt output/lifecycle/brainpet-install-lifecycle-receipt-${{ matrix.id }}-${{ matrix.kind }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brainpet-lifecycle-${{ matrix.id }}-${{ matrix.kind }}
+          path: output/lifecycle/
           if-no-files-found: error
 
   assemble-bridge:
@@ -105,4 +140,30 @@ jobs:
         with:
           name: brainpet-codex-bridge
           path: output/brainpet-release/brainpet-codex-bridge
+          if-no-files-found: error
+
+  aggregate-private-receipt:
+    needs: [runtime-package, installer-lifecycle, assemble-bridge]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: brainpet-runtime-current-*
+          path: output/packages
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: brainpet-lifecycle-*
+          path: output/lifecycle
+      - uses: actions/download-artifact@v4
+        with:
+          name: brainpet-codex-bridge
+          path: output/bridge
+      - run: mkdir -p output/aggregate
+      - run: node scripts/aggregate-brainpet-release-receipt.mjs --packages output/packages --lifecycle output/lifecycle --bridge output/bridge --output output/aggregate/brainpet-release-receipt.json --mode private-test
+      - run: node -e "const r=require('./output/aggregate/brainpet-release-receipt.json'); if(!r.rc6GatePassed||r.publicReleaseReady) process.exit(1)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brainpet-private-release-receipt
+          path: output/aggregate/brainpet-release-receipt.json
           if-no-files-found: error

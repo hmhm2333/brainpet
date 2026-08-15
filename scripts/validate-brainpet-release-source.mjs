@@ -86,7 +86,19 @@ assert.match(readFileSync(join(desktop, "build", "brainpet-installer.nsh"), "utf
 assert.match(readFileSync(join(desktop, "build", "brainpet-installer.nsh"), "utf8"), /runtime-install\.json\.bak/);
 assert.ok(existsSync(join(desktop, "scripts", "validate-brainpet-package.mjs")));
 assert.match(readFileSync(join(desktop, "scripts", "brainpet-package.mjs"), "utf8"), /prepareBrainPetBundledMarketplace/);
+assert.match(readFileSync(join(desktop, "scripts", "brainpet-package.mjs"), "utf8"), /validateBrainPetPackage/, "Default BrainPet packaging must automatically invoke the real package validator.");
 assert.match(readFileSync(join(desktop, "scripts", "validate-brainpet-package.mjs"), "utf8"), /nativeBridgeHelpersBundled: true/);
+assert.ok(existsSync(join(desktop, "scripts", "brainpet-package-lifecycle.mjs")));
+assert.ok(existsSync(join(root, "scripts", "aggregate-brainpet-release-receipt.mjs")));
+assert.ok(existsSync(join(root, ".github", "workflows", "brainpet-public-release-gate.yml")));
+assert.deepEqual(Object.fromEntries(brainPetDistributionContract.releaseTargets.map((target) => [target.id, target.supportLevel])), {
+  "windows-x64": "stable",
+  "windows-arm64": "preview",
+  "macos-x64": "beta",
+  "macos-arm64": "stable",
+  "linux-x64": "beta",
+  "linux-arm64": "preview",
+});
 assert.match(JSON.parse(readFileSync(join(desktop, "package.json"), "utf8")).scripts["test:brainpet-openpets-isolation"], /BRAINPET_EXPECT_OPENPETS_ISOLATION=1/);
 
 const bridgeRoot = join(root, "integrations", "codex", "plugins", "brainpet-codex-bridge");

@@ -9,7 +9,7 @@ import { assembleBridgeRelease } from "../integrations/codex/scripts/assemble-br
 import { validateBridgeRelease } from "../integrations/codex/scripts/validate-bridge-release.mjs";
 import { brainPetReleaseTargets } from "./brainpet-release-contract.mjs";
 import { assertBrainPetBinary } from "./brainpet-binary-format.mjs";
-import { prepareBrainPetBundledMarketplace, validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
+import { createBrainPetBuilderInvocation, parseBrainPetPackageArgs, prepareBrainPetBundledMarketplace, validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const testRoot = join(root, "output", "brainpet-m5-release-test", String(process.pid));
@@ -32,6 +32,12 @@ try {
   assert.throws(() => validatePublicReleaseEnvironment(brainPetReleaseTargets.find((target) => target.id === "windows-x64"), {}), /signing credentials/);
   assert.throws(() => validatePublicReleaseEnvironment(brainPetReleaseTargets.find((target) => target.id === "macos-arm64"), {}), /Developer ID/);
   assert.throws(() => validatePublicReleaseEnvironment(brainPetReleaseTargets.find((target) => target.id === "linux-x64"), {}), /provenance/i);
+  assert.deepEqual(brainPetReleaseTargets.map((target) => target.supportLevel), ["stable", "preview", "beta", "stable", "beta", "preview"]);
+  const versionFixture = parseBrainPetPackageArgs(["--platform", "windows", "--arch", "x64", "--target", "dir", "--mode", "private-test", "--app-version", "3.3.999", "--output", "apps/desktop/dist-brainpet/contract-fixture"]);
+  const invocation = createBrainPetBuilderInvocation(versionFixture);
+  assert.ok(invocation.args.some((arg) => arg.endsWith("extraMetadata.version=3.3.999")));
+  assert.ok(invocation.args.some((arg) => arg.includes("directories.output=")));
+  assert.throws(() => parseBrainPetPackageArgs(["--mode", "public-release", "--defer-trust"]), /GitHub Actions/);
   const windowsTarget = brainPetReleaseTargets.find((target) => target.id === "windows-x64");
   const staged = prepareBrainPetBundledMarketplace({ releaseTarget: windowsTarget, helperPath: join(artifactsRoot, windowsTarget.id, windowsTarget.helperName) });
   const stagedPlugin = join(staged.stagingMarketplaceRoot, "plugins", "brainpet-codex-bridge");

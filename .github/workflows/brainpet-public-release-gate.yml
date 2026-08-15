@@ -1,0 +1,208 @@
+name: BrainPet public release gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      physical_receipt_run_id:
+        description: Workflow run containing the brainpet-physical-receipts artifact for this commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+  attestations: write
+
+jobs:
+  native-helper:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { id: windows-x64, os: windows-latest, rust: x86_64-pc-windows-msvc, file: brainpet-hook.exe }
+          - { id: windows-arm64, os: windows-11-arm, rust: aarch64-pc-windows-msvc, file: brainpet-hook.exe }
+          - { id: macos-x64, os: macos-15-intel, rust: x86_64-apple-darwin, file: brainpet-hook }
+          - { id: macos-arm64, os: macos-14, rust: aarch64-apple-darwin, file: brainpet-hook }
+          - { id: linux-x64, os: ubuntu-latest, rust: x86_64-unknown-linux-gnu, file: brainpet-hook }
+          - { id: linux-arm64, os: ubuntu-24.04-arm, rust: aarch64-unknown-linux-gnu, file: brainpet-hook }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust }}
+      - run: cargo test --manifest-path native/brainpet-hook/Cargo.toml --target ${{ matrix.rust }}
+      - run: cargo build --release --manifest-path native/brainpet-hook/Cargo.toml --target ${{ matrix.rust }}
+      - run: node scripts/validate-native-helper.mjs ${{ matrix.id }} native/brainpet-hook/target/${{ matrix.rust }}/release/${{ matrix.file }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brainpet-public-helper-${{ matrix.id }}
+          path: native/brainpet-hook/target/${{ matrix.rust }}/release/${{ matrix.file }}
+          if-no-files-found: error
+
+  runtime-package:
+    needs: native-helper
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { id: windows-x64, os: windows-latest, platform: windows, arch: x64, file: brainpet-hook.exe }
+          - { id: windows-arm64, os: windows-11-arm, platform: windows, arch: arm64, file: brainpet-hook.exe }
+          - { id: macos-x64, os: macos-15-intel, platform: macos, arch: x64, file: brainpet-hook }
+          - { id: macos-arm64, os: macos-14, platform: macos, arch: arm64, file: brainpet-hook }
+          - { id: linux-x64, os: ubuntu-latest, platform: linux, arch: x64, file: brainpet-hook }
+          - { id: linux-arm64, os: ubuntu-24.04-arm, platform: linux, arch: arm64, file: brainpet-hook }
+    runs-on: ${{ matrix.os }}
+    env:
+      WIN_CSC_LINK: ${{ secrets.BRAINPET_WIN_CSC_LINK }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.BRAINPET_WIN_CSC_KEY_PASSWORD }}
+      CSC_LINK: ${{ matrix.platform == 'macos' && secrets.BRAINPET_MAC_CSC_LINK || '' }}
+      CSC_KEY_PASSWORD: ${{ matrix.platform == 'macos' && secrets.BRAINPET_MAC_CSC_KEY_PASSWORD || '' }}
+      APPLE_ID: ${{ secrets.BRAINPET_APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.BRAINPET_APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.BRAINPET_APPLE_TEAM_ID }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: brainpet-public-helper-${{ matrix.id }}
+          path: output/helper
+      - run: pnpm --filter @open-pets/desktop build
+      - if: matrix.platform != 'linux'
+        run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode public-release --helper output/helper/${{ matrix.file }}
+      - if: matrix.platform == 'linux'
+        run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode public-release --helper output/helper/${{ matrix.file }} --defer-trust
+      - if: matrix.platform == 'windows'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: apps/desktop/dist-brainpet/public-release/*-setup.exe
+      - if: matrix.platform == 'macos'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: apps/desktop/dist-brainpet/public-release/*.dmg
+      - if: matrix.platform == 'linux'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            apps/desktop/dist-brainpet/public-release/*.AppImage
+            apps/desktop/dist-brainpet/public-release/*.deb
+      - run: node scripts/collect-brainpet-provenance.mjs apps/desktop/dist-brainpet/public-release/brainpet-package-receipt-${{ matrix.id }}.json apps/desktop/dist-brainpet/public-release/brainpet-github-attestations.jsonl
+      - if: matrix.platform == 'linux'
+        run: node apps/desktop/scripts/validate-brainpet-package.mjs --target ${{ matrix.id }} --mode public-release --package-target installer --provenance apps/desktop/dist-brainpet/public-release/brainpet-github-attestations.jsonl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brainpet-public-runtime-current-${{ matrix.id }}
+          path: apps/desktop/dist-brainpet/public-release/
+          if-no-files-found: error
+      - if: matrix.platform != 'linux'
+        run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode public-release --helper output/helper/${{ matrix.file }} --app-version 3.3.999 --output apps/desktop/dist-brainpet/public-upgrade-${{ matrix.id }}
+      - if: matrix.platform == 'linux'
+        run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode private-test --helper output/helper/${{ matrix.file }} --app-version 3.3.999 --output apps/desktop/dist-brainpet/public-upgrade-${{ matrix.id }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brainpet-public-upgrade-fixture-${{ matrix.id }}
+          path: apps/desktop/dist-brainpet/public-upgrade-${{ matrix.id }}/
+          if-no-files-found: error
+
+  installer-lifecycle:
+    needs: runtime-package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { id: windows-x64, os: windows-latest, kind: nsis }
+          - { id: macos-arm64, os: macos-14, kind: dmg }
+          - { id: linux-x64, os: ubuntu-latest, kind: appimage }
+          - { id: linux-x64, os: ubuntu-latest, kind: deb }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: brainpet-public-runtime-current-${{ matrix.id }}
+          path: output/current
+      - uses: actions/download-artifact@v4
+        with:
+          name: brainpet-public-upgrade-fixture-${{ matrix.id }}
+          path: output/previous
+      - if: runner.os == 'Linux'
+        run: which xvfb-run
+      - run: node apps/desktop/scripts/brainpet-package-lifecycle.mjs --target ${{ matrix.id }} --artifact-kind ${{ matrix.kind }} --current-output output/current --previous-output output/previous --receipt output/lifecycle/brainpet-install-lifecycle-receipt-${{ matrix.id }}-${{ matrix.kind }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brainpet-public-lifecycle-${{ matrix.id }}-${{ matrix.kind }}
+          path: output/lifecycle/
+          if-no-files-found: error
+
+  assemble-bridge:
+    needs: native-helper
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: brainpet-public-helper-*
+          path: output/helpers
+      - name: Normalize helper artifact directories
+        shell: bash
+        run: |
+          for target in windows-x64 windows-arm64 macos-x64 macos-arm64 linux-x64 linux-arm64; do
+            mv "output/helpers/brainpet-public-helper-$target" "output/helpers/$target"
+          done
+      - run: node integrations/codex/scripts/assemble-bridge-release.mjs --artifacts output/helpers --output output/bridge
+      - run: node integrations/codex/scripts/validate-bridge-release.mjs --plugin-root output/bridge
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: output/bridge/brainpet-release.json
+      - name: Collect Bridge provenance bundle
+        shell: bash
+        working-directory: output/bridge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation download brainpet-release.json --repo "$GITHUB_REPOSITORY"
+          cat sha256-*.jsonl > brainpet-github-attestations.jsonl
+          rm sha256-*.jsonl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brainpet-public-bridge
+          path: output/bridge
+          if-no-files-found: error
+
+  aggregate-public-receipt:
+    needs: [runtime-package, installer-lifecycle, assemble-bridge]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: brainpet-public-runtime-current-*
+          path: output/packages
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: brainpet-public-lifecycle-*
+          path: output/lifecycle
+      - uses: actions/download-artifact@v4
+        with:
+          name: brainpet-public-bridge
+          path: output/bridge
+      - run: gh run download "${{ inputs.physical_receipt_run_id }}" --repo "$GITHUB_REPOSITORY" --name brainpet-physical-receipts --dir output/physical
+      - run: mkdir -p output/aggregate
+      - run: node scripts/aggregate-brainpet-release-receipt.mjs --packages output/packages --lifecycle output/lifecycle --bridge output/bridge --physical output/physical --output output/aggregate/brainpet-release-receipt.json --mode public-release --expect-public-ready
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brainpet-public-release-receipt
+          path: output/aggregate/brainpet-release-receipt.json
+          if-no-files-found: error
