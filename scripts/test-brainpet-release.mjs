@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -161,6 +162,25 @@ try {
   assert.equal(validateEnvironmentApproval(approvalHistoryPath, "release-dispatcher", approvalComment), "release-fixture");
   assert.throws(() => validateEnvironmentApproval(approvalHistoryPath, "release-fixture", approvalComment), /self-review/i);
   assert.throws(() => validateEnvironmentApproval(approvalHistoryPath, "release-dispatcher", `${approvalComment}-tampered`), /does not bind/i);
+  const rerunIntake = spawnSync(process.execPath, [
+    join(root, "scripts", "intake-brainpet-physical-receipts.mjs"),
+    "--payload-env", "BRAINPET_TEST_PHYSICAL_PAYLOAD",
+    "--candidate-receipt", intakeCandidatePath,
+    "--approval-history", approvalHistoryPath,
+    "--require-trusted-ci",
+  ], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      BRAINPET_TEST_PHYSICAL_PAYLOAD: physicalPayload,
+      GITHUB_ACTIONS: "true",
+      GITHUB_RUN_ATTEMPT: "2",
+      GITHUB_WORKFLOW: brainPetPhysicalReceiptWorkflow.name,
+      RUNNER_ENVIRONMENT: "github-hosted",
+    },
+  });
+  assert.equal(rerunIntake.status, 1);
+  assert.match(rerunIntake.stderr, /reruns are forbidden/i);
   assert.equal(validateBrainPetPhysicalReceiptSet(physicalReceipts, { expectedSourceCommit: receipt.source.commit }).length, 2);
   const unsafePhysicalReceipt = structuredClone(physicalReceipts[0]);
   unsafePhysicalReceipt.artifact.name = "C:\\Users\\person\\BrainPet-setup.exe";
@@ -328,6 +348,24 @@ try {
   for (const subjectPath of [join(publicPhysicalRoot, "windows-x64", "brainpet-physical-receipt.json"), join(publicPhysicalRoot, "macos-arm64", "brainpet-physical-receipt.json"), join(publicPhysicalRoot, "brainpet-physical-intake.json")]) {
     writeFileSync(brainPetSigstoreBundlePath(physicalProvenanceRoot, sha256(readFileSync(subjectPath))), "{}\n", "utf8");
   }
+  const publicPhysicalIntakePath = join(publicPhysicalRoot, "brainpet-physical-intake.json");
+  const publicPhysicalIntakeBytes = readFileSync(publicPhysicalIntakePath);
+  const rerunPhysicalIntake = JSON.parse(publicPhysicalIntakeBytes);
+  rerunPhysicalIntake.github.runAttempt = "2";
+  writeFileSync(publicPhysicalIntakePath, `${JSON.stringify(rerunPhysicalIntake, null, 2)}\n`, "utf8");
+  assert.throws(() => aggregateBrainPetReleaseReceipt({
+    packagesRoot: publicPackagesRoot,
+    lifecycleRoot,
+    bridgeRoot: pluginRoot,
+    physicalRoot: publicPhysicalRoot,
+    physicalProvenanceRoot,
+    provenanceRoot,
+    outputPath: join(receiptsRoot, "rerun-physical-release-receipt.json"),
+    receiptRoot: receiptsRoot,
+    releaseMode: "public-release",
+    provenanceVerifier,
+  }), /reruns are not releasable/i);
+  writeFileSync(publicPhysicalIntakePath, publicPhysicalIntakeBytes);
   verifiedProvenance.length = 0;
   const publicFinal = aggregateBrainPetReleaseReceipt({
     packagesRoot: publicPackagesRoot,

@@ -155,8 +155,9 @@ const physicalDownloadSource = readFileSync(join(root, "scripts", "download-brai
 assert.match(physicalIntakeSource, /environmentApprovalComment/);
 assert.match(physicalIntakeSource, /receipts-payload-sha256=/);
 assert.match(physicalIntakeSource, /GITHUB_RUN_ATTEMPT, "1"/);
-assert.match(physicalDownloadSource, /run\.run_attempt/);
+assert.match(physicalDownloadSource, /assert\.equal\(String\(run\.run_attempt\), "1"/);
 assert.match(physicalDownloadSource, /validateEnvironmentApprovalHistory/);
+assert.match(readFileSync(join(root, "scripts", "aggregate-brainpet-release-receipt.mjs"), "utf8"), /assert\.equal\(String\(intake\.github\?\.runAttempt\), "1"/);
 assert.match(physicalIntakeWorkflow, /brainpet-sigstore-provenance\.mjs/);
 assert.match(physicalIntakeWorkflow, /output\/sealed\/provenance/);
 assert.match(publicFinalizeWorkflow, /--physical-provenance output\/physical\/provenance/);
