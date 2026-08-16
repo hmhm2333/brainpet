@@ -104,6 +104,8 @@ assert.match(readFileSync(join(desktop, "scripts", "brainpet-package.mjs"), "utf
 assert.match(readFileSync(join(desktop, "scripts", "validate-brainpet-package.mjs"), "utf8"), /nativeBridgeHelpersBundled: true/);
 assert.ok(existsSync(join(desktop, "scripts", "brainpet-package-lifecycle.mjs")));
 assert.ok(existsSync(join(root, "scripts", "aggregate-brainpet-release-receipt.mjs")));
+assert.match(readFileSync(join(root, "integrations", "codex", "scripts", "assemble-bridge-release.mjs"), "utf8"), /closure: createBridgeArtifactClosure/);
+assert.match(readFileSync(join(root, "integrations", "codex", "scripts", "validate-bridge-release.mjs"), "utf8"), /validateBridgeArtifactClosure/);
 const sigstoreSource = readFileSync(join(root, "scripts", "brainpet-sigstore-provenance.mjs"), "utf8");
 assert.match(sigstoreSource, /--certificate-github-workflow-repository/);
 assert.match(sigstoreSource, /--certificate-github-workflow-sha/);
@@ -136,14 +138,30 @@ assert.ok(existsSync(join(root, ".github", "workflows", "brainpet-physical-recei
 assert.ok(existsSync(join(root, ".github", "workflows", "brainpet-public-release-finalize.yml")));
 const physicalIntakeWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-physical-receipt-intake.yml"), "utf8");
 const publicFinalizeWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-public-release-finalize.yml"), "utf8");
+for (const [name, source] of [["physical intake", physicalIntakeWorkflow], ["public finalize", publicFinalizeWorkflow]]) {
+  assert.doesNotMatch(source, /^\s*run:.*\$\{\{\s*inputs\./m, `BrainPet ${name} must not interpolate workflow_dispatch inputs into shell source.`);
+  for (const line of source.split(/\r?\n/).filter((candidate) => candidate.includes("${{ inputs."))) {
+    assert.match(line, /^\s+BRAINPET_[A-Z0-9_]+:\s*\$\{\{\s*inputs\.[a-z0-9_]+\s*\}\}\s*$/, `BrainPet ${name} workflow_dispatch inputs must only enter fixed BRAINPET_* environment variables.`);
+  }
+}
 assert.match(physicalIntakeWorkflow, /candidate_run_id/);
+assert.match(physicalIntakeWorkflow, /BRAINPET_CANDIDATE_RUN_ID: \$\{\{ inputs\.candidate_run_id \}\}/);
 assert.match(physicalIntakeWorkflow, /environment: brainpet-physical-acceptance/);
 assert.match(physicalIntakeWorkflow, /actions\/runs\/\$\{GITHUB_RUN_ID\}\/approvals/);
 assert.match(physicalIntakeWorkflow, /--candidate-receipt output\/candidate\/candidate-receipt\/brainpet-release-receipt\.json/);
 assert.match(physicalIntakeWorkflow, /--approval-history output\/approval-history\.json/);
+const physicalIntakeSource = readFileSync(join(root, "scripts", "intake-brainpet-physical-receipts.mjs"), "utf8");
+const physicalDownloadSource = readFileSync(join(root, "scripts", "download-brainpet-physical-receipts.mjs"), "utf8");
+assert.match(physicalIntakeSource, /environmentApprovalComment/);
+assert.match(physicalIntakeSource, /receipts-payload-sha256=/);
+assert.match(physicalIntakeSource, /GITHUB_RUN_ATTEMPT, "1"/);
+assert.match(physicalDownloadSource, /run\.run_attempt/);
+assert.match(physicalDownloadSource, /validateEnvironmentApprovalHistory/);
 assert.match(physicalIntakeWorkflow, /brainpet-sigstore-provenance\.mjs/);
 assert.match(physicalIntakeWorkflow, /output\/sealed\/provenance/);
 assert.match(publicFinalizeWorkflow, /--physical-provenance output\/physical\/provenance/);
+assert.match(publicFinalizeWorkflow, /BRAINPET_CANDIDATE_RUN_ID: \$\{\{ inputs\.candidate_run_id \}\}/);
+assert.match(publicFinalizeWorkflow, /BRAINPET_PHYSICAL_RECEIPT_RUN_ID: \$\{\{ inputs\.physical_receipt_run_id \}\}/);
 const packageValidatorSource = readFileSync(join(desktop, "scripts", "validate-brainpet-package.mjs"), "utf8");
 assert.match(packageValidatorSource, /assertMacosCodeObjectIsUnsigned/);
 assert.match(packageValidatorSource, /--appimage-signature/);

@@ -22,13 +22,15 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      BRAINPET_CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+      BRAINPET_PHYSICAL_RECEIPT_RUN_ID: ${{ inputs.physical_receipt_run_id }}
     steps:
       - uses: actions/checkout@v4
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: v3.1.3
-      - run: node scripts/download-brainpet-public-candidate.mjs --run-id "${{ inputs.candidate_run_id }}" --output output/candidate
-      - run: node scripts/download-brainpet-physical-receipts.mjs --run-id "${{ inputs.physical_receipt_run_id }}" --candidate-receipt output/candidate/candidate-receipt/brainpet-release-receipt.json --output output/physical
+      - run: node scripts/download-brainpet-public-candidate.mjs --run-id "$BRAINPET_CANDIDATE_RUN_ID" --output output/candidate
+      - run: node scripts/download-brainpet-physical-receipts.mjs --run-id "$BRAINPET_PHYSICAL_RECEIPT_RUN_ID" --candidate-receipt output/candidate/candidate-receipt/brainpet-release-receipt.json --output output/physical
       - run: mkdir -p output/final
       - run: node scripts/aggregate-brainpet-release-receipt.mjs --packages output/candidate/packages --lifecycle output/candidate/lifecycle --bridge output/candidate/bridge --physical output/physical/physical --physical-provenance output/physical/provenance --provenance output/candidate/provenance --output output/final/brainpet-release-receipt.json --mode public-release --expect-public-ready
       - run: node scripts/brainpet-sigstore-provenance.mjs --subject output/final/brainpet-release-receipt.json --output output/final/provenance

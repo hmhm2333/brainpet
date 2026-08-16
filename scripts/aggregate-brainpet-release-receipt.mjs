@@ -6,10 +6,12 @@ import { existsSync, lstatSync, readFileSync, readdirSync, writeFileSync } from 
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { validateBridgeArtifactClosure } from "../integrations/codex/scripts/validate-bridge-release.mjs";
 import { brainPetDistributionContract, brainPetReleaseTargets } from "./brainpet-release-contract.mjs";
 import { assertBrainPetBinary, inspectExecutableBinary } from "./brainpet-binary-format.mjs";
 import { validateBrainPetPhysicalReceipt, validateBrainPetPhysicalReceiptSet } from "./brainpet-physical-receipt-contract.mjs";
 import { brainPetPhysicalReceiptWorkflow, brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
+import { formatBrainPetPhysicalApprovalComment } from "./intake-brainpet-physical-receipts.mjs";
 import { validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
 
 const lifecycleRequirements = Object.freeze([
@@ -248,7 +250,9 @@ function validateLifecycleProvenance(receiptPath, receipt, provenanceRoot, prove
 
 function validateBridgeReceipt(bridgeRoot) {
   const receipt = readJson(join(bridgeRoot, "brainpet-release.json"));
+  assert.equal(receipt.schemaVersion, 2);
   assert.equal(receipt.product, "brainpet");
+  validateBridgeArtifactClosure(bridgeRoot, receipt);
   assert.equal(receipt.bridgeVersion, brainPetDistributionContract.bridge.version);
   assert.equal(receipt.files.length, brainPetReleaseTargets.length);
   for (const target of brainPetReleaseTargets) {
@@ -308,10 +312,13 @@ function validatePhysicalEvidenceProvenance({ physicalEvidence, physicalRoot, pr
   assert.match(intake.candidate?.challenge ?? "", /^[a-f0-9]{64}$/i, "Physical intake candidate challenge is invalid.");
   assert.equal(intake.github?.workflow, brainPetPhysicalReceiptWorkflow.name);
   assert.equal(intake.github?.runnerEnvironment, "github-hosted");
+  assert.equal(String(intake.github?.runAttempt), "1", "Physical intake reruns are not releasable.");
   assert.ok(typeof intake.github?.actor === "string" && intake.github.actor.length > 0, "Physical intake lacks an authenticated workflow dispatcher.");
   assert.equal(intake.github?.environment, "brainpet-physical-acceptance");
   assert.ok(typeof intake.github?.environmentReviewer === "string" && intake.github.environmentReviewer.length > 0, "Physical intake lacks an authenticated environment reviewer.");
   assert.notEqual(intake.github.environmentReviewer.toLowerCase(), intake.github.actor.toLowerCase(), "Physical intake environment approval was a self-review.");
+  assert.match(intake.github?.receiptsPayloadSha256 ?? "", /^[a-f0-9]{64}$/i, "Physical intake lacks the approved receipt-payload digest.");
+  assert.equal(intake.github?.environmentApprovalComment, formatBrainPetPhysicalApprovalComment(intake.candidate, intake.github.receiptsPayloadSha256), "Physical intake approval comment does not bind its candidate and receipt payload.");
   const normalizedReceipts = validateBrainPetPhysicalReceiptSet(physicalEvidence.map((entry) => entry.receipt), {
     expectedSourceCommit: sourceCommit,
     expectedCandidate: intake.candidate,

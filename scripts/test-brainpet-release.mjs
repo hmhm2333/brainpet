@@ -12,7 +12,7 @@ import { aggregateBrainPetReleaseReceipt } from "./aggregate-brainpet-release-re
 import { brainPetDistributionContract, brainPetReleaseTargets, getBrainPetReleaseTarget } from "./brainpet-release-contract.mjs";
 import { assertBrainPetBinary } from "./brainpet-binary-format.mjs";
 import { brainPetPhysicalCheckIds, validateBrainPetPhysicalReceiptSet } from "./brainpet-physical-receipt-contract.mjs";
-import { intakeBrainPetPhysicalReceipts, validateEnvironmentApproval } from "./intake-brainpet-physical-receipts.mjs";
+import { createBrainPetPhysicalApprovalComment, intakeBrainPetPhysicalReceipts, validateEnvironmentApproval } from "./intake-brainpet-physical-receipts.mjs";
 import { brainPetPhysicalReceiptWorkflow, brainPetPublicReleaseFinalizeWorkflow, brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, signBrainPetReleaseEvidence, signBrainPetSubjects, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
 import { stageBrainPetPackageArtifacts, validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
 import { createBrainPetBuilderInvocation, parseBrainPetPackageArgs, prepareBrainPetBundledMarketplace, resolveBrainPetElectronDist, validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
@@ -39,6 +39,25 @@ try {
   const receipt = assembleBridgeRelease({ artifactsRoot, outputRoot: pluginRoot });
   assert.equal(receipt.files.length, 6);
   assert.equal(new Set(receipt.files.map((file) => file.sha256)).size, 6);
+  assert.deepEqual(validateBridgeRelease(pluginRoot), { targetCount: 6, receipt: true });
+  const bridgeHookPath = join(pluginRoot, "hooks", "hooks.json");
+  const bridgeHookBytes = readFileSync(bridgeHookPath);
+  writeFileSync(bridgeHookPath, Buffer.concat([bridgeHookBytes, Buffer.from("\n")]));
+  assert.throws(() => validateBridgeRelease(pluginRoot), /artifact tree/i);
+  writeFileSync(bridgeHookPath, bridgeHookBytes);
+  const bridgeExtraPath = join(pluginRoot, "unexpected-release-payload.mjs");
+  writeFileSync(bridgeExtraPath, "export default true;\n", "utf8");
+  assert.throws(() => validateBridgeRelease(pluginRoot), /artifact tree/i);
+  rmSync(bridgeExtraPath);
+  const bridgeExtraDirectory = join(pluginRoot, "unexpected-empty-directory");
+  mkdirSync(bridgeExtraDirectory);
+  assert.throws(() => validateBridgeRelease(pluginRoot), /artifact tree/i);
+  rmSync(bridgeExtraDirectory, { recursive: true });
+  const bridgeCorePath = join(pluginRoot, "scripts", "bridge-core.mjs");
+  const bridgeCoreBytes = readFileSync(bridgeCorePath);
+  rmSync(bridgeCorePath);
+  assert.throws(() => validateBridgeRelease(pluginRoot), /artifact tree/i);
+  writeFileSync(bridgeCorePath, bridgeCoreBytes);
   assert.deepEqual(validateBridgeRelease(pluginRoot), { targetCount: 6, receipt: true });
   assert.throws(() => assertBrainPetBinary(Buffer.alloc(20 * 1024, 7), brainPetReleaseTargets[0]), /Unsupported executable/);
   for (const target of brainPetReleaseTargets) assert.deepEqual(validatePublicReleaseEnvironment(target), brainPetDistributionContract.releasePolicy);
@@ -133,12 +152,15 @@ try {
     publicReleaseReady: false,
   }, null, 2)}\n`, "utf8");
   const intakeCandidate = { runId: "123", receiptSha256: sha256(readFileSync(intakeCandidatePath)), challenge: "a".repeat(64) };
-  const approvalHistoryPath = join(testRoot, "approval-history.json");
-  writeFileSync(approvalHistoryPath, `${JSON.stringify([{ state: "approved", environments: [{ name: "brainpet-physical-acceptance" }], user: { login: "release-fixture" } }], null, 2)}\n`, "utf8");
-  assert.equal(validateEnvironmentApproval(approvalHistoryPath, "release-dispatcher"), "release-fixture");
-  assert.throws(() => validateEnvironmentApproval(approvalHistoryPath, "release-fixture"), /self-review/i);
   const physicalReceipts = [createPhysicalReceipt("windows-x64", receipt.source.commit, undefined, intakeCandidate), createPhysicalReceipt("macos-arm64", receipt.source.commit, undefined, intakeCandidate)];
   physicalReceipts[0].checks[0].note = "local-only detail";
+  const physicalPayload = JSON.stringify(physicalReceipts);
+  const approvalComment = createBrainPetPhysicalApprovalComment(intakeCandidate, physicalPayload);
+  const approvalHistoryPath = join(testRoot, "approval-history.json");
+  writeFileSync(approvalHistoryPath, `${JSON.stringify([{ state: "approved", comment: approvalComment, environments: [{ name: "brainpet-physical-acceptance" }], user: { login: "release-fixture" } }], null, 2)}\n`, "utf8");
+  assert.equal(validateEnvironmentApproval(approvalHistoryPath, "release-dispatcher", approvalComment), "release-fixture");
+  assert.throws(() => validateEnvironmentApproval(approvalHistoryPath, "release-fixture", approvalComment), /self-review/i);
+  assert.throws(() => validateEnvironmentApproval(approvalHistoryPath, "release-dispatcher", `${approvalComment}-tampered`), /does not bind/i);
   assert.equal(validateBrainPetPhysicalReceiptSet(physicalReceipts, { expectedSourceCommit: receipt.source.commit }).length, 2);
   const unsafePhysicalReceipt = structuredClone(physicalReceipts[0]);
   unsafePhysicalReceipt.artifact.name = "C:\\Users\\person\\BrainPet-setup.exe";
@@ -158,13 +180,13 @@ try {
   const intakeRoot = join(testRoot, "physical-intake");
   assert.equal(intakeBrainPetPhysicalReceipts({
     receiptPaths: [],
-    payload: JSON.stringify(physicalReceipts),
+    payload: physicalPayload,
     candidateReceiptPath: intakeCandidatePath,
     expectedSourceCommit: receipt.source.commit,
     outputRoot: intakeRoot,
     approvalHistoryPath,
     authenticatedActor: "release-dispatcher",
-    identity: { workflow: "BrainPet physical receipt intake", runId: "123", actor: "release-dispatcher", environment: "brainpet-physical-acceptance", environmentReviewer: "release-fixture", runnerEnvironment: "github-hosted" },
+    identity: { workflow: "BrainPet physical receipt intake", runId: "123", runAttempt: "1", actor: "release-dispatcher", environment: "brainpet-physical-acceptance", runnerEnvironment: "github-hosted" },
   }).length, 2);
   assert.ok(existsSync(join(intakeRoot, "windows-x64", "brainpet-physical-receipt.json")));
   assert.ok(existsSync(join(intakeRoot, "macos-arm64", "brainpet-physical-receipt.json")));
@@ -276,15 +298,19 @@ try {
     const artifactSha256 = targetId === "windows-x64" ? rawArtifactSha256.toUpperCase() : rawArtifactSha256;
     publicPhysicalReceipts.push(createPhysicalReceipt(targetId, receipt.source.commit, artifactSha256, physicalCandidate));
   }
+  const publicPhysicalPayload = JSON.stringify(publicPhysicalReceipts);
+  const publicApprovalHistoryPath = join(testRoot, "public-approval-history.json");
+  const publicApprovalComment = createBrainPetPhysicalApprovalComment(physicalCandidate, publicPhysicalPayload);
+  writeFileSync(publicApprovalHistoryPath, `${JSON.stringify([{ state: "approved", comment: publicApprovalComment, environments: [{ name: "brainpet-physical-acceptance" }], user: { login: "release-fixture" } }], null, 2)}\n`, "utf8");
   intakeBrainPetPhysicalReceipts({
     receiptPaths: [],
-    payload: JSON.stringify(publicPhysicalReceipts),
+    payload: publicPhysicalPayload,
     candidateReceiptPath: publicCandidatePath,
     expectedSourceCommit: receipt.source.commit,
     outputRoot: publicPhysicalRoot,
-    approvalHistoryPath,
+    approvalHistoryPath: publicApprovalHistoryPath,
     authenticatedActor: "release-dispatcher",
-    identity: { workflow: brainPetPhysicalReceiptWorkflow.name, runId: "456", actor: "release-dispatcher", environment: "brainpet-physical-acceptance", environmentReviewer: "release-fixture", runnerEnvironment: "github-hosted" },
+    identity: { workflow: brainPetPhysicalReceiptWorkflow.name, runId: "456", runAttempt: "1", actor: "release-dispatcher", environment: "brainpet-physical-acceptance", runnerEnvironment: "github-hosted" },
   });
   assert.throws(() => aggregateBrainPetReleaseReceipt({
     packagesRoot: publicPackagesRoot,

@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { brainPetDistributionContract } from "./brainpet-release-contract.mjs";
 import { validateBrainPetPhysicalReceiptSet } from "./brainpet-physical-receipt-contract.mjs";
 import { brainPetPhysicalReceiptWorkflow, brainPetSigstoreBundlePath, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
-import { validateEnvironmentApprovalHistory } from "./intake-brainpet-physical-receipts.mjs";
+import { formatBrainPetPhysicalApprovalComment, validateEnvironmentApprovalHistory } from "./intake-brainpet-physical-receipts.mjs";
 
 export function downloadBrainPetPhysicalReceipts(options) {
   assert.match(options.runId ?? "", /^\d{1,20}$/, "Physical receipt run id is invalid.");
@@ -26,12 +26,10 @@ export function downloadBrainPetPhysicalReceipts(options) {
   assert.equal(run.conclusion, "success", "Physical receipt intake workflow did not succeed.");
   assert.equal(run.event, "workflow_dispatch", "Physical receipt intake must be manually dispatched.");
   assert.equal(run.repository?.full_name, options.repository);
+  assert.equal(String(run.run_attempt), "1", "Physical receipt intake reruns are forbidden; create a new workflow dispatch.");
   const runActor = run.actor?.login;
   assert.ok(typeof runActor === "string" && runActor.length > 0, "Physical receipt workflow lacks an authenticated dispatcher.");
-  const environmentReviewer = validateEnvironmentApprovalHistory(
-    JSON.parse(runGh(["api", `repos/${options.repository}/actions/runs/${options.runId}/approvals`]).stdout),
-    runActor,
-  );
+  const approvalHistory = JSON.parse(runGh(["api", `repos/${options.repository}/actions/runs/${options.runId}/approvals`]).stdout);
   runGh(["run", "download", options.runId, "--repo", options.repository, "--name", "brainpet-physical-receipts", "--dir", outputRoot]);
 
   assertExactEntries(outputRoot, ["physical", "provenance"]);
@@ -57,6 +55,10 @@ export function downloadBrainPetPhysicalReceipts(options) {
   assert.ok(typeof intake.github?.actor === "string" && intake.github.actor.length > 0, "Physical intake lacks an authenticated workflow dispatcher.");
   assert.equal(intake.github.environment, "brainpet-physical-acceptance");
   assert.ok(typeof intake.github.environmentReviewer === "string" && intake.github.environmentReviewer.length > 0, "Physical intake lacks an authenticated environment reviewer.");
+  assert.match(intake.github.receiptsPayloadSha256 ?? "", /^[a-f0-9]{64}$/i, "Physical intake lacks the approved receipt-payload digest.");
+  const expectedApprovalComment = formatBrainPetPhysicalApprovalComment(expectedCandidate, intake.github.receiptsPayloadSha256);
+  assert.equal(intake.github.environmentApprovalComment, expectedApprovalComment, "Physical intake manifest contains the wrong approval comment.");
+  const environmentReviewer = validateEnvironmentApprovalHistory(approvalHistory, runActor, expectedApprovalComment);
   assert.equal(intake.github.environmentReviewer, environmentReviewer, "Physical intake reviewer does not match GitHub approval history.");
   assert.equal(intake.github.actor, runActor, "Physical intake dispatcher does not match the workflow run actor.");
   assert.equal(String(intake.github.runId), options.runId, "Physical intake manifest came from a different workflow run.");

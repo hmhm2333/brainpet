@@ -32,8 +32,11 @@ export function intakeBrainPetPhysicalReceipts(options) {
     ? JSON.parse(options.payload)
     : options.receiptPaths.map((path) => readReceipt(path));
   const authenticatedActor = options.authenticatedActor ?? process.env.GITHUB_ACTOR;
+  const approvalComment = options.approvalHistoryPath
+    ? createBrainPetPhysicalApprovalComment(expectedCandidate, options.payload)
+    : null;
   const expectedReviewer = options.approvalHistoryPath
-    ? validateEnvironmentApproval(options.approvalHistoryPath, authenticatedActor)
+    ? validateEnvironmentApproval(options.approvalHistoryPath, authenticatedActor, approvalComment)
     : options.expectedReviewer;
   assert.ok(typeof expectedReviewer === "string" && expectedReviewer.length > 0, "Physical intake requires an authenticated reviewer identity.");
   const validated = validateBrainPetPhysicalReceiptSet(receipts, { expectedSourceCommit, expectedCandidate, expectedReviewer });
@@ -47,14 +50,18 @@ export function intakeBrainPetPhysicalReceipts(options) {
     mkdirSync(targetRoot, { recursive: true });
     writeFileSync(join(targetRoot, "brainpet-physical-receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
   }
-  const identity = options.identity ?? {
-    workflow: process.env.GITHUB_WORKFLOW ?? null,
-    runId: process.env.GITHUB_RUN_ID ?? null,
-    runAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
-    actor: process.env.GITHUB_ACTOR ?? null,
-    environment: "brainpet-physical-acceptance",
+  const identity = {
+    ...(options.identity ?? {
+      workflow: process.env.GITHUB_WORKFLOW ?? null,
+      runId: process.env.GITHUB_RUN_ID ?? null,
+      runAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
+      actor: process.env.GITHUB_ACTOR ?? null,
+      environment: "brainpet-physical-acceptance",
+      runnerEnvironment: process.env.RUNNER_ENVIRONMENT ?? null,
+    }),
     environmentReviewer: expectedReviewer,
-    runnerEnvironment: process.env.RUNNER_ENVIRONMENT ?? null,
+    environmentApprovalComment: approvalComment,
+    receiptsPayloadSha256: options.payload ? sha256Text(options.payload) : null,
   };
   assert.equal(identity.environmentReviewer, expectedReviewer, "Physical intake identity does not match the authenticated environment reviewer.");
   const intake = createBrainPetPhysicalIntake(validated, identity);
@@ -70,20 +77,38 @@ function readReceipt(path) {
   return JSON.parse(readFileSync(resolved, "utf8").replace(/^\uFEFF/, ""));
 }
 
-export function validateEnvironmentApproval(path, authenticatedActor) {
-  return validateEnvironmentApprovalHistory(readReceipt(path), authenticatedActor);
+export function createBrainPetPhysicalApprovalComment(candidate, receiptsPayload) {
+  assert.ok(typeof receiptsPayload === "string" && receiptsPayload.length > 0, "Physical intake approval requires the exact receipts payload.");
+  return formatBrainPetPhysicalApprovalComment(candidate, sha256Text(receiptsPayload));
 }
 
-export function validateEnvironmentApprovalHistory(approvals, authenticatedActor) {
+export function formatBrainPetPhysicalApprovalComment(candidate, receiptsPayloadSha256) {
+  assert.match(String(candidate?.runId ?? ""), /^\d{1,20}$/, "Physical approval candidate run id is invalid.");
+  assert.match(candidate?.receiptSha256 ?? "", /^[a-f0-9]{64}$/i, "Physical approval candidate receipt digest is invalid.");
+  assert.match(candidate?.challenge ?? "", /^[a-f0-9]{64}$/i, "Physical approval candidate challenge is invalid.");
+  assert.match(receiptsPayloadSha256 ?? "", /^[a-f0-9]{64}$/i, "Physical approval payload digest is invalid.");
+  return `brainpet-physical-acceptance-v1 candidate-run=${candidate.runId} candidate-receipt-sha256=${candidate.receiptSha256.toLowerCase()} challenge=${candidate.challenge.toLowerCase()} receipts-payload-sha256=${receiptsPayloadSha256.toLowerCase()}`;
+}
+
+export function validateEnvironmentApproval(path, authenticatedActor, expectedComment) {
+  return validateEnvironmentApprovalHistory(readReceipt(path), authenticatedActor, expectedComment);
+}
+
+export function validateEnvironmentApprovalHistory(approvals, authenticatedActor, expectedComment) {
   assert.ok(typeof authenticatedActor === "string" && authenticatedActor.length > 0, "Physical intake lacks an authenticated workflow actor.");
+  assert.ok(typeof expectedComment === "string" && expectedComment.length > 0, "Physical intake lacks the exact approval comment contract.");
   assert.ok(Array.isArray(approvals), "Physical intake approval history must be an array.");
-  const reviewers = approvals
-    .filter((approval) => approval?.state === "approved" && approval.environments?.some((environment) => environment?.name === "brainpet-physical-acceptance"))
-    .map((approval) => approval.user?.login)
-    .filter((login) => typeof login === "string" && login.length > 0);
-  assert.equal(reviewers.length, 1, "Physical intake requires exactly one approved brainpet-physical-acceptance environment review.");
-  assert.notEqual(reviewers[0].toLowerCase(), authenticatedActor.toLowerCase(), "Physical intake environment approval must not be a self-review.");
-  return reviewers[0];
+  const approved = approvals.filter((approval) => approval?.state === "approved" && Array.isArray(approval.environments) && approval.environments.some((environment) => environment?.name === "brainpet-physical-acceptance"));
+  assert.equal(approved.length, 1, "Physical intake requires exactly one approved brainpet-physical-acceptance environment review; reruns require a new workflow dispatch.");
+  assert.equal(approved[0].comment, expectedComment, "Physical intake approval comment does not bind the exact candidate and receipt payload.");
+  const reviewer = approved[0].user?.login;
+  assert.ok(typeof reviewer === "string" && reviewer.length > 0, "Physical intake approval lacks a GitHub reviewer identity.");
+  assert.notEqual(reviewer.toLowerCase(), authenticatedActor.toLowerCase(), "Physical intake environment approval must not be a self-review.");
+  return reviewer;
+}
+
+function sha256Text(value) {
+  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 function parseArgs(argv) {
@@ -100,6 +125,7 @@ function parseArgs(argv) {
     else if (arg === "--source-commit") options.expectedSourceCommit = argv[++index];
     else if (arg === "--expected-reviewer") options.expectedReviewer = argv[++index];
     else if (arg === "--approval-history") options.approvalHistoryPath = argv[++index];
+    else if (arg === "--emit-dispatch-envelope") options.emitDispatchEnvelope = true;
     else if (arg === "--require-trusted-ci") options.requireTrustedCi = true;
     else throw new Error(`Unknown physical intake argument: ${arg}`);
   }
@@ -108,17 +134,24 @@ function parseArgs(argv) {
   if (options.requireTrustedCi) {
     assert.equal(options.expectedReviewer, undefined, "Trusted CI derives the reviewer from GitHub environment approval history.");
     assert.ok(options.approvalHistoryPath, "Trusted CI requires the current workflow run approval history.");
+    assert.ok(options.payload, "Trusted CI requires the exact workflow_dispatch receipt payload.");
     assert.equal(process.env.GITHUB_ACTIONS, "true", "Physical receipt intake is restricted to GitHub Actions.");
     assert.equal(process.env.RUNNER_ENVIRONMENT, "github-hosted", "Physical receipt intake requires a GitHub-hosted runner.");
     assert.equal(process.env.GITHUB_WORKFLOW, "BrainPet physical receipt intake", "Physical receipts must enter through the dedicated intake workflow.");
+    assert.equal(process.env.GITHUB_RUN_ATTEMPT, "1", "Physical receipt intake reruns are forbidden; create a new workflow dispatch.");
   }
+  assert.ok(!options.emitDispatchEnvelope || !options.outputRoot, "Dispatch-envelope mode writes only to stdout.");
   return options;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const receipts = intakeBrainPetPhysicalReceipts(parseArgs(process.argv.slice(2)));
-    if (!process.argv.includes("--output")) console.log(JSON.stringify(receipts));
+    const options = parseArgs(process.argv.slice(2));
+    const receipts = intakeBrainPetPhysicalReceipts(options);
+    if (options.emitDispatchEnvelope) {
+      const receiptsJson = JSON.stringify(receipts);
+      console.log(JSON.stringify({ candidateRunId: receipts[0].candidate.runId, receiptsJson, approvalComment: createBrainPetPhysicalApprovalComment(receipts[0].candidate, receiptsJson) }));
+    } else if (!options.outputRoot) console.log(JSON.stringify(receipts));
     else console.log(`BrainPet physical receipts accepted (${receipts.map((receipt) => receipt.target).join(", ")}).`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract, brainPetReleaseTargets } from "../../../scripts/brainpet-release-contract.mjs";
 import { assertBrainPetBinary } from "../../../scripts/brainpet-binary-format.mjs";
+import { createBridgeArtifactClosure } from "./validate-bridge-release.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const sourcePluginRoot = resolve(scriptDir, "..", "plugins", "brainpet-codex-bridge");
@@ -42,7 +43,7 @@ export function assembleBridgeRelease({ artifactsRoot, outputRoot }) {
     files.push({ target: target.id, path: `bin/${target.id}/${target.helperName}`, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") });
   }
   const receipt = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     product: "brainpet",
     bridgeVersion: brainPetDistributionContract.bridge.version,
     source: {
@@ -56,6 +57,7 @@ export function assembleBridgeRelease({ artifactsRoot, outputRoot }) {
     },
     createdAt: new Date().toISOString(),
     files,
+    closure: createBridgeArtifactClosure(output),
   };
   writeFileSync(join(output, "brainpet-release.json"), `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
   return receipt;

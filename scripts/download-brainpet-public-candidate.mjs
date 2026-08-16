@@ -7,6 +7,7 @@ import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { validateBridgeArtifactClosure } from "../integrations/codex/scripts/validate-bridge-release.mjs";
 import { brainPetDistributionContract, brainPetReleaseTargets } from "./brainpet-release-contract.mjs";
 import { brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
 import { validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
@@ -59,6 +60,7 @@ export function downloadBrainPetPublicCandidate(options) {
   }
   const bridgePaths = findFiles(bridgeRoot, /^brainpet-release\.json$/);
   assert.equal(bridgePaths.length, 1, "Public candidate Bridge evidence is incomplete.");
+  validateBridgeArtifactClosure(bridgeRoot, readJson(bridgePaths[0]));
   provenanceSubjects.push(bridgePaths[0]);
   const candidatePaths = findFiles(receiptRoot, /^brainpet-release-receipt\.json$/);
   assert.equal(candidatePaths.length, 1, "Public candidate aggregate receipt is missing.");

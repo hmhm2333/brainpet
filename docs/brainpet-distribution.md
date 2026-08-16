@@ -104,7 +104,8 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
   必须明确返回“完全未签名”，ad-hoc、Apple Development、Mac App Store、自签等任意签名都失败；
   Linux AppImage 的嵌入签名段必须为空，deb 的 `ar` 成员必须严格只有标准控制/数据成员。
   GitHub-hosted runner 使用 GitHub OIDC 与 Sigstore keyless bundle 为每份 package receipt、
-  receipt 中列出的 installer、lifecycle 和 Bridge 回执建立 provenance。公开上传目录由严格
+  receipt 中列出的 installer、lifecycle 和 Bridge 回执建立 provenance；Bridge 回执列出每个文件、
+  目录、大小和 hash，并拒绝篡改、缺失或额外 tree entry。公开上传目录由严格
   allowlist staging 生成，unpacked runtime 和升级 fixture 不进入公开 artifact。聚合器先绑定 artifact hash，
   再用 `cosign verify-blob` 校验 Fulcio/Rekor bundle 中的 repository、workflow 名称与
   路径、触发事件和精确 source commit；该流程不依赖仅 Enterprise Cloud 私有仓库可用的
@@ -132,9 +133,12 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
 3. 两份回执中的 reviewer 必须填写将批准 intake 环境的 GitHub 用户名。在仓库中一次性创建
    `brainpet-physical-acceptance` GitHub Environment，把允许确认实机结果的维护者设为 required reviewer，
    启用 Prevent self-review，并关闭管理员绕过；批准者必须与 workflow dispatcher 不同。
-   这不需要发布者证书、商店账号或 Secret。把两份 JSON 合并成数组，在同 commit 上手动运行
-   `BrainPet physical receipt intake`，传入候选 run id。protected Environment 确认后，workflow
-   会从 GitHub 当前 run 的 approval history 读取真实批准者，拒绝无批准记录或自审，再将 dispatcher、
+   这不需要发布者证书、商店账号或 Secret。先用下方本地命令生成 dispatch envelope；把其中
+   `candidateRunId` 和 `receiptsJson` 原样填入同 commit 的 `BrainPet physical receipt intake`。
+   required reviewer 必须把 envelope 的 `approvalComment` 原样粘贴为 Environment 审批评论。
+   该评论绑定候选 run、候选回执 SHA-256、一次性 challenge 和精确 receipts payload SHA-256。
+   workflow 会从 GitHub 当前 run 的 approval history 读取真实批准者和评论，拒绝无批准记录、自审或
+   digest 不匹配，再将 dispatcher、
    environment reviewer、候选绑定和回执内容封入 Sigstore OIDC provenance。最后运行
    `BrainPet public release finalize`，传入候选 run id 与 intake run id。finalize 会
    核对两个来源 workflow、成功状态、精确 commit、候选 run/receipt/challenge、reviewer、artifact
@@ -156,8 +160,11 @@ node apps/desktop/scripts/brainpet-macos-physical-acceptance.mjs --artifact <Bra
 不得填写用户目录、任务内容、token 或其他敏感材料。
 
 ```bash
-node scripts/intake-brainpet-physical-receipts.mjs --receipt <windows-receipt.json> --receipt <macos-receipt.json> --candidate-receipt <candidate-receipt.json> --source-commit <40-char-sha> --expected-reviewer <github-username>
+node scripts/intake-brainpet-physical-receipts.mjs --receipt <windows-receipt.json> --receipt <macos-receipt.json> --candidate-receipt <candidate-receipt.json> --source-commit <40-char-sha> --expected-reviewer <github-username> --emit-dispatch-envelope
 ```
+
+physical intake 不允许 rerun：任何失败都必须新建一次 workflow dispatch，再使用新 run 的审批评论；
+finalize 会拒绝 `run_attempt != 1` 的 physical intake artifact。
 
 当前发行策略不需要七个 Windows/macOS 签名 Secret，也不需要 Apple Developer 或商店注册。
 这些值不得随机生成或写入仓库。workflow 只使用 GitHub 自带 OIDC 获取短期 Sigstore 身份；

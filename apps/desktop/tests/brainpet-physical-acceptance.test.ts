@@ -12,6 +12,7 @@ const intakeWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/brainpe
 const publicWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/brainpet-public-release-gate.yml"), "utf8");
 const finalizeWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/brainpet-public-release-finalize.yml"), "utf8");
 const sigstoreProvenance = readFileSync(resolve(repoRoot, "scripts/brainpet-sigstore-provenance.mjs"), "utf8");
+const intakeSource = readFileSync(resolve(repoRoot, "scripts/intake-brainpet-physical-receipts.mjs"), "utf8");
 
 test("physical acceptance harness is receipt-driven and does not automate destructive system actions", () => {
   assert.match(script, /brainpet-physical-receipt\.json/);
@@ -58,6 +59,9 @@ test("physical evidence enters the public gate only through the dedicated intake
   assert.match(intakeWorkflow, /--require-trusted-ci/);
   assert.match(intakeWorkflow, /brainpet-sigstore-provenance\.mjs/);
   assert.match(intakeWorkflow, /output\/sealed\/provenance/);
+  assert.match(intakeSource, /receipts-payload-sha256=/);
+  assert.match(intakeSource, /environmentApprovalComment/);
+  assert.match(intakeSource, /GITHUB_RUN_ATTEMPT, "1"/);
   assert.doesNotMatch(publicWorkflow, /physical_receipt_run_id/);
   assert.match(publicWorkflow, /brainpet-public-candidate-receipt/);
   assert.match(publicWorkflow, /sigstore\/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6/);
@@ -74,4 +78,5 @@ test("physical evidence enters the public gate only through the dedicated intake
   assert.match(finalizeWorkflow, /--provenance output\/candidate\/provenance/);
   assert.match(finalizeWorkflow, /--physical-provenance output\/physical\/provenance/);
   assert.match(finalizeWorkflow, /--expect-public-ready/);
+  for (const workflow of [intakeWorkflow, finalizeWorkflow]) assert.doesNotMatch(workflow, /^\s*run:.*\$\{\{\s*inputs\./m);
 });

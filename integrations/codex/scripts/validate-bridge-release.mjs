@@ -2,8 +2,8 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract, brainPetReleaseTargets, brainPetReleaseTargetIds } from "../../../scripts/brainpet-release-contract.mjs";
@@ -27,9 +27,11 @@ export function validateBridgeRelease(pluginRoot = defaultPluginRoot) {
   const receiptPath = join(pluginRoot, "brainpet-release.json");
   const receipt = existsSync(receiptPath) ? JSON.parse(readFileSync(receiptPath, "utf8")) : null;
   if (receipt) {
+    assert.equal(receipt.schemaVersion, 2);
     assert.equal(receipt.product, "brainpet");
     assert.equal(receipt.bridgeVersion, contract.bridgeVersion);
     assert.match(receipt.source?.commit, /^[a-f0-9]{40}$/i, "Bridge release receipt must bind an exact source commit.");
+    validateBridgeArtifactClosure(pluginRoot, receipt);
   }
 
   for (const target of brainPetReleaseTargets) {
@@ -66,6 +68,36 @@ export function validateBridgeRelease(pluginRoot = defaultPluginRoot) {
   }
   assert.ok(definitions.every((hook) => hook.timeout * 1_000 >= contract.hookDeadlineMs || hook.timeout === 1), "Lifecycle hook timeouts must contain the Bridge deadline; SessionEnd may use the bounded one-second no-wake path.");
   return { targetCount: brainPetReleaseTargets.length, receipt: Boolean(receipt) };
+}
+
+export function createBridgeArtifactClosure(pluginRoot) {
+  const root = resolve(pluginRoot);
+  const entries = [];
+  function visit(directory) {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+      if (directory === root && entry.name === "brainpet-release.json") continue;
+      const path = join(directory, entry.name);
+      const stat = lstatSync(path);
+      assert.equal(stat.isSymbolicLink(), false, `Bridge artifact closure contains a symbolic link: ${relative(root, path)}`);
+      const relativePath = relative(root, path).replaceAll("\\", "/");
+      if (stat.isDirectory()) {
+        entries.push({ path: relativePath, kind: "directory" });
+        visit(path);
+      } else {
+        assert.ok(stat.isFile(), `Bridge artifact closure contains an unsupported entry: ${relativePath}`);
+        const bytes = readFileSync(path);
+        entries.push({ path: relativePath, kind: "file", bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") });
+      }
+    }
+  }
+  visit(root);
+  return entries;
+}
+
+export function validateBridgeArtifactClosure(pluginRoot, receipt) {
+  assert.ok(Array.isArray(receipt.closure) && receipt.closure.length > 0, "Bridge release receipt lacks an exact artifact closure.");
+  assert.deepEqual(createBridgeArtifactClosure(pluginRoot), receipt.closure, "Bridge artifact tree is incomplete, modified, or contains an extra entry.");
+  return receipt.closure;
 }
 
 function parsePluginRoot(argv) {
