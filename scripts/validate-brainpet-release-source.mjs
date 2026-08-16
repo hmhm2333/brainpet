@@ -98,6 +98,14 @@ const publicReleaseWorkflow = readFileSync(join(root, ".github", "workflows", "b
 assert.match(publicReleaseWorkflow, /sigstore\/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6/);
 assert.match(publicReleaseWorkflow, /brainpet-public-provenance/);
 assert.doesNotMatch(publicReleaseWorkflow, /actions\/attest|gh attestation/, "Private-repository RC6 must not depend on GitHub Artifact Attestations.");
+const portabilityWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-portability-gate.yml"), "utf8");
+for (const [name, source] of [["portability", portabilityWorkflow], ["public release", publicReleaseWorkflow]]) {
+  const pnpmSetupCount = source.match(/pnpm\/action-setup@v4/g)?.length ?? 0;
+  const compatibleNodeSetupCount = source.match(/node-version:\s*22\b/g)?.length ?? 0;
+  assert.ok(pnpmSetupCount > 0, `BrainPet ${name} workflow must install pnpm explicitly.`);
+  assert.equal(compatibleNodeSetupCount, pnpmSetupCount, `BrainPet ${name} workflow must run pnpm 11 on Node 22.`);
+  assert.doesNotMatch(source, /node-version:\s*20\b/, `BrainPet ${name} workflow must not pair pnpm 11 with incompatible Node 20.`);
+}
 assert.ok(existsSync(join(root, ".github", "workflows", "brainpet-physical-receipt-intake.yml")));
 assert.ok(existsSync(join(root, ".github", "workflows", "brainpet-public-release-finalize.yml")));
 assert.deepEqual(Object.fromEntries(brainPetDistributionContract.releaseTargets.map((target) => [target.id, target.supportLevel])), {
