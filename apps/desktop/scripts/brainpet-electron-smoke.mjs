@@ -4,11 +4,12 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
 import { createOpenPetsClient } from "../../../packages/client/dist/index.js";
+import { evaluateBrainPetProcessSoakBudget, summarizeBrainPetProcessSoak } from "../dist/brainpet/performance-budget.js";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(scriptDir, "..");
@@ -24,6 +25,7 @@ const logs = [];
 const spawnedAt = Date.now();
 const lifecycleCycles = parsePositiveInteger(process.env.BRAINPET_LIFECYCLE_CYCLES, 1);
 const soakMs = parseNonNegativeInteger(process.env.BRAINPET_SOAK_MS, 0);
+const idleSoakMs = parseNonNegativeInteger(process.env.BRAINPET_IDLE_SOAK_MS, 0);
 const startupTimeoutMs = parsePositiveInteger(process.env.BRAINPET_START_TIMEOUT_MS, 20_000);
 const expectDisabled = process.env.BRAINPET_EXPECT_DISABLED === "1";
 const verifyOpenPetsIsolation = process.env.BRAINPET_EXPECT_OPENPETS_ISOLATION === "1";
@@ -34,6 +36,8 @@ const enforceResourceBudget = !verifyOpenPetsIsolation && process.env.BRAINPET_E
 const videoPath = process.env.BRAINPET_VIDEO_PATH ? resolve(process.env.BRAINPET_VIDEO_PATH) : null;
 if (forcedTask && forcedTask !== "cargo-signal" && forcedTask !== "pack-refresh" && forcedTask !== "foundation-probe") throw new Error("BRAINPET_SMOKE_TASK must be cargo-signal, pack-refresh, or foundation-probe.");
 if (expectDisabled && verifyOpenPetsIsolation) throw new Error("Rollback and OpenPets isolation smoke modes are mutually exclusive.");
+if (soakMs > 0 && idleSoakMs > 0) throw new Error("BrainPet active and idle soak modes are mutually exclusive.");
+if (soakMs >= 60_000 && process.platform !== "win32") throw new Error("BrainPet long-soak process-tree evidence currently requires Windows; macOS arm64 needs an independent physical receipt.");
 if (verifyOpenPetsIsolation && process.env.OPENPETS_DISTRIBUTION_PROFILE !== "openpets") throw new Error("OpenPets isolation smoke requires OPENPETS_DISTRIBUTION_PROFILE=openpets.");
 
 const exerciserMode = !forcedTask || forcedTask === "foundation-probe";
@@ -62,7 +66,25 @@ try {
   const idleProcessMetrics = process.platform === "win32" ? await measureProcessesForUserDataDir(userDataDir) : null;
   if (idleProcessMetrics) process.stdout.write(`BRAINPET_RESOURCE_METRICS ${JSON.stringify({ phase: "cold-idle", metrics: idleProcessMetrics })}\n`);
   if (enforceResourceBudget && idleProcessMetrics) assertProcessBudget("idle", idleProcessMetrics, { processCount: 5, workingSetBytes: 400 * 1024 * 1024, privateBytes: 400 * 1024 * 1024 });
-  if (verifyOpenPetsIsolation) {
+  if (idleSoakMs > 0) {
+    assert.equal(process.platform, "win32", "BrainPet 24-hour idle soak currently requires Windows process-tree metrics.");
+    const idleSoak = await runIdleSoak(petTarget, idleSoakMs, userDataDir);
+    if (idleSoakMs >= 60_000) {
+      assert.equal(idleSoak.heapGrowthBytes <= 32 * 1024 * 1024, true, `idle renderer heap grew by ${idleSoak.heapGrowthBytes} bytes`);
+      assert.ok(idleSoak.process, "idle soak lacks process-tree evidence");
+      assert.deepEqual(evaluateBrainPetProcessSoakBudget(idleSoak.process, {
+        maximumProcessCount: 5,
+        maximumWorkingSetBytes: 400 * 1024 * 1024,
+        maximumPrivateBytes: 400 * 1024 * 1024,
+        maximumWorkingSetGrowthBytes: 64 * 1024 * 1024,
+        maximumIntervalCpuPercent: 1,
+      }), [], `idle process budget failed: ${JSON.stringify(idleSoak.process)}`);
+    }
+    const idleTargets = (await listTargets(port)).filter((target) => target.type === "page");
+    assert.deepEqual(idleTargets.map((target) => target.title), [petWindowTitle], "idle soak must not create another renderer");
+    process.stdout.write(`${JSON.stringify({ ok: true, petReadyMs, idleProcessMetrics, idleSoak })}\n`);
+    process.exitCode = 0;
+  } else if (verifyOpenPetsIsolation) {
     const openPetsRender = await evaluate(petTarget, `(() => {
       const sprite = document.querySelector('.sprite');
       if (!(sprite instanceof HTMLElement)) return null;
@@ -427,8 +449,16 @@ try {
     await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
   }
 
-  const soak = await runSoak(stageTarget, soakMs);
+  const soak = await runSoak(stageTarget, soakMs, userDataDir);
   if (soakMs >= 60_000) assert.equal(soak.heapGrowthBytes <= 32 * 1024 * 1024, true, `renderer heap grew by ${soak.heapGrowthBytes} bytes during soak`);
+  if (soakMs >= 60_000 && soak.process) {
+    assert.deepEqual(evaluateBrainPetProcessSoakBudget(soak.process, {
+      maximumProcessCount: (idleProcessMetrics?.processCount ?? 4) + 2,
+      maximumWorkingSetBytes: 650 * 1024 * 1024,
+      maximumPrivateBytes: 650 * 1024 * 1024,
+      maximumWorkingSetGrowthBytes: 64 * 1024 * 1024,
+    }), [], `long-soak process budget failed: ${JSON.stringify(soak.process)}`);
+  }
   const activeProcessMetrics = process.platform === "win32" ? await measureProcessesForUserDataDir(userDataDir) : null;
   if (enforceResourceBudget && activeProcessMetrics) {
     assertProcessBudget("active", activeProcessMetrics, { processCount: (idleProcessMetrics?.processCount ?? 4) + 2, workingSetBytes: 650 * 1024 * 1024, privateBytes: 650 * 1024 * 1024 });
@@ -687,7 +717,7 @@ if ($remaining.Count -gt 0) { throw "BrainPet smoke cleanup left $($remaining.Co
 async function measureProcessesForUserDataDir(directory) {
   const script = String.raw`
 $needle = '--user-data-dir=' + $env:BRAINPET_METRICS_USER_DATA
-$all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine, WorkingSetSize, PrivatePageCount)
+$all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine, WorkingSetSize, PrivatePageCount, HandleCount, KernelModeTime, UserModeTime)
 $roots = @($all | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
 $rootNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach ($root in $roots) { [void]$rootNames.Add([string]$root.Name) }
@@ -702,6 +732,8 @@ do {
 $selected = @($all | Where-Object { $ids.Contains([uint32]$_.ProcessId) })
 $workingSet = ($selected | Measure-Object WorkingSetSize -Sum).Sum
 $privateBytes = ($selected | Measure-Object PrivatePageCount -Sum).Sum
+$handles = ($selected | Measure-Object HandleCount -Sum).Sum
+$cpuTime100ns = ($selected | ForEach-Object { [uint64]$_.KernelModeTime + [uint64]$_.UserModeTime } | Measure-Object -Sum).Sum
 $processes = @($selected | ForEach-Object {
   $role = if ($_.CommandLine -match '--type=([^\s"]+)') { $Matches[1] } else { 'browser' }
   [pscustomobject]@{ pid = [uint32]$_.ProcessId; parentPid = [uint32]$_.ParentProcessId; role = $role; workingSetBytes = [int64]$_.WorkingSetSize; privateBytes = [int64]$_.PrivatePageCount }
@@ -710,6 +742,8 @@ $processes = @($selected | ForEach-Object {
   processCount = $selected.Count
   workingSetBytes = [int64]$workingSet
   privateBytes = [int64]$privateBytes
+  handleCount = [int64]$handles
+  cpuTime100ns = [int64]$cpuTime100ns
   names = @($selected | Group-Object Name | ForEach-Object { $_.Name + ':' + $_.Count })
   processes = $processes
 } | ConvertTo-Json -Compress
@@ -778,11 +812,28 @@ async function waitForTargetToDisappear(debugPort, targetId, timeoutMs) {
   throw new Error("Crashed BrainPet stage target did not close.");
 }
 
-async function runSoak(target, durationMs) {
-  if (durationMs === 0) return { durationMs: 0, samples: 0, sessions: 0, heapGrowthBytes: 0, maxHeapBytes: 0 };
+async function runSoak(target, durationMs, processUserDataDir) {
+  if (durationMs === 0) return { durationMs: 0, samples: 0, sessions: 0, heapGrowthBytes: 0, maxHeapBytes: 0, process: null };
   const startedAt = Date.now();
   let sessions = 1;
   const heapSamples = [];
+  const processSamples = [];
+  const processSampleIntervalMs = Math.min(60_000, Math.max(1_000, Math.floor(durationMs / 10)));
+  let nextProcessSampleAt = startedAt;
+  async function sampleProcesses() {
+    if (process.platform !== "win32" || !processUserDataDir) return;
+    const metrics = await measureProcessesForUserDataDir(processUserDataDir);
+    processSamples.push({
+      elapsedMs: Date.now() - startedAt,
+      processCount: metrics.processCount,
+      workingSetBytes: metrics.workingSetBytes,
+      privateBytes: metrics.privateBytes,
+      handleCount: metrics.handleCount,
+      cpuTime100ns: metrics.cpuTime100ns,
+    });
+    nextProcessSampleAt = startedAt + processSamples.length * processSampleIntervalMs;
+  }
+  await sampleProcesses();
   while (Date.now() - startedAt < durationMs) {
     const page = await evaluate(target, `({ result: Boolean(document.querySelector('.result-card')), intro: Boolean(document.querySelector('.intro-card')) })`);
     if (page.result) {
@@ -794,8 +845,10 @@ async function runSoak(target, durationMs) {
     const heapUsage = await sendCdp(target.webSocketDebuggerUrl, "Runtime.getHeapUsage", {});
     const heap = heapUsage.usedSize;
     if (Number.isFinite(heap)) heapSamples.push(heap);
+    if (Date.now() >= nextProcessSampleAt) await sampleProcesses();
     await delay(500);
   }
+  await sampleProcesses();
   const warmSamples = heapSamples.slice(Math.min(10, Math.floor(heapSamples.length / 3)));
   if (heapSamples.length < Math.max(10, Math.floor(durationMs / 2_000))) throw new Error(`BrainPet soak collected only ${heapSamples.length} renderer heap samples.`);
   const firstWindow = warmSamples.slice(0, Math.max(1, Math.floor(warmSamples.length / 5)));
@@ -806,6 +859,40 @@ async function runSoak(target, durationMs) {
     sessions,
     heapGrowthBytes: Math.round(average(lastWindow) - average(firstWindow)),
     maxHeapBytes: Math.round(Math.max(...heapSamples, 0)),
+    process: processSamples.length >= 2 ? summarizeBrainPetProcessSoak(processSamples, availableParallelism()) : null,
+  };
+}
+
+async function runIdleSoak(target, durationMs, processUserDataDir) {
+  const startedAt = Date.now();
+  const intervalMs = Math.min(300_000, Math.max(1_000, Math.floor(durationMs / 20)));
+  const heapSamples = [];
+  const processSamples = [];
+  async function sample() {
+    const heapUsage = await sendCdp(target.webSocketDebuggerUrl, "Runtime.getHeapUsage", {});
+    if (Number.isFinite(heapUsage.usedSize)) heapSamples.push(heapUsage.usedSize);
+    const metrics = await measureProcessesForUserDataDir(processUserDataDir);
+    processSamples.push({
+      elapsedMs: Date.now() - startedAt,
+      processCount: metrics.processCount,
+      workingSetBytes: metrics.workingSetBytes,
+      privateBytes: metrics.privateBytes,
+      handleCount: metrics.handleCount,
+      cpuTime100ns: metrics.cpuTime100ns,
+    });
+  }
+  await sample();
+  while (Date.now() - startedAt < durationMs) {
+    await delay(Math.min(intervalMs, Math.max(1, durationMs - (Date.now() - startedAt))));
+    await sample();
+  }
+  const windowSize = Math.max(1, Math.floor(heapSamples.length / 5));
+  return {
+    durationMs: Date.now() - startedAt,
+    samples: heapSamples.length,
+    heapGrowthBytes: Math.round(average(heapSamples.slice(-windowSize)) - average(heapSamples.slice(0, windowSize))),
+    maxHeapBytes: Math.round(Math.max(...heapSamples, 0)),
+    process: summarizeBrainPetProcessSoak(processSamples, availableParallelism()),
   };
 }
 

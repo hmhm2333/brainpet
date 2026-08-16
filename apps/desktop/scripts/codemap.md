@@ -45,7 +45,7 @@ Check preload syntax → Compile tests to .test-dist → Run behavior tests → 
 brainpet-electron-smoke.mjs → isolated profile → native hotspot click → stage/lifecycle assertions → scoped process-tree cleanup
 brainpet-package.mjs → stage exact target helper → electron-builder → automatic validate-brainpet-package.mjs
 brainpet-package-lifecycle.mjs → disposable GitHub-hosted runner → real install/start/default discovery/helper/upgrade/uninstall receipt
-brainpet-physical-acceptance.ps1 / brainpet-macos-physical-acceptance.mjs → unsigned Stable installer policy probe → OS-warning consent plus lifecycle/display acceptance → privacy-minimized schema-v4 receipt
+brainpet-physical-acceptance.ps1 / brainpet-macos-physical-acceptance.mjs → unsigned Stable installer policy probe → OS-warning consent plus lifecycle/display acceptance → candidate-bound privacy-minimized schema-v5 receipt
 ```
 
 ## Integration Points
@@ -61,12 +61,12 @@ brainpet-physical-acceptance.ps1 / brainpet-macos-physical-acceptance.mjs → un
 - `clean-package-output.cjs`: Removes `dist-electron` directory with path safety checks
 - `release-local.mjs`: Full release orchestration with preflight validation, multi-platform builds, and GitHub draft creation
 - `run-tests.mjs`: Desktop test runner for preload syntax checks, `.test-dist` behavior/contract tests, and remaining runtime checks
-- `brainpet-electron-smoke.mjs`: BrainPet native-entry, stage, performance, crash-isolation, and cleanup smoke
+- `brainpet-electron-smoke.mjs`: BrainPet native-entry, stage, continuously sampled process/heap performance, crash-isolation, and cleanup smoke
 - `brainpet-package.mjs`: Six-target BrainPet builder that cannot complete without automatic package validation
 - `validate-brainpet-package.mjs`: Runtime/asar/helper/installer and explicit platform-signature-absence validator and target receipt writer
 - `brainpet-package-lifecycle.mjs`: CI-only real NSIS/DMG/AppImage/deb install, cold-wake, upgrade, Adapter, and uninstall exerciser
-- `brainpet-physical-acceptance.ps1`: Windows x64 unsigned-NSIS, SmartScreen consent, lifecycle, display/DPI, sleep/wake, and manual schema-v4 physical receipt writer
-- `brainpet-macos-physical-acceptance.mjs`: Apple Silicon unsigned-DMG, Gatekeeper/Open Anyway consent, lifecycle, display, sleep/wake, and manual schema-v4 physical receipt writer
+- `brainpet-physical-acceptance.ps1`: Windows x64 unsigned-NSIS, SmartScreen consent, lifecycle, display/DPI, sleep/wake, and candidate-bound manual schema-v5 physical receipt writer
+- `brainpet-macos-physical-acceptance.mjs`: Apple Silicon unsigned-DMG, Gatekeeper/Open Anyway consent, lifecycle, display, sleep/wake, and candidate-bound manual schema-v5 physical receipt writer
 
 ## Build Plan (release-local.mjs)
 

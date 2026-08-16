@@ -223,6 +223,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `brainpet/stage-window-controller.ts`: Hardened stage BrowserWindow, sender identity, hit testing, transactional open rollback, and close/cache lifecycle
 - `brainpet/session-authority.ts`: Host-canonical session issuance, scoring, state transitions, and persistence
 - `brainpet/interaction-rig-controller.ts`: Pet/stage anchor ownership, drag transactions, geometry application, and timer disposal
+- `brainpet/performance-budget.ts`: Pure long-soak process-summary and memory/process budget evaluation used by Electron performance evidence
 - `brainpet-installation-state.ts`: Atomic BrainPet runtime/Bridge/lifecycle evidence store and Bridge-version reauthorization policy
 - `generated-brainpet-distribution.ts`: Generated Bridge version, product identity, unsigned direct-release policy, and six-target facts consumed by desktop installation code
 - `brainpet-adapter-manager.ts`: Codex CLI detection plus serialized install/upgrade/uninstall transactions, config backup/rollback, bundle hash verification, and redacted receipts

@@ -83,11 +83,12 @@ idle → opening → ready → running ⇄ paused → settling → ready
 - `pnpm --filter @open-pets/desktop test:brainpet-electron`：同一真实窗口路径下验证默认 Stage Exerciser；初次透明窗口热点必须使用系统原生点击，不能用 DOM `button.click()` 代替。
 - `$env:BRAINPET_SMOKE_TASK='cargo-signal'; node apps/desktop/scripts/brainpet-electron-smoke.mjs output/playwright/brainpet-cargo-real.png`：强制打开真实补给投递任务，验证 scene、补给箱、飞行目标、桌面叠加、锚定、资源预算与崩溃重开。
 - `pnpm --filter @open-pets/desktop test:brainpet-physical-inventory`：只读盘点当前 Windows、显示器/DPI，以及默认未签名 NSIS（若存在）的 hash/AuthentiCode 状态，并在 `output/physical-acceptance` 写入 inventory 回执；该结果不能进入公开发行门。
-- `powershell -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/brainpet-physical-acceptance.ps1 -RunInteractive -ArtifactPath <BrainPet-Unsigned-setup.exe> -SourceCommit <sha>`：由复核人执行系统警告确认、真实安装/发现/Agent lifecycle/升级/卸载、双屏混合 DPI、睡眠恢复、新手理解和动态视觉检查。脚本只主动打开未签名安装器，不关闭 SmartScreen、不自动睡眠、修改显示设置或停止进程；只有全部项目通过才出具 privacy-minimized schema-v4 回执。
-- `node apps/desktop/scripts/brainpet-macos-physical-acceptance.mjs --artifact <BrainPet-Unsigned.dmg> --source-commit <sha> --output <new-dir>`：在 Apple Silicon 物理机验证同一组合同，确认 Gatekeeper 拒绝、没有 notarization ticket，并记录用户通过“隐私与安全性”→“仍要打开”的单应用确认。
+- `powershell -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/brainpet-physical-acceptance.ps1 -RunInteractive -ArtifactPath <BrainPet-Unsigned-setup.exe> -SourceCommit <sha> -CandidateReceiptPath <candidate-receipt.json>`：由复核人执行系统警告确认、真实安装/发现/Agent lifecycle/升级/卸载、双屏混合 DPI、睡眠恢复、新手理解和动态视觉检查。脚本只主动打开未签名安装器，不关闭 SmartScreen、不自动睡眠、修改显示设置或停止进程；只有全部项目通过才出具绑定公开候选的 privacy-minimized schema-v5 回执。
+- `node apps/desktop/scripts/brainpet-macos-physical-acceptance.mjs --artifact <BrainPet-Unsigned.dmg> --source-commit <sha> --candidate-receipt <candidate-receipt.json> --output <new-dir>`：在 Apple Silicon 物理机验证同一组合同，确认 Gatekeeper 拒绝、没有 notarization ticket，并记录用户通过“隐私与安全性”→“仍要打开”的单应用确认。
 - `pnpm --filter @open-pets/desktop test:brainpet-stress`：真实 Electron 窗口连续开启、开始 session、关闭 100 次。
 - `pnpm --filter @open-pets/desktop test:brainpet-rollback`：关闭 feature flag 后，宠物热点与舞台均不存在。
-- `pnpm --filter @open-pets/desktop test:brainpet-soak`：真实 Electron 舞台持续 30 分钟，反复 session，并通过 CDP 采样 renderer JS heap。
+- `pnpm --filter @open-pets/desktop test:brainpet-soak`：Windows x64 参考机上的真实 Electron 舞台持续 30 分钟，反复 session；通过 CDP 采样 renderer JS heap，并按分钟记录整个 Electron 进程树的工作集、private bytes、进程数、句柄和归一化 CPU。门禁拒绝中途内存峰值、工作集增长达到 64 MiB 或进程数超预算，句柄趋势保留在最终回执中供审核；该命令明确拒绝把缺少同等进程证据的其他平台结果标为通过。
+- `pnpm --filter @open-pets/desktop test:brainpet-idle-soak`：Windows x64 参考机保持冷 idle 24 小时，每 5 分钟采集 pet renderer heap 和完整 Electron 进程树；要求全程只有 pet renderer、工作集不超过 400 MiB、增长低于 64 MiB，且每个采样区间的归一化 CPU 均值低于 1%。该命令明确不把 Windows 结果冒充 macOS arm64 回执。
 - `pnpm --filter @open-pets/desktop package:brainpet:unpacked`：产出快速启动的 `dist-brainpet/private-test/win-unpacked/brainpet.exe`，这是当前 Windows 体验测试入口。
 - `pnpm --filter @open-pets/desktop package:brainpet:portable`：只用于需要单文件传输的诊断场景；它每次需要自解压，不用于启动性能和日常体验验收。
 
