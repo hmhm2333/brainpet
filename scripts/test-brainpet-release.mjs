@@ -9,12 +9,13 @@ import { fileURLToPath } from "node:url";
 import { assembleBridgeRelease } from "../integrations/codex/scripts/assemble-bridge-release.mjs";
 import { validateBridgeRelease } from "../integrations/codex/scripts/validate-bridge-release.mjs";
 import { aggregateBrainPetReleaseReceipt } from "./aggregate-brainpet-release-receipt.mjs";
-import { brainPetDistributionContract, brainPetReleaseTargets } from "./brainpet-release-contract.mjs";
+import { brainPetDistributionContract, brainPetReleaseTargets, getBrainPetReleaseTarget } from "./brainpet-release-contract.mjs";
 import { assertBrainPetBinary } from "./brainpet-binary-format.mjs";
 import { brainPetPhysicalCheckIds, validateBrainPetPhysicalReceiptSet } from "./brainpet-physical-receipt-contract.mjs";
 import { intakeBrainPetPhysicalReceipts } from "./intake-brainpet-physical-receipts.mjs";
 import { brainPetPublicReleaseFinalizeWorkflow, brainPetPublicReleaseWorkflow, signBrainPetReleaseEvidence, signBrainPetSubjects, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
 import { createBrainPetBuilderInvocation, parseBrainPetPackageArgs, prepareBrainPetBundledMarketplace, resolveBrainPetElectronDist, validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
+import { resolveBrainPetResourcesRoot } from "../apps/desktop/scripts/validate-brainpet-package.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const testRoot = join(root, "output", "brainpet-m5-release-test", String(process.pid));
@@ -50,7 +51,26 @@ try {
   assert.ok(publicLinuxInvocation.args.includes("AppImage"));
   assert.ok(publicLinuxInvocation.args.includes("deb"));
   const dryRunFixture = parseBrainPetPackageArgs(["--platform", "linux", "--arch", "x64", "--target", "installer", "--mode", "private-test", "--dry-run"]);
-  assert.match(resolveBrainPetElectronDist(dryRunFixture, () => assert.fail("dry-run must not load or download Electron")), /node_modules[\\/]electron[\\/]dist$/);
+  const fakeElectronPackage = join(root, "node_modules", ".pnpm", "electron@42.0.0", "node_modules", "electron", "package.json");
+  assert.equal(
+    resolveBrainPetElectronDist(
+      dryRunFixture,
+      () => fakeElectronPackage,
+      () => assert.fail("dry-run must not load or download Electron"),
+    ),
+    join(dirname(fakeElectronPackage), "dist"),
+  );
+  let electronLoaded = false;
+  const resolvedMacDist = resolveBrainPetElectronDist(
+    { ...dryRunFixture, dryRun: false, releaseTarget: getBrainPetReleaseTarget("macos", "arm64") },
+    () => fakeElectronPackage,
+    () => { electronLoaded = true; },
+    () => electronLoaded,
+  );
+  assert.equal(resolvedMacDist, join(dirname(fakeElectronPackage), "dist"));
+  assert.equal(electronLoaded, true, "missing Electron distributions must be prepared before electron-builder runs");
+  assert.equal(resolveBrainPetResourcesRoot("/fixture/app", getBrainPetReleaseTarget("linux", "x64")), join("/fixture/app", "resources"));
+  assert.equal(resolveBrainPetResourcesRoot("/fixture/app", getBrainPetReleaseTarget("macos", "arm64")), join("/fixture/app", "Resources"));
   assert.ok(invocation.args.some((arg) => arg.includes("directories.output=")));
   assert.throws(() => parseBrainPetPackageArgs(["--mode", "public-release", "--defer-trust"]), /was removed/);
   const windowsTarget = brainPetReleaseTargets.find((target) => target.id === "windows-x64");

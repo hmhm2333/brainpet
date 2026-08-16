@@ -34,7 +34,7 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
   assert.ok(lstatSync(unpackedRoot).isDirectory(), "BrainPet unpacked output must be a directory.");
 
   const appRoot = target.platform === "macos" ? join(unpackedRoot, "BrainPet.app", "Contents") : unpackedRoot;
-  const resources = join(appRoot, "Resources");
+  const resources = resolveBrainPetResourcesRoot(appRoot, target);
   const executable = target.platform === "windows"
     ? join(appRoot, "brainpet.exe")
     : target.platform === "macos"
@@ -121,6 +121,10 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
   };
   writeFileSync(join(resolvedOutput, `brainpet-package-receipt-${target.id}.json`), `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
   return receipt;
+}
+
+export function resolveBrainPetResourcesRoot(appRoot, target) {
+  return join(appRoot, target.platform === "macos" ? "Resources" : "resources");
 }
 
 function parseArgs(argv) {

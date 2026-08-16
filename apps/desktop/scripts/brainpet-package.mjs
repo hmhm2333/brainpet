@@ -69,9 +69,23 @@ export function createBrainPetBuilderInvocation(options) {
   return { command: process.execPath, args, cwd: appDir };
 }
 
-export function resolveBrainPetElectronDist(options, loadElectron = () => require("electron")) {
-  if (options.dryRun) return join(appDir, "node_modules", "electron", "dist");
-  return dirname(loadElectron());
+export function resolveBrainPetElectronDist(
+  options,
+  resolveElectronPackage = () => require.resolve("electron/package.json"),
+  loadElectron = () => require("electron"),
+  pathExists = existsSync,
+) {
+  const electronDist = join(dirname(resolveElectronPackage()), "dist");
+  if (options.dryRun) return electronDist;
+
+  const executable = options.releaseTarget.platform === "windows"
+    ? join(electronDist, "electron.exe")
+    : options.releaseTarget.platform === "macos"
+      ? join(electronDist, "Electron.app", "Contents", "MacOS", "Electron")
+      : join(electronDist, "electron");
+  if (!pathExists(executable)) loadElectron();
+  if (!pathExists(executable)) throw new Error(`Electron distribution is incomplete for ${options.releaseTarget.id}: ${executable}`);
+  return electronDist;
 }
 
 export function validatePublicReleaseEnvironment(releaseTarget) {

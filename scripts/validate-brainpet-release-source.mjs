@@ -117,6 +117,10 @@ assert.doesNotMatch(publicReleaseWorkflow, /--defer-trust/);
 assert.doesNotMatch(publicReleaseWorkflow, /actions\/attest|gh attestation/, "Private-repository RC6 must not depend on GitHub Artifact Attestations.");
 const portabilityWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-portability-gate.yml"), "utf8");
 for (const [name, source] of [["portability", portabilityWorkflow], ["public release", publicReleaseWorkflow]]) {
+  assert.match(source, /pnpm --filter @open-pets\/desktop\.\.\. install --frozen-lockfile/, `BrainPet ${name} runtime jobs must exclude unrelated root-only dependencies on Windows ARM64.`);
+}
+assert.match(portabilityWorkflow, /source-contract:[\s\S]*?pnpm install --frozen-lockfile[\s\S]*?pnpm brainpet:release:test/, "The portability source-contract job must still install and test the complete workspace.");
+for (const [name, source] of [["portability", portabilityWorkflow], ["public release", publicReleaseWorkflow]]) {
   const pnpmSetupCount = source.match(/pnpm\/action-setup@v4/g)?.length ?? 0;
   const compatibleNodeSetupCount = source.match(/node-version:\s*22\b/g)?.length ?? 0;
   assert.ok(pnpmSetupCount > 0, `BrainPet ${name} workflow must install pnpm explicitly.`);
