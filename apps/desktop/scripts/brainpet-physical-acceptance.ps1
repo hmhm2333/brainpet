@@ -9,6 +9,7 @@ param(
   [Alias("PortablePath")]
   [string]$ArtifactPath = "",
   [string]$OutputDirectory = "",
+  [string]$CandidateReceiptPath = "",
   [ValidateSet("windows-x64")]
   [string]$TargetId = "windows-x64",
   [string]$SourceCommit = ""
@@ -18,7 +19,7 @@ $ErrorActionPreference = "Stop"
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrWhiteSpace($ArtifactPath)) { $ArtifactPath = Join-Path $scriptDirectory "..\dist-brainpet\public-release\BrainPet-Unsigned-3.4.0-win-x64-setup.exe" }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path $scriptDirectory "..\..\..\output\physical-acceptance" }
-$scriptVersion = "brainpet-release-v4.0"
+$scriptVersion = "brainpet-release-v5.0"
 $startedAt = Get-Date
 $runId = "$($startedAt.ToString('yyyyMMdd-HHmmss-fff'))-$PID"
 $outputRoot = [System.IO.Path]::GetFullPath($OutputDirectory)
@@ -162,13 +163,30 @@ $artifact = Get-ArtifactEvidence -Path $ArtifactPath
 $checks = @()
 $mode = if ($RunInteractive) { "interactive" } else { "inventory" }
 $overallStatus = "inventory-only"
+$candidateEvidence = $null
 
 if ($RunInteractive) {
   if (-not $artifact.exists) { throw "Release installer not found: $([System.IO.Path]::GetFullPath($ArtifactPath))" }
   if ($artifact.authenticodeStatus -ne "NotSigned") { throw "Unsigned direct-release installer Authenticode status is $($artifact.authenticodeStatus), expected NotSigned." }
   if ($SourceCommit -notmatch '^[a-fA-F0-9]{40}$') { throw "RunInteractive requires -SourceCommit with the exact 40-character release commit." }
+  if ([string]::IsNullOrWhiteSpace($CandidateReceiptPath) -or -not (Test-Path -LiteralPath $CandidateReceiptPath -PathType Leaf)) { throw "RunInteractive requires -CandidateReceiptPath for the signed public candidate receipt." }
+  $candidateResolved = [System.IO.Path]::GetFullPath($CandidateReceiptPath)
+  $candidateBytes = [System.IO.File]::ReadAllBytes($candidateResolved)
+  $candidate = [System.Text.Encoding]::UTF8.GetString($candidateBytes) | ConvertFrom-Json
+  if ($candidate.schemaVersion -ne 2 -or $candidate.product -ne "brainpet" -or -not $candidate.rc6GatePassed -or $candidate.publicReleaseReady) { throw "Physical acceptance candidate receipt is not a valid pre-physical RC6 candidate." }
+  if ([string]$candidate.sourceCommit -ine $SourceCommit) { throw "Physical acceptance candidate commit does not match -SourceCommit." }
+  if ([string]$candidate.sourceRunId -notmatch '^\d{1,20}$' -or [string]$candidate.physicalChallenge -notmatch '^[a-fA-F0-9]{64}$') { throw "Physical acceptance candidate run id or challenge is invalid." }
+  $candidatePackage = @($candidate.packages | Where-Object { $_.target -eq $TargetId })
+  if ($candidatePackage.Count -ne 1 -or @($candidatePackage[0].artifacts | Where-Object { $_.kind -eq "nsis" -and [string]$_.sha256 -ieq [string]$artifact.sha256 }).Count -ne 1) { throw "Physical installer is not part of the selected signed candidate." }
+  $candidateHasher = [System.Security.Cryptography.SHA256]::Create()
+  try { $candidateSha = $candidateHasher.ComputeHash($candidateBytes) } finally { $candidateHasher.Dispose() }
+  $candidateEvidence = [pscustomobject]@{
+    runId = [string]$candidate.sourceRunId
+    receiptSha256 = ([System.BitConverter]::ToString($candidateSha)).Replace("-", "").ToLowerInvariant()
+    challenge = ([string]$candidate.physicalChallenge).ToLowerInvariant()
+  }
   Write-Host "BrainPet physical acceptance opens the explicitly unsigned installer but never disables SmartScreen, changes Windows security settings, locks Windows, changes display settings, or stops processes." -ForegroundColor Yellow
-  $reviewer = Read-Host "Reviewer identifier (name, initials, or team code)"
+  $reviewer = Read-Host "Reviewer GitHub username (must approve the protected intake environment; cannot be the dispatcher)"
   if ([string]::IsNullOrWhiteSpace($reviewer) -or $reviewer.Length -gt 128) { throw "Reviewer identifier must contain 1-128 characters." }
   Start-Process -FilePath ([System.IO.Path]::GetFullPath($ArtifactPath)) | Out-Null
   Write-Host "Complete the normal per-user install, first-run Agent connection, and the requested checks before recording each answer."
@@ -197,7 +215,7 @@ if ($RunInteractive) {
 }
 
 $receipt = [pscustomobject]@{
-  schemaVersion = 4
+  schemaVersion = 5
   scriptVersion = $scriptVersion
   product = "brainpet"
   target = $TargetId
@@ -207,6 +225,7 @@ $receipt = [pscustomobject]@{
   completedAt = (Get-Date).ToUniversalTime().ToString("o")
   mode = $mode
   reviewer = $reviewer
+  candidate = $candidateEvidence
   overallStatus = $overallStatus
   distributionChannel = "direct-download"
   platformSignatureStatus = "absent-by-policy"

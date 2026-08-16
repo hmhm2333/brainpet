@@ -10,6 +10,7 @@ import { stdin, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { brainPetPhysicalCheckIds, validateBrainPetPhysicalReceipt } from "../../../scripts/brainpet-physical-receipt-contract.mjs";
+import { assertMacosCodeObjectIsUnsigned } from "./validate-brainpet-package.mjs";
 
 export async function runMacosPhysicalAcceptance(options) {
   assert.equal(process.platform, "darwin", "macOS physical acceptance must run on macOS.");
@@ -26,18 +27,34 @@ export async function runMacosPhysicalAcceptance(options) {
     assert.equal(result.error, undefined, `Unable to run the macOS ${label} probe.`);
     assert.ok(Number.isInteger(result.status), `macOS ${label} probe did not return an exit status.`);
   }
-  const developerIdOutput = `${developerId.stdout ?? ""}\n${developerId.stderr ?? ""}`;
-  assert.doesNotMatch(developerIdOutput, /Authority=Developer ID Application:/, "Unsigned BrainPet DMG unexpectedly contains a Developer ID signature.");
+  assertMacosCodeObjectIsUnsigned(developerId, "BrainPet physical-acceptance DMG");
+  const candidatePath = resolve(options.candidateReceiptPath);
+  const candidateBytes = readFileSync(candidatePath);
+  const candidate = JSON.parse(candidateBytes.toString("utf8"));
+  assert.equal(candidate.schemaVersion, 2, "Physical acceptance candidate schema is invalid.");
+  assert.equal(candidate.sourceCommit?.toLowerCase(), options.sourceCommit.toLowerCase(), "Physical acceptance candidate commit is invalid.");
+  assert.match(String(candidate.sourceRunId ?? ""), /^\d{1,20}$/, "Physical acceptance candidate run id is invalid.");
+  assert.match(candidate.physicalChallenge ?? "", /^[a-f0-9]{64}$/i, "Physical acceptance candidate challenge is invalid.");
+  assert.equal(candidate.rc6GatePassed, true, "Physical acceptance candidate did not pass RC6.");
+  assert.equal(candidate.publicReleaseReady, false, "Physical acceptance requires a pre-physical candidate.");
+  const artifactSha256 = createHash("sha256").update(bytes).digest("hex");
+  const candidatePackage = candidate.packages?.find((entry) => entry.target === "macos-arm64");
+  assert.ok(candidatePackage?.artifacts?.some((entry) => entry.kind === "dmg" && entry.sha256 === artifactSha256), "Physical DMG is not part of the selected signed candidate.");
+  const candidateEvidence = {
+    runId: String(candidate.sourceRunId),
+    receiptSha256: createHash("sha256").update(candidateBytes).digest("hex"),
+    challenge: candidate.physicalChallenge.toLowerCase(),
+  };
   const displays = readMacDisplays();
   const startedAt = new Date().toISOString();
   const prompt = createInterface({ input: stdin, output: stdout });
   try {
-    const reviewer = boundedRequired(await prompt.question("Reviewer identifier: "), 128, "Reviewer identifier");
+    const reviewer = boundedRequired(await prompt.question("Reviewer GitHub username (must approve the protected intake environment; cannot be the dispatcher): "), 128, "Reviewer identifier");
     const checks = [];
     for (const id of brainPetPhysicalCheckIds) checks.push(await readCheck(prompt, id, physicalPrompt(id)));
     const receipt = {
-      schemaVersion: 4,
-      scriptVersion: "brainpet-release-v4.0",
+      schemaVersion: 5,
+      scriptVersion: "brainpet-release-v5.0",
       product: "brainpet",
       target: "macos-arm64",
       sourceCommit: options.sourceCommit.toLowerCase(),
@@ -46,7 +63,8 @@ export async function runMacosPhysicalAcceptance(options) {
       completedAt: new Date().toISOString(),
       mode: "interactive",
       reviewer,
-      overallStatus: gatekeeper.status !== 0 && stapler.status !== 0 && displays.length >= 2 && checks.every((check) => check.status === "pass") ? "passed" : "incomplete",
+      candidate: candidateEvidence,
+      overallStatus: developerId.status !== 0 && gatekeeper.status !== 0 && stapler.status !== 0 && displays.length >= 2 && checks.every((check) => check.status === "pass") ? "passed" : "incomplete",
       distributionChannel: "direct-download",
       platformSignatureStatus: "absent-by-policy",
       systemWarningObserved: checks.find((check) => check.id === "unsigned-security-prompt")?.status === "pass",
@@ -56,7 +74,7 @@ export async function runMacosPhysicalAcceptance(options) {
         kind: "dmg",
         name: basename(artifactPath),
         sizeBytes: lstatSync(artifactPath).size,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
+        sha256: artifactSha256,
         developerIdStatus: "Absent",
         gatekeeperStatus: gatekeeper.status === 0 ? "Accepted" : "Rejected",
         staplerStatus: stapler.status === 0 ? "Valid" : "Invalid",
@@ -139,10 +157,11 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === "--artifact") options.artifactPath = argv[++index];
     else if (argv[index] === "--source-commit") options.sourceCommit = argv[++index];
+    else if (argv[index] === "--candidate-receipt") options.candidateReceiptPath = argv[++index];
     else if (argv[index] === "--output") options.outputRoot = argv[++index];
     else throw new Error(`Unknown macOS physical acceptance argument: ${argv[index]}`);
   }
-  assert.ok(options.artifactPath && options.sourceCommit && options.outputRoot, "Usage: brainpet-macos-physical-acceptance.mjs --artifact <BrainPet.dmg> --source-commit <sha> --output <new-dir>");
+  assert.ok(options.artifactPath && options.sourceCommit && options.candidateReceiptPath && options.outputRoot, "Usage: brainpet-macos-physical-acceptance.mjs --artifact <BrainPet.dmg> --source-commit <sha> --candidate-receipt <signed-candidate.json> --output <new-dir>");
   return options;
 }
 

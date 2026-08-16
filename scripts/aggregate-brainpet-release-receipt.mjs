@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +9,8 @@ import { fileURLToPath } from "node:url";
 import { brainPetDistributionContract, brainPetReleaseTargets } from "./brainpet-release-contract.mjs";
 import { assertBrainPetBinary, inspectExecutableBinary } from "./brainpet-binary-format.mjs";
 import { validateBrainPetPhysicalReceipt, validateBrainPetPhysicalReceiptSet } from "./brainpet-physical-receipt-contract.mjs";
-import { brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
+import { brainPetPhysicalReceiptWorkflow, brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
+import { validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
 
 const lifecycleRequirements = Object.freeze([
   { target: "windows-x64", kind: "nsis" },
@@ -45,7 +46,7 @@ export function aggregateBrainPetReleaseReceipt(options) {
   if (releaseMode === "public-release") validateBridgeProvenance(bridgeRoot, bridge, provenanceRoot, provenanceVerifier);
   const physicalEvidence = physicalReceipts.map((path) => validatePhysicalReceipt(path));
   if (releaseMode === "public-release" && physicalEvidence.length > 0) validateBrainPetPhysicalReceiptSet(physicalEvidence.map((entry) => entry.receipt));
-  const physical = physicalEvidence.map(({ receipt: _receipt, ...summary }) => summary);
+  const physical = physicalEvidence.map(({ receipt: _receipt, path: _path, ...summary }) => summary);
   const sourceCommits = new Set(packages.map((entry) => entry.source.commit));
   for (const entry of lifecycle) sourceCommits.add(entry.source.commit);
   sourceCommits.add(bridge.source.commit);
@@ -61,10 +62,30 @@ export function aggregateBrainPetReleaseReceipt(options) {
     [sourceRunId] = sourceRunIds;
     [sourceRunAttempt] = sourceRunAttempts;
   }
+  if (releaseMode === "public-release" && physicalEvidence.length > 0) {
+    assert.ok(options.physicalProvenanceRoot, "Public physical evidence requires --physical-provenance.");
+    validatePhysicalEvidenceProvenance({
+      physicalEvidence,
+      physicalRoot: resolve(options.physicalRoot),
+      provenanceRoot: resolve(options.physicalProvenanceRoot ?? ""),
+      provenanceVerifier,
+      sourceCommit,
+      sourceRunId,
+    });
+  }
+  const physicalChallenges = new Set(physical.map((entry) => entry.candidate.challenge));
+  const physicalChallenge = releaseMode !== "public-release"
+    ? null
+    : physicalChallenges.size === 0
+      ? randomBytes(32).toString("hex")
+      : physicalChallenges.size === 1
+        ? [...physicalChallenges][0]
+        : assert.fail("Physical receipts must bind one public-candidate challenge.");
   for (const entry of physical) {
     assert.equal(entry.sourceCommit, sourceCommit, `Physical receipt ${entry.target} is not bound to release commit ${sourceCommit}.`);
     const packageReceipt = packages.find((candidate) => candidate.target === entry.target);
     assert.ok(packageReceipt?.artifacts.some((artifact) => artifact.sha256 === entry.artifactSha256), `Physical receipt ${entry.target} does not reference an aggregated installer artifact.`);
+    assert.equal(String(entry.candidate.runId), String(sourceRunId), `Physical receipt ${entry.target} references a different candidate run.`);
   }
 
   const missingEvidence = [];
@@ -95,6 +116,7 @@ export function aggregateBrainPetReleaseReceipt(options) {
     sourceCommit,
     sourceRunId,
     sourceRunAttempt,
+    physicalChallenge,
     packages,
     lifecycle,
     bridge,
@@ -134,12 +156,15 @@ function validatePackageReceipt(paths, packagesRoot, target, releaseMode, proven
   assert.equal(typeof receipt.runtimeReleaseReady, "boolean", `Package receipt ${target.id} lacks a runtime trust result.`);
   assert.ok(Array.isArray(receipt.artifacts) && receipt.artifacts.length > 0);
   const receiptRoot = dirname(path);
+  if (releaseMode === "public-release") validateBrainPetPackageArtifactClosure(receiptRoot, target.id);
   const requiredKinds = target.platform === "windows" ? ["nsis"] : target.platform === "macos" ? ["dmg"] : ["appimage", "deb"];
   assert.deepEqual(receipt.artifacts.map((artifact) => artifact.kind).sort(), requiredKinds.sort(), `Package receipt ${target.id} has an invalid installer artifact set.`);
   for (const artifact of receipt.artifacts) validateArtifactRecord(receiptRoot, artifact, target);
-  const executablePath = resolveSafeRelative(receiptRoot, receipt.executable);
-  assert.equal(sha256(executablePath), receipt.sha256, `Runtime executable hash mismatch for ${target.id}.`);
-  assertBrainPetBinary(readFileSync(executablePath), target, `Aggregate runtime ${target.id}`);
+  if (releaseMode !== "public-release") {
+    const executablePath = resolveSafeRelative(receiptRoot, receipt.executable);
+    assert.equal(sha256(executablePath), receipt.sha256, `Runtime executable hash mismatch for ${target.id}.`);
+    assertBrainPetBinary(readFileSync(executablePath), target, `Aggregate runtime ${target.id}`);
+  }
   assert.ok(isRecord(receipt.source) && /^[a-f0-9]{40}$/i.test(receipt.source.commit), `Package receipt ${target.id} lacks an exact source commit.`);
   if (releaseMode === "public-release") {
     assert.equal(receipt.source.workflow, brainPetPublicReleaseWorkflow.name, `Public package ${target.id} came from the wrong workflow.`);
@@ -166,6 +191,8 @@ function validateSigstoreProvenance(receiptRoot, receipt, target, provenanceRoot
   assert.equal(receipt.source.repository, brainPetDistributionContract.identity.repository);
   assert.equal(receipt.source.runnerEnvironment, "github-hosted", `Public package ${target.id} must come from a GitHub-hosted runner.`);
   const repository = brainPetDistributionContract.identity.repository;
+  const receiptPath = join(receiptRoot, `brainpet-package-receipt-${target.id}.json`);
+  provenanceVerifier(createProvenanceEvidence(receiptPath, provenanceRoot, repository, receipt.source.commit, `${target.id}/package-receipt`));
   for (const artifact of receipt.artifacts) {
     const path = resolveSafeRelative(receiptRoot, artifact.path);
     provenanceVerifier(createProvenanceEvidence(path, provenanceRoot, repository, receipt.source.commit, `${target.id}/${artifact.kind}`));
@@ -247,15 +274,15 @@ function validateBridgeProvenance(bridgeRoot, bridge, provenanceRoot, provenance
   provenanceVerifier(createProvenanceEvidence(receiptPath, provenanceRoot, repository, bridge.source.commit, "BrainPet Bridge receipt"));
 }
 
-function createProvenanceEvidence(subjectPath, provenanceRoot, repository, sourceCommit, label) {
+function createProvenanceEvidence(subjectPath, provenanceRoot, repository, sourceCommit, label, workflow = brainPetPublicReleaseWorkflow) {
   const digest = sha256(subjectPath);
   return {
     subjectPath,
     bundlesRoot: provenanceRoot,
     bundlePath: brainPetSigstoreBundlePath(provenanceRoot, digest),
     repository,
-    workflowPath: brainPetPublicReleaseWorkflow.path,
-    workflowName: brainPetPublicReleaseWorkflow.name,
+    workflowPath: workflow.path,
+    workflowName: workflow.name,
     sourceCommit,
     label,
   };
@@ -264,7 +291,47 @@ function createProvenanceEvidence(subjectPath, provenanceRoot, repository, sourc
 function validatePhysicalReceipt(path) {
   const receipt = readJson(path);
   const normalized = validateBrainPetPhysicalReceipt(receipt);
-  return { target: normalized.target, overallStatus: normalized.overallStatus, artifactSha256: normalized.artifactSha256, receiptSha256: sha256(path), sourceCommit: normalized.sourceCommit, recordedAt: normalized.completedAt, receipt: normalized };
+  return { path, target: normalized.target, overallStatus: normalized.overallStatus, artifactSha256: normalized.artifactSha256, receiptSha256: sha256(path), sourceCommit: normalized.sourceCommit, candidate: normalized.candidate, reviewer: normalized.reviewer, recordedAt: normalized.completedAt, receipt: normalized };
+}
+
+function validatePhysicalEvidenceProvenance({ physicalEvidence, physicalRoot, provenanceRoot, provenanceVerifier, sourceCommit, sourceRunId }) {
+  const provenanceStat = existsSync(provenanceRoot) ? lstatSync(provenanceRoot) : null;
+  assert.ok(provenanceStat?.isDirectory() && !provenanceStat.isSymbolicLink(), "Public physical evidence requires a regular Sigstore provenance directory.");
+  const intakePath = join(physicalRoot, "brainpet-physical-intake.json");
+  const intake = readJson(intakePath);
+  assert.equal(intake.schemaVersion, 2, "Physical intake schema is invalid.");
+  assert.equal(intake.product, "brainpet");
+  assert.equal(intake.repository, brainPetDistributionContract.identity.repository);
+  assert.equal(intake.sourceCommit, sourceCommit);
+  assert.equal(String(intake.candidate?.runId), String(sourceRunId), "Physical intake references a different candidate run.");
+  assert.match(intake.candidate?.receiptSha256 ?? "", /^[a-f0-9]{64}$/i, "Physical intake candidate receipt digest is invalid.");
+  assert.match(intake.candidate?.challenge ?? "", /^[a-f0-9]{64}$/i, "Physical intake candidate challenge is invalid.");
+  assert.equal(intake.github?.workflow, brainPetPhysicalReceiptWorkflow.name);
+  assert.equal(intake.github?.runnerEnvironment, "github-hosted");
+  assert.ok(typeof intake.github?.actor === "string" && intake.github.actor.length > 0, "Physical intake lacks an authenticated workflow dispatcher.");
+  assert.equal(intake.github?.environment, "brainpet-physical-acceptance");
+  assert.ok(typeof intake.github?.environmentReviewer === "string" && intake.github.environmentReviewer.length > 0, "Physical intake lacks an authenticated environment reviewer.");
+  assert.notEqual(intake.github.environmentReviewer.toLowerCase(), intake.github.actor.toLowerCase(), "Physical intake environment approval was a self-review.");
+  const normalizedReceipts = validateBrainPetPhysicalReceiptSet(physicalEvidence.map((entry) => entry.receipt), {
+    expectedSourceCommit: sourceCommit,
+    expectedCandidate: intake.candidate,
+    expectedReviewer: intake.github.environmentReviewer,
+  });
+  for (let index = 0; index < normalizedReceipts.length; index += 1) {
+    const receipt = normalizedReceipts[index];
+    const entry = physicalEvidence[index];
+    const intakeTarget = intake.targets.find((target) => target.target === receipt.target);
+    assert.equal(intakeTarget?.artifactSha256, receipt.artifactSha256, `Physical intake artifact hash mismatch for ${receipt.target}.`);
+    assert.equal(intakeTarget?.completedAt, receipt.completedAt, `Physical intake completion time mismatch for ${receipt.target}.`);
+    provenanceVerifier(createProvenanceEvidence(entry.path, provenanceRoot, brainPetDistributionContract.identity.repository, sourceCommit, `physical ${receipt.target}`, brainPetPhysicalReceiptWorkflow));
+  }
+  provenanceVerifier(createProvenanceEvidence(intakePath, provenanceRoot, brainPetDistributionContract.identity.repository, sourceCommit, "physical intake", brainPetPhysicalReceiptWorkflow));
+  const expectedBundles = [...physicalEvidence.map((entry) => entry.path), intakePath].map((path) => basename(brainPetSigstoreBundlePath(provenanceRoot, sha256(path)))).sort();
+  const actualBundles = readdirSync(provenanceRoot, { withFileTypes: true }).map((entry) => {
+    assert.ok(entry.isFile() && !entry.isSymbolicLink(), `Physical provenance contains an unexpected entry: ${entry.name}`);
+    return entry.name;
+  }).sort();
+  assert.deepEqual(actualBundles, expectedBundles, "Physical provenance bundle closure is incomplete or contains an extra file.");
 }
 
 function validateArtifactRecord(receiptRoot, artifact, target) {
@@ -332,13 +399,14 @@ function parseArgs(argv) {
     else if (arg === "--lifecycle") options.lifecycleRoot = argv[++index];
     else if (arg === "--bridge") options.bridgeRoot = argv[++index];
     else if (arg === "--physical") options.physicalRoot = argv[++index];
+    else if (arg === "--physical-provenance") options.physicalProvenanceRoot = argv[++index];
     else if (arg === "--provenance") options.provenanceRoot = argv[++index];
     else if (arg === "--output") options.outputPath = argv[++index];
     else if (arg === "--mode") options.releaseMode = argv[++index];
     else if (arg === "--expect-public-ready") options.expectPublicReady = true;
     else throw new Error(`Unknown aggregate receipt argument: ${arg}`);
   }
-  if (!options.packagesRoot || !options.lifecycleRoot || !options.bridgeRoot || !options.outputPath) throw new Error("Usage: aggregate-brainpet-release-receipt.mjs --packages <dir> --lifecycle <dir> --bridge <dir> --output <receipt.json> [--physical <dir>] [--provenance <bundle-dir>] [--mode private-test|public-release]");
+  if (!options.packagesRoot || !options.lifecycleRoot || !options.bridgeRoot || !options.outputPath) throw new Error("Usage: aggregate-brainpet-release-receipt.mjs --packages <dir> --lifecycle <dir> --bridge <dir> --output <receipt.json> [--physical <dir> --physical-provenance <bundle-dir>] [--provenance <bundle-dir>] [--mode private-test|public-release]");
   options.receiptRoot = dirname(resolve(options.outputPath));
   return options;
 }

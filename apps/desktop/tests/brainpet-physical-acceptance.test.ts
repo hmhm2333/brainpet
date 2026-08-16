@@ -19,7 +19,10 @@ test("physical acceptance harness is receipt-driven and does not automate destru
   assert.match(script, /RunInteractive/);
   assert.match(script, /Get-AuthenticodeSignature/);
   assert.match(script, /GetEffectiveDpi/);
-  assert.match(script, /schemaVersion = 4/);
+  assert.match(script, /schemaVersion = 5/);
+  assert.match(script, /CandidateReceiptPath/);
+  assert.match(script, /physicalChallenge/);
+  assert.match(script, /candidateEvidence/);
   assert.match(script, /TargetId/);
   assert.match(script, /SourceCommit/);
   assert.match(script, /authenticodeStatus/);
@@ -38,13 +41,23 @@ test("interactive receipts cover unsigned consent, release lifecycle and physica
   assert.match(macScript, /spctl/);
   assert.match(macScript, /stapler/);
   assert.match(macScript, /developerIdStatus/);
+  assert.match(macScript, /assertMacosCodeObjectIsUnsigned/);
+  assert.match(macScript, /--candidate-receipt/);
+  assert.match(macScript, /physicalChallenge/);
   assert.match(macScript, /system_profiler/);
 });
 
 test("physical evidence enters the public gate only through the dedicated intake workflow", () => {
   assert.match(intakeWorkflow, /name: BrainPet physical receipt intake/);
   assert.match(intakeWorkflow, /brainpet-physical-receipts/);
+  assert.match(intakeWorkflow, /candidate_run_id/);
+  assert.match(intakeWorkflow, /environment: brainpet-physical-acceptance/);
+  assert.match(intakeWorkflow, /actions\/runs\/\$\{GITHUB_RUN_ID\}\/approvals/);
+  assert.match(intakeWorkflow, /--approval-history output\/approval-history\.json/);
+  assert.match(intakeWorkflow, /--candidate-receipt output\/candidate\/candidate-receipt\/brainpet-release-receipt\.json/);
   assert.match(intakeWorkflow, /--require-trusted-ci/);
+  assert.match(intakeWorkflow, /brainpet-sigstore-provenance\.mjs/);
+  assert.match(intakeWorkflow, /output\/sealed\/provenance/);
   assert.doesNotMatch(publicWorkflow, /physical_receipt_run_id/);
   assert.match(publicWorkflow, /brainpet-public-candidate-receipt/);
   assert.match(publicWorkflow, /sigstore\/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6/);
@@ -57,6 +70,8 @@ test("physical evidence enters the public gate only through the dedicated intake
   assert.match(sigstoreProvenance, /RUNNER_ENVIRONMENT/);
   assert.match(finalizeWorkflow, /download-brainpet-public-candidate\.mjs/);
   assert.match(finalizeWorkflow, /download-brainpet-physical-receipts\.mjs/);
+  assert.match(finalizeWorkflow, /--candidate-receipt output\/candidate\/candidate-receipt\/brainpet-release-receipt\.json/);
   assert.match(finalizeWorkflow, /--provenance output\/candidate\/provenance/);
+  assert.match(finalizeWorkflow, /--physical-provenance output\/physical\/provenance/);
   assert.match(finalizeWorkflow, /--expect-public-ready/);
 });

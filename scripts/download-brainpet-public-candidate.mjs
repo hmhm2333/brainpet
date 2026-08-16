@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract, brainPetReleaseTargets } from "./brainpet-release-contract.mjs";
-import { brainPetPublicReleaseWorkflow, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
+import { brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
+import { validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
 
 export function downloadBrainPetPublicCandidate(options) {
   assert.match(options.runId ?? "", /^\d{1,20}$/, "Public candidate run id is invalid.");
@@ -35,11 +37,33 @@ export function downloadBrainPetPublicCandidate(options) {
   runGh(["run", "download", options.runId, "--repo", options.repository, "--name", "brainpet-public-candidate-receipt", "--dir", receiptRoot]);
   runGh(["run", "download", options.runId, "--repo", options.repository, "--name", "brainpet-public-provenance", "--dir", provenanceRoot]);
 
-  assert.equal(findFiles(packagesRoot, /^brainpet-package-receipt-[a-z0-9-]+\.json$/).length, brainPetReleaseTargets.length, "Public candidate package evidence is incomplete.");
-  assert.equal(findFiles(lifecycleRoot, /^brainpet-install-lifecycle-receipt-[a-z0-9-]+-[a-z0-9-]+\.json$/).length, 4, "Public candidate lifecycle evidence is incomplete.");
-  assert.equal(findFiles(bridgeRoot, /^brainpet-release\.json$/).length, 1, "Public candidate Bridge evidence is incomplete.");
+  const provenanceSubjects = [];
+  const packageEntries = readdirSync(packagesRoot, { withFileTypes: true });
+  assert.equal(packageEntries.length, brainPetReleaseTargets.length, "Public candidate package artifact set contains an unexpected top-level entry.");
+  for (const target of brainPetReleaseTargets) {
+    const expectedName = `brainpet-public-runtime-current-${target.id}`;
+    const entry = packageEntries.find((candidate) => candidate.name === expectedName);
+    assert.ok(entry?.isDirectory() && !entry.isSymbolicLink(), `Public candidate package closure is missing: ${expectedName}`);
+    const closure = validateBrainPetPackageArtifactClosure(join(packagesRoot, expectedName), target.id);
+    provenanceSubjects.push(closure.receiptPath, ...closure.artifactPaths);
+  }
+  const lifecycleRequirements = [["windows-x64", "nsis"], ["macos-arm64", "dmg"], ["linux-x64", "appimage"], ["linux-x64", "deb"]];
+  const lifecycleArtifactNames = lifecycleRequirements.map(([target, kind]) => `brainpet-public-lifecycle-${target}-${kind}`);
+  assertExactEntries(lifecycleRoot, lifecycleArtifactNames, "Public candidate lifecycle artifact set");
+  for (const [target, kind] of lifecycleRequirements) {
+    const artifactName = `brainpet-public-lifecycle-${target}-${kind}`;
+    const receiptName = `brainpet-install-lifecycle-receipt-${target}-${kind}.json`;
+    const artifactRoot = join(lifecycleRoot, artifactName);
+    assertExactEntries(artifactRoot, [receiptName], `Public candidate lifecycle ${target}/${kind}`);
+    provenanceSubjects.push(join(artifactRoot, receiptName));
+  }
+  const bridgePaths = findFiles(bridgeRoot, /^brainpet-release\.json$/);
+  assert.equal(bridgePaths.length, 1, "Public candidate Bridge evidence is incomplete.");
+  provenanceSubjects.push(bridgePaths[0]);
   const candidatePaths = findFiles(receiptRoot, /^brainpet-release-receipt\.json$/);
   assert.equal(candidatePaths.length, 1, "Public candidate aggregate receipt is missing.");
+  assertExactEntries(receiptRoot, ["brainpet-release-receipt.json"], "Public candidate receipt artifact");
+  provenanceSubjects.push(candidatePaths[0]);
   const candidate = readJson(candidatePaths[0]);
   assert.equal(candidate.schemaVersion, 2);
   assert.equal(candidate.product, "brainpet");
@@ -51,6 +75,7 @@ export function downloadBrainPetPublicCandidate(options) {
   assert.deepEqual(candidate.releasePolicy, brainPetDistributionContract.releasePolicy);
   assert.equal(candidate.operatingSystemPublisherTrust, false);
   assert.equal(candidate.manualUserConsentRequired, true);
+  assert.match(candidate.physicalChallenge ?? "", /^[a-f0-9]{64}$/i, "Public candidate lacks a physical acceptance challenge.");
   assert.deepEqual(candidate.missingEvidence.sort(), ["macos-arm64:physical-acceptance", "windows-x64:physical-acceptance"]);
   const provenanceVerifier = options.provenanceVerifier ?? verifyBrainPetSigstoreSubject;
   provenanceVerifier({
@@ -62,7 +87,18 @@ export function downloadBrainPetPublicCandidate(options) {
     sourceCommit: options.sourceCommit,
     label: "BrainPet public candidate receipt",
   });
+  const expectedBundles = provenanceSubjects.map((path) => brainPetSigstoreBundlePath(provenanceRoot, sha256(path)).split(/[\\/]/).at(-1));
+  assert.equal(new Set(expectedBundles).size, provenanceSubjects.length, "Public candidate provenance subjects are not unique.");
+  assertExactEntries(provenanceRoot, expectedBundles, "Public candidate provenance closure");
   return { runId: options.runId, packagesRoot, lifecycleRoot, bridgeRoot, provenanceRoot, receiptPath: candidatePaths[0] };
+}
+
+function assertExactEntries(directory, expectedNames, label) {
+  const stat = existsSync(directory) ? lstatSync(directory) : null;
+  assert.ok(stat?.isDirectory() && !stat.isSymbolicLink(), `${label} is missing or unsafe.`);
+  const entries = readdirSync(directory, { withFileTypes: true });
+  for (const entry of entries) assert.equal(entry.isSymbolicLink(), false, `${label} contains a symbolic link: ${entry.name}`);
+  assert.deepEqual(entries.map((entry) => entry.name).sort(), [...expectedNames].sort(), `${label} is incomplete or contains an extra entry.`);
 }
 
 function readJson(path) {
@@ -75,6 +111,10 @@ function runGh(args) {
   const result = spawnSync("gh", args, { encoding: "utf8", timeout: 120_000, windowsHide: true });
   assert.equal(result.status, 0, result.error?.message || result.stderr || `gh ${args.join(" ")} failed.`);
   return result;
+}
+
+function sha256(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
 function findFiles(directory, pattern) {

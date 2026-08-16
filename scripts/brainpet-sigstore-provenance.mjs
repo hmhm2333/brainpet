@@ -21,7 +21,13 @@ export const brainPetPublicReleaseFinalizeWorkflow = Object.freeze({
   trigger: "workflow_dispatch",
   oidcIssuer: "https://token.actions.githubusercontent.com",
 });
-const trustedWorkflows = Object.freeze([brainPetPublicReleaseWorkflow, brainPetPublicReleaseFinalizeWorkflow]);
+export const brainPetPhysicalReceiptWorkflow = Object.freeze({
+  name: "BrainPet physical receipt intake",
+  path: ".github/workflows/brainpet-physical-receipt-intake.yml",
+  trigger: "workflow_dispatch",
+  oidcIssuer: "https://token.actions.githubusercontent.com",
+});
+const trustedWorkflows = Object.freeze([brainPetPublicReleaseWorkflow, brainPetPublicReleaseFinalizeWorkflow, brainPetPhysicalReceiptWorkflow]);
 
 export function signBrainPetReleaseEvidence(options) {
   const subjects = [];
@@ -29,6 +35,7 @@ export function signBrainPetReleaseEvidence(options) {
     const receipt = readJson(receiptPath);
     assert.ok(Array.isArray(receipt.artifacts) && receipt.artifacts.length > 0, `Package receipt has no artifacts: ${receiptPath}`);
     const receiptRoot = dirname(receiptPath);
+    subjects.push(receiptPath);
     for (const artifact of receipt.artifacts) {
       assert.ok(isRecord(artifact) && typeof artifact.path === "string" && /^[a-f0-9]{64}$/i.test(artifact.sha256), `Package artifact record is invalid: ${receiptPath}`);
       const subjectPath = resolveSafeRelative(receiptRoot, artifact.path);

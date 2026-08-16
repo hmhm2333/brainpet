@@ -68,17 +68,20 @@ jobs:
           path: output/helper
       - run: pnpm --filter @open-pets/desktop build
       - run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode public-release --helper output/helper/${{ matrix.file }}
+      - run: node scripts/stage-brainpet-package-artifacts.mjs --source apps/desktop/dist-brainpet/public-release --target ${{ matrix.id }} --output output/public-runtime-current-${{ matrix.id }}
       - uses: actions/upload-artifact@v4
         with:
           name: brainpet-public-runtime-current-${{ matrix.id }}
-          path: apps/desktop/dist-brainpet/public-release/
+          path: output/public-runtime-current-${{ matrix.id }}/
           if-no-files-found: error
       - run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode public-release --helper output/helper/${{ matrix.file }} --app-version 3.3.999 --output apps/desktop/dist-brainpet/public-upgrade-${{ matrix.id }}
+      - run: node scripts/stage-brainpet-package-artifacts.mjs --source apps/desktop/dist-brainpet/public-upgrade-${{ matrix.id }} --target ${{ matrix.id }} --output output/lifecycle-fixture-${{ matrix.id }}
       - uses: actions/upload-artifact@v4
         with:
-          name: brainpet-public-upgrade-fixture-${{ matrix.id }}
-          path: apps/desktop/dist-brainpet/public-upgrade-${{ matrix.id }}/
+          name: brainpet-lifecycle-fixture-${{ matrix.id }}
+          path: output/lifecycle-fixture-${{ matrix.id }}/
           if-no-files-found: error
+          retention-days: 1
 
   installer-lifecycle:
     needs: runtime-package
@@ -99,7 +102,7 @@ jobs:
           path: output/current
       - uses: actions/download-artifact@v4
         with:
-          name: brainpet-public-upgrade-fixture-${{ matrix.id }}
+          name: brainpet-lifecycle-fixture-${{ matrix.id }}
           path: output/previous
       - if: runner.os == 'Linux'
         run: which xvfb-run

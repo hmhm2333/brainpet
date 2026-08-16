@@ -108,9 +108,14 @@ const sigstoreSource = readFileSync(join(root, "scripts", "brainpet-sigstore-pro
 assert.match(sigstoreSource, /--certificate-github-workflow-repository/);
 assert.match(sigstoreSource, /--certificate-github-workflow-sha/);
 assert.match(sigstoreSource, /RUNNER_ENVIRONMENT/);
+assert.match(sigstoreSource, /brainpet-physical-receipt-intake\.yml/);
 const publicReleaseWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-public-release-gate.yml"), "utf8");
 assert.match(publicReleaseWorkflow, /sigstore\/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6/);
 assert.match(publicReleaseWorkflow, /brainpet-public-provenance/);
+assert.match(publicReleaseWorkflow, /stage-brainpet-package-artifacts\.mjs/);
+assert.match(publicReleaseWorkflow, /brainpet-public-runtime-current-/);
+assert.match(publicReleaseWorkflow, /brainpet-lifecycle-fixture-/);
+assert.doesNotMatch(publicReleaseWorkflow, /path:\s*apps\/desktop\/dist-brainpet\/public-release\/?\s*$/m, "Public artifacts must be uploaded from a strict staged allowlist.");
 assert.match(publicReleaseWorkflow, /CSC_IDENTITY_AUTO_DISCOVERY: "false"/);
 assert.doesNotMatch(publicReleaseWorkflow, /BRAINPET_(?:WIN|MAC)|WIN_CSC|CSC_LINK|CSC_KEY_PASSWORD|APPLE_ID|APPLE_TEAM_ID|APPLE_APP_SPECIFIC_PASSWORD/);
 assert.doesNotMatch(publicReleaseWorkflow, /--defer-trust/);
@@ -129,6 +134,20 @@ for (const [name, source] of [["portability", portabilityWorkflow], ["public rel
 }
 assert.ok(existsSync(join(root, ".github", "workflows", "brainpet-physical-receipt-intake.yml")));
 assert.ok(existsSync(join(root, ".github", "workflows", "brainpet-public-release-finalize.yml")));
+const physicalIntakeWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-physical-receipt-intake.yml"), "utf8");
+const publicFinalizeWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-public-release-finalize.yml"), "utf8");
+assert.match(physicalIntakeWorkflow, /candidate_run_id/);
+assert.match(physicalIntakeWorkflow, /environment: brainpet-physical-acceptance/);
+assert.match(physicalIntakeWorkflow, /actions\/runs\/\$\{GITHUB_RUN_ID\}\/approvals/);
+assert.match(physicalIntakeWorkflow, /--candidate-receipt output\/candidate\/candidate-receipt\/brainpet-release-receipt\.json/);
+assert.match(physicalIntakeWorkflow, /--approval-history output\/approval-history\.json/);
+assert.match(physicalIntakeWorkflow, /brainpet-sigstore-provenance\.mjs/);
+assert.match(physicalIntakeWorkflow, /output\/sealed\/provenance/);
+assert.match(publicFinalizeWorkflow, /--physical-provenance output\/physical\/provenance/);
+const packageValidatorSource = readFileSync(join(desktop, "scripts", "validate-brainpet-package.mjs"), "utf8");
+assert.match(packageValidatorSource, /assertMacosCodeObjectIsUnsigned/);
+assert.match(packageValidatorSource, /--appimage-signature/);
+assert.match(packageValidatorSource, /deb unexpectedly contains an embedded signature or non-standard archive member/);
 assert.deepEqual(Object.fromEntries(brainPetDistributionContract.releaseTargets.map((target) => [target.id, target.supportLevel])), {
   "windows-x64": "stable",
   "windows-arm64": "preview",

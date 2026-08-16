@@ -28,9 +28,9 @@ jobs:
         with:
           cosign-release: v3.1.3
       - run: node scripts/download-brainpet-public-candidate.mjs --run-id "${{ inputs.candidate_run_id }}" --output output/candidate
-      - run: node scripts/download-brainpet-physical-receipts.mjs --run-id "${{ inputs.physical_receipt_run_id }}" --output output/physical
+      - run: node scripts/download-brainpet-physical-receipts.mjs --run-id "${{ inputs.physical_receipt_run_id }}" --candidate-receipt output/candidate/candidate-receipt/brainpet-release-receipt.json --output output/physical
       - run: mkdir -p output/final
-      - run: node scripts/aggregate-brainpet-release-receipt.mjs --packages output/candidate/packages --lifecycle output/candidate/lifecycle --bridge output/candidate/bridge --physical output/physical --provenance output/candidate/provenance --output output/final/brainpet-release-receipt.json --mode public-release --expect-public-ready
+      - run: node scripts/aggregate-brainpet-release-receipt.mjs --packages output/candidate/packages --lifecycle output/candidate/lifecycle --bridge output/candidate/bridge --physical output/physical/physical --physical-provenance output/physical/provenance --provenance output/candidate/provenance --output output/final/brainpet-release-receipt.json --mode public-release --expect-public-ready
       - run: node scripts/brainpet-sigstore-provenance.mjs --subject output/final/brainpet-release-receipt.json --output output/final/provenance
       - uses: actions/upload-artifact@v4
         with:

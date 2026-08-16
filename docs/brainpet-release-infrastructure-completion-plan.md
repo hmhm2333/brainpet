@@ -362,11 +362,13 @@ Agent 正常运行且无残留 Hook 错误。
 - package 命令自动调用 validator；
 - 使用包内 client/helper 和默认 discovery 跑 packaged E2E；
 - 真实验证 NSIS、DMG、AppImage、deb 的安装/启动/升级/卸载；
-- 六目标均验证平台签名按政策缺席，Sigstore keyless provenance 进入可信 CI receipt；
-- release receipt 聚合 runtime、installer、helper、Adapter 和人工物理回执。
+- 六目标均以 fail-closed 探针验证平台签名按政策缺席，公开上传与 Sigstore subject 使用同一严格 allowlist；
+- release receipt 聚合 runtime、installer、helper、Adapter，以及绑定候选 challenge、受保护 reviewer 身份并经 Sigstore OIDC 封存的人工物理回执。
 
 退出门：任何缺失项都不能写 `publicReleaseReady=true`；Stable 平台必须有真实
-安装回执，回执须证明系统警告出现且用户主动确认，不以 dry-run 或伪造二进制代替。
+安装回执，回执须绑定候选 run、回执 hash、一次性 challenge 和实际 artifact hash，证明系统警告出现且用户主动确认；
+intake 必须经过 protected Environment 的非触发者 reviewer，机器校验当前 run 的 GitHub approval history，
+并为回执闭包签发 OIDC provenance，不以任意 JSON、自报 CI、自审、dry-run 或伪造二进制代替。
 
 ### RC-7：Release Candidate 验收
 

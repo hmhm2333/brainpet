@@ -214,12 +214,9 @@ function validateUnsignedPlatformPolicy({ appRoot, executable, artifacts, target
   }
   if (target.platform === "macos") {
     const appBundle = appRoot.endsWith("Contents") ? dirname(appRoot) : appRoot;
-    const signature = spawnSync("codesign", ["--display", "--verbose=4", appBundle], { encoding: "utf8" });
-    assert.equal(signature.error, undefined, "Unable to run the macOS code-signature probe.");
-    assert.ok(Number.isInteger(signature.status), "macOS code-signature probe did not return an exit status.");
-    const signatureOutput = `${signature.stdout ?? ""}\n${signature.stderr ?? ""}`;
-    assert.doesNotMatch(signatureOutput, /Authority=Developer ID Application:/, "BrainPet direct-release app must not contain a Developer ID signature.");
+    assertMacosCodeObjectIsUnsigned(spawnSync("codesign", ["--display", "--verbose=4", appBundle], { encoding: "utf8" }), "BrainPet app bundle");
     for (const artifact of artifacts.map((candidate) => candidate.path)) {
+      assertMacosCodeObjectIsUnsigned(spawnSync("codesign", ["--display", "--verbose=4", artifact], { encoding: "utf8" }), `BrainPet DMG ${artifact}`);
       const assessment = spawnSync("spctl", ["--assess", "--type", "open", "--context", "context:primary-signature", "--verbose=2", artifact], { encoding: "utf8" });
       assert.equal(assessment.error, undefined, "Unable to run the macOS Gatekeeper probe.");
       assert.ok(Number.isInteger(assessment.status), "macOS Gatekeeper probe did not return an exit status.");
@@ -230,6 +227,41 @@ function validateUnsignedPlatformPolicy({ appRoot, executable, artifacts, target
       assert.notEqual(stapler.status, 0, "BrainPet direct-release DMG unexpectedly contains a valid notarization ticket.");
     }
     return true;
+  }
+  validateUnsignedLinuxArtifacts(artifacts);
+  return true;
+}
+
+export function assertMacosCodeObjectIsUnsigned(result, label) {
+  assert.equal(result.error, undefined, `Unable to run the macOS code-signature probe for ${label}.`);
+  assert.ok(Number.isInteger(result.status), `macOS code-signature probe did not return an exit status for ${label}.`);
+  assert.notEqual(result.status, 0, `${label} unexpectedly contains a code signature.`);
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  assert.match(output, /code object is not signed at all/i, `${label} did not produce the exact unsigned codesign outcome.`);
+  return true;
+}
+
+export function validateUnsignedLinuxArtifacts(artifacts, commandRunner = spawnSync) {
+  for (const artifact of artifacts) {
+    if (artifact.kind === "appimage") {
+      const result = commandRunner(artifact.path, ["--appimage-signature"], { encoding: "buffer", timeout: 30_000 });
+      assert.equal(result.error, undefined, "Unable to run the AppImage embedded-signature probe.");
+      assert.equal(result.status, 0, "AppImage embedded-signature probe failed.");
+      const output = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? "");
+      const signatureBytes = [...output].filter((byte) => ![0x00, 0x09, 0x0a, 0x0d, 0x20].includes(byte));
+      assert.equal(signatureBytes.length, 0, "BrainPet AppImage unexpectedly contains an embedded signature.");
+    } else if (artifact.kind === "deb") {
+      const result = commandRunner("ar", ["t", artifact.path], { encoding: "utf8", timeout: 30_000 });
+      assert.equal(result.error, undefined, "Unable to run the deb archive-signature probe.");
+      assert.equal(result.status, 0, result.stderr || "deb archive-signature probe failed.");
+      const members = String(result.stdout ?? "").split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+      assert.equal(members.filter((name) => name === "debian-binary").length, 1, "BrainPet deb must contain exactly one debian-binary member.");
+      assert.equal(members.filter((name) => /^control\.tar\.(?:gz|xz|zst|bz2|lzma)$/.test(name)).length, 1, "BrainPet deb must contain exactly one standard control archive.");
+      assert.equal(members.filter((name) => /^data\.tar\.(?:gz|xz|zst|bz2|lzma)$/.test(name)).length, 1, "BrainPet deb must contain exactly one standard data archive.");
+      assert.equal(members.length, 3, "BrainPet deb unexpectedly contains an embedded signature or non-standard archive member.");
+    } else {
+      assert.fail(`Unsupported Linux artifact signature probe: ${artifact.kind}`);
+    }
   }
   return true;
 }

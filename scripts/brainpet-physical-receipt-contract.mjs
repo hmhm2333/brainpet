@@ -25,7 +25,7 @@ const stableTargets = brainPetReleaseTargets.filter((target) => target.supportLe
 
 export function validateBrainPetPhysicalReceipt(receipt, options = {}) {
   assert.ok(isRecord(receipt), "Physical receipt must be a JSON object.");
-  assert.equal(receipt.schemaVersion, 4, "Physical receipt must use schema v4.");
+  assert.equal(receipt.schemaVersion, 5, "Physical receipt must use schema v5.");
   assert.equal(receipt.product, "brainpet");
   assert.equal(receipt.mode, "interactive", "Only an interactive physical acceptance receipt is releasable.");
   assert.equal(receipt.overallStatus, "passed", "Physical acceptance did not pass.");
@@ -41,6 +41,16 @@ export function validateBrainPetPhysicalReceipt(receipt, options = {}) {
   assert.ok(typeof receipt.runId === "string" && receipt.runId.length > 0 && receipt.runId.length <= 128 && !/[\r\n]/.test(receipt.runId), "Physical receipt run id is invalid.");
   assert.ok(typeof receipt.startedAt === "string" && Number.isFinite(Date.parse(receipt.startedAt)), "Physical receipt start time is invalid.");
   assert.ok(typeof receipt.completedAt === "string" && Number.isFinite(Date.parse(receipt.completedAt)), "Physical receipt completion time is invalid.");
+  assert.ok(isRecord(receipt.candidate), "Physical receipt must bind the exact public candidate.");
+  assert.match(receipt.candidate.runId ?? "", /^\d{1,20}$/, "Physical receipt candidate run id is invalid.");
+  assert.match(receipt.candidate.receiptSha256 ?? "", /^[a-f0-9]{64}$/i, "Physical receipt candidate digest is invalid.");
+  assert.match(receipt.candidate.challenge ?? "", /^[a-f0-9]{64}$/i, "Physical receipt candidate challenge is invalid.");
+  if (options.expectedCandidate) {
+    assert.equal(String(receipt.candidate.runId), String(options.expectedCandidate.runId), "Physical receipt references the wrong candidate run.");
+    assert.equal(receipt.candidate.receiptSha256.toLowerCase(), options.expectedCandidate.receiptSha256.toLowerCase(), "Physical receipt references the wrong candidate receipt bytes.");
+    assert.equal(receipt.candidate.challenge.toLowerCase(), options.expectedCandidate.challenge.toLowerCase(), "Physical receipt challenge does not match the candidate.");
+  }
+  if (options.expectedReviewer) assert.equal(receipt.reviewer.trim().toLowerCase(), options.expectedReviewer.toLowerCase(), "Physical receipt reviewer must match the authenticated environment reviewer.");
 
   assert.ok(isRecord(receipt.environment));
   assert.equal(receipt.environment.platform, target.nodePlatform, "Physical receipt ran on the wrong operating system.");
@@ -73,7 +83,7 @@ export function validateBrainPetPhysicalReceipt(receipt, options = {}) {
   assert.equal(new Set(checkIds).size, checkIds.length, "Physical receipt contains duplicate checks.");
   assert.deepEqual([...checkIds].sort(), [...brainPetPhysicalCheckIds].sort(), "Physical receipt check set is incomplete or unknown.");
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     scriptVersion: bounded(receipt.scriptVersion, 64, "Physical receipt script version"),
     product: "brainpet",
     target: receipt.target,
@@ -82,7 +92,12 @@ export function validateBrainPetPhysicalReceipt(receipt, options = {}) {
     startedAt: new Date(receipt.startedAt).toISOString(),
     completedAt: new Date(receipt.completedAt).toISOString(),
     mode: "interactive",
-    reviewer: receipt.reviewer.trim(),
+    reviewer: receipt.reviewer.trim().toLowerCase(),
+    candidate: {
+      runId: String(receipt.candidate.runId),
+      receiptSha256: receipt.candidate.receiptSha256.toLowerCase(),
+      challenge: receipt.candidate.challenge.toLowerCase(),
+    },
     overallStatus: "passed",
     distributionChannel: "direct-download",
     platformSignatureStatus: "absent-by-policy",
@@ -118,11 +133,15 @@ export function validateBrainPetPhysicalReceiptSet(receipts, options = {}) {
 }
 
 export function createBrainPetPhysicalIntake(receipts, identity) {
+  const candidates = new Set(receipts.map((receipt) => JSON.stringify(receipt.candidate)));
+  assert.equal(candidates.size, 1, "Physical intake receipts must bind one exact public candidate.");
+  const candidate = receipts[0].candidate;
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     product: "brainpet",
     repository: brainPetDistributionContract.identity.repository,
     sourceCommit: receipts[0].sourceCommit,
+    candidate,
     targets: receipts.map((receipt) => ({ target: receipt.target, artifactSha256: receipt.artifactSha256, completedAt: receipt.completedAt })),
     github: identity,
     acceptedAt: new Date().toISOString(),

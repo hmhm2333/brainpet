@@ -3,6 +3,10 @@ name: BrainPet physical receipt intake
 on:
   workflow_dispatch:
     inputs:
+      candidate_run_id:
+        description: Successful BrainPet public release gate run whose signed challenge and artifact hashes were tested
+        required: true
+        type: string
       receipts_json:
         description: Minified JSON array from the Windows x64 and macOS arm64 physical acceptance receipts
         required: true
@@ -10,18 +14,29 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  id-token: write
 
 jobs:
   validate-and-seal:
     runs-on: ubuntu-latest
+    environment: brainpet-physical-acceptance
     env:
       BRAINPET_PHYSICAL_RECEIPTS_JSON: ${{ inputs.receipts_json }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - run: node scripts/intake-brainpet-physical-receipts.mjs --payload-env BRAINPET_PHYSICAL_RECEIPTS_JSON --output output/physical --require-trusted-ci
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - run: mkdir -p output
+      - run: gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/approvals" > output/approval-history.json
+      - run: node scripts/download-brainpet-public-candidate.mjs --run-id "${{ inputs.candidate_run_id }}" --output output/candidate
+      - run: node scripts/intake-brainpet-physical-receipts.mjs --payload-env BRAINPET_PHYSICAL_RECEIPTS_JSON --candidate-receipt output/candidate/candidate-receipt/brainpet-release-receipt.json --approval-history output/approval-history.json --output output/sealed/physical --require-trusted-ci
+      - run: node scripts/brainpet-sigstore-provenance.mjs --subject output/sealed/physical/windows-x64/brainpet-physical-receipt.json --subject output/sealed/physical/macos-arm64/brainpet-physical-receipt.json --subject output/sealed/physical/brainpet-physical-intake.json --output output/sealed/provenance
       - uses: actions/upload-artifact@v4
         with:
           name: brainpet-physical-receipts
-          path: output/physical/
+          path: output/sealed/
           if-no-files-found: error
           retention-days: 90
