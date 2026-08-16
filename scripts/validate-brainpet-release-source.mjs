@@ -117,6 +117,7 @@ assert.match(publicReleaseWorkflow, /brainpet-public-provenance/);
 assert.match(publicReleaseWorkflow, /stage-brainpet-package-artifacts\.mjs/);
 assert.match(publicReleaseWorkflow, /brainpet-public-runtime-current-/);
 assert.match(publicReleaseWorkflow, /brainpet-lifecycle-fixture-/);
+assert.match(publicReleaseWorkflow, /name:\s*brainpet-public-bridge\r?\n\s+path:\s*output\/bridge\r?\n\s+include-hidden-files:\s*true/, "Public Bridge artifact must preserve .codex-plugin and every other hidden release entry.");
 assert.doesNotMatch(publicReleaseWorkflow, /path:\s*apps\/desktop\/dist-brainpet\/public-release\/?\s*$/m, "Public artifacts must be uploaded from a strict staged allowlist.");
 assert.match(publicReleaseWorkflow, /CSC_IDENTITY_AUTO_DISCOVERY: "false"/);
 assert.doesNotMatch(publicReleaseWorkflow, /BRAINPET_(?:WIN|MAC)|WIN_CSC|CSC_LINK|CSC_KEY_PASSWORD|APPLE_ID|APPLE_TEAM_ID|APPLE_APP_SPECIFIC_PASSWORD/);

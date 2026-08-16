@@ -134,6 +134,7 @@ jobs:
         with:
           name: brainpet-public-bridge
           path: output/bridge
+          include-hidden-files: true
           if-no-files-found: error
 
   aggregate-public-candidate-receipt:
