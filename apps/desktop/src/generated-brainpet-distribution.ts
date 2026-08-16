@@ -82,3 +82,11 @@ export const brainPetDistributionIdentity = {
   "repository": "hmhm2333/brainpet",
   "updateRepository": "hmhm2333/brainpet"
 } as const;
+export const brainPetReleasePolicy = {
+  "channel": "direct-download",
+  "platformSignatureStatus": "absent-by-policy",
+  "userConsentRequired": true,
+  "storeRegistrationRequired": false,
+  "publisherRegistrationRequired": false,
+  "provenance": "sigstore-keyless"
+} as const;

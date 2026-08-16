@@ -47,14 +47,11 @@ jobs:
           - { id: linux-x64, os: ubuntu-latest, platform: linux, arch: x64, file: brainpet-hook }
           - { id: linux-arm64, os: ubuntu-24.04-arm, platform: linux, arch: arm64, file: brainpet-hook }
     runs-on: ${{ matrix.os }}
+    # Platform publisher signing is deliberately disabled. Sigstore provenance is added later with GitHub OIDC.
     env:
-      WIN_CSC_LINK: ${{ secrets.BRAINPET_WIN_CSC_LINK }}
-      WIN_CSC_KEY_PASSWORD: ${{ secrets.BRAINPET_WIN_CSC_KEY_PASSWORD }}
-      CSC_LINK: ${{ matrix.platform == 'macos' && secrets.BRAINPET_MAC_CSC_LINK || '' }}
-      CSC_KEY_PASSWORD: ${{ matrix.platform == 'macos' && secrets.BRAINPET_MAC_CSC_KEY_PASSWORD || '' }}
-      APPLE_ID: ${{ secrets.BRAINPET_APPLE_ID }}
-      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.BRAINPET_APPLE_APP_SPECIFIC_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.BRAINPET_APPLE_TEAM_ID }}
+      # No Authenticode credentials: Windows artifacts are intentionally unsigned.
+      # No Developer ID credentials: macOS artifacts are intentionally unsigned and unnotarized.
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -70,19 +67,13 @@ jobs:
           name: brainpet-public-helper-${{ matrix.id }}
           path: output/helper
       - run: pnpm --filter @open-pets/desktop build
-      - if: matrix.platform != 'linux'
-        run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode public-release --helper output/helper/${{ matrix.file }}
-      - if: matrix.platform == 'linux'
-        run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode public-release --helper output/helper/${{ matrix.file }} --defer-trust
+      - run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode public-release --helper output/helper/${{ matrix.file }}
       - uses: actions/upload-artifact@v4
         with:
           name: brainpet-public-runtime-current-${{ matrix.id }}
           path: apps/desktop/dist-brainpet/public-release/
           if-no-files-found: error
-      - if: matrix.platform != 'linux'
-        run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode public-release --helper output/helper/${{ matrix.file }} --app-version 3.3.999 --output apps/desktop/dist-brainpet/public-upgrade-${{ matrix.id }}
-      - if: matrix.platform == 'linux'
-        run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode private-test --helper output/helper/${{ matrix.file }} --app-version 3.3.999 --output apps/desktop/dist-brainpet/public-upgrade-${{ matrix.id }}
+      - run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode public-release --helper output/helper/${{ matrix.file }} --app-version 3.3.999 --output apps/desktop/dist-brainpet/public-upgrade-${{ matrix.id }}
       - uses: actions/upload-artifact@v4
         with:
           name: brainpet-public-upgrade-fixture-${{ matrix.id }}

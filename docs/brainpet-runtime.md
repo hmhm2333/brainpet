@@ -82,9 +82,9 @@ idle → opening → ready → running ⇄ paused → settling → ready
 - `pnpm --filter @open-pets/desktop test:brainpet-foundation`：通过 Windows 原生窗口热点打开生产构建，加载版本化资源和通用 scene，真实点击 primary/secondary 目标，验证失焦暂停/恢复、宠物拖动锚定、游戏区拖动时宠物同位移、资源预算、renderer 崩溃后重开和进程清理。
 - `pnpm --filter @open-pets/desktop test:brainpet-electron`：同一真实窗口路径下验证默认 Stage Exerciser；初次透明窗口热点必须使用系统原生点击，不能用 DOM `button.click()` 代替。
 - `$env:BRAINPET_SMOKE_TASK='cargo-signal'; node apps/desktop/scripts/brainpet-electron-smoke.mjs output/playwright/brainpet-cargo-real.png`：强制打开真实补给投递任务，验证 scene、补给箱、飞行目标、桌面叠加、锚定、资源预算与崩溃重开。
-- `pnpm --filter @open-pets/desktop test:brainpet-physical-inventory`：只读盘点当前 Windows、显示器/DPI，以及默认签名 NSIS（若存在）的 hash/trust，并在 `output/physical-acceptance` 写入 inventory 回执；该结果不能进入公开发行门。
-- `powershell -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/brainpet-physical-acceptance.ps1 -RunInteractive -ArtifactPath <signed-setup.exe> -SourceCommit <sha>`：由复核人执行真实安装/发现/Agent lifecycle/升级/卸载、双屏混合 DPI、睡眠恢复、新手理解和动态视觉检查。脚本只主动打开签名安装器，不自动睡眠、修改显示设置或停止进程；只有全部项目通过才出具 privacy-minimized schema-v3 回执。
-- `node apps/desktop/scripts/brainpet-macos-physical-acceptance.mjs --artifact <notarized.dmg> --source-commit <sha> --output <new-dir>`：在 Apple Silicon 物理机验证同一组合同，并自动检查 DMG 的 Gatekeeper 与 stapled notarization ticket。
+- `pnpm --filter @open-pets/desktop test:brainpet-physical-inventory`：只读盘点当前 Windows、显示器/DPI，以及默认未签名 NSIS（若存在）的 hash/AuthentiCode 状态，并在 `output/physical-acceptance` 写入 inventory 回执；该结果不能进入公开发行门。
+- `powershell -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/brainpet-physical-acceptance.ps1 -RunInteractive -ArtifactPath <BrainPet-Unsigned-setup.exe> -SourceCommit <sha>`：由复核人执行系统警告确认、真实安装/发现/Agent lifecycle/升级/卸载、双屏混合 DPI、睡眠恢复、新手理解和动态视觉检查。脚本只主动打开未签名安装器，不关闭 SmartScreen、不自动睡眠、修改显示设置或停止进程；只有全部项目通过才出具 privacy-minimized schema-v4 回执。
+- `node apps/desktop/scripts/brainpet-macos-physical-acceptance.mjs --artifact <BrainPet-Unsigned.dmg> --source-commit <sha> --output <new-dir>`：在 Apple Silicon 物理机验证同一组合同，确认 Gatekeeper 拒绝、没有 notarization ticket，并记录用户通过“隐私与安全性”→“仍要打开”的单应用确认。
 - `pnpm --filter @open-pets/desktop test:brainpet-stress`：真实 Electron 窗口连续开启、开始 session、关闭 100 次。
 - `pnpm --filter @open-pets/desktop test:brainpet-rollback`：关闭 feature flag 后，宠物热点与舞台均不存在。
 - `pnpm --filter @open-pets/desktop test:brainpet-soak`：真实 Electron 舞台持续 30 分钟，反复 session，并通过 CDP 采样 renderer JS heap。
@@ -101,4 +101,4 @@ V1 使用 Electron sandbox renderer + DOM/CSS 像素舞台，不引入 PixiJS。
 
 当前体验测试优先使用 `scripts/brainpet-package-unpacked.mjs`。BrainPet distribution profile 默认启用 BrainPet，OpenPets profile 默认不启用；BrainPet 不自动 seed OpenPets 的三个默认插件，使用独立 user-data、`dev.brainpet.app` 身份和 `hmhm2333/brainpet` 更新源，普通 OpenPets 行为不变。2026-08-14 Interaction Rig Foundation Probe 实测：宠物 ready 590 ms、舞台打开 106 ms；空闲 4 进程 / 494 MiB working set，活动 6 进程 / 702 MiB，崩溃恢复后空闲 5 进程 / 582 MiB；宠物拖动锚定、游戏区反向带动宠物、失焦暂停与崩溃恢复均通过。
 
-这仍不是动态第三方游戏插件或正式发布完成：新增内置任务目前还要同时登记 metadata/evaluator 与 Renderer factory；私测产物未签名，尚未建立 BrainPet 独立 NSIS 安装器、签名证书和可用 release。这些属于下一阶段扩展/发布门槛，不应被 runtime smoke 的通过掩盖。
+这仍不是动态第三方游戏插件或正式发布完成：新增内置任务目前还要同时登记 metadata/evaluator 与 Renderer factory；历史私测产物没有可信 CI provenance，公开未签名直装候选及其 Stable 实机回执仍待通过。这些属于下一阶段扩展/发布门槛，不应被 runtime smoke 的通过掩盖。

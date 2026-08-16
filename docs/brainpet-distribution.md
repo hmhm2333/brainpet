@@ -2,7 +2,7 @@
 
 > 状态：RC6 发行门实现中。默认 package 已自动执行真实 validator，Windows x64
 > private-test 的 unpacked、NSIS 与包内 Helper 已在本机验证；六目标 GitHub runner、
-> DMG/AppImage/deb 生命周期、签名、公证和物理回执未全部通过前，聚合结果必须保持
+> DMG/AppImage/deb 生命周期、未签名策略、Sigstore provenance 和物理回执未全部通过前，聚合结果必须保持
 > `publicReleaseReady=false`。
 
 主宠替代层的分期、Codex 原生控件覆盖和本轮验收门见
@@ -12,23 +12,30 @@
 
 BrainPet 需要两个逻辑组件，但最终体验应表现为一次产品安装：
 
-1. **BrainPet Desktop Runtime**：签名的桌面程序，负责透明宠物窗口、缩放、拖动、舞台、游戏、本地状态与更新。Codex 插件本身不能提供系统级透明常驻窗口，因此 runtime 不能省略。
+1. **BrainPet Desktop Runtime**：明确标注 `Unsigned` 的桌面程序，负责透明宠物窗口、缩放、拖动、舞台、游戏、本地状态与更新。Codex 插件本身不能提供系统级透明常驻窗口，因此 runtime 不能省略。
 2. **BrainPet Codex Bridge**：很小的 Codex 插件，只订阅官方 lifecycle hooks，并把最小状态写入本机 BrainPet IPC。它不包含游戏，不读取 prompt、tool input/output、transcript 或 cwd。
 
 用户不应该手装 Node、npm 包、复制 JSON 或运行开发命令。BrainPet 应在首次启动时检测 Codex，并提供一个明确的“连接 Codex”步骤；Codex 仍由用户亲自完成插件安装、hook 审核和信任。
 
 ## 面向用户的目标流程
 
-1. 用户从官网、GitHub Releases 或应用商店下载带代码签名的 BrainPet 安装包。
-2. 首次启动由宠物提示打开托盘的“BrainPet 安装与恢复”。
-3. 用户点击“检测并连接”，BrainPet 通过已验证的 Codex CLI 安装包内 marketplace
+1. 用户只从 BrainPet GitHub Release 下载与系统匹配、文件名含 `Unsigned` 的安装包，并核对 Release 页给出的 SHA-256 与 Sigstore provenance。
+2. 用户首次运行时阅读操作系统安全警告，确认来源与 hash 后，通过系统提供的单应用确认路径继续；BrainPet 不要求关闭全局安全功能。
+3. 首次启动由宠物提示打开托盘的“BrainPet 安装与恢复”。
+4. 用户点击“检测并连接”，BrainPet 通过已验证的 Codex CLI 安装包内 marketplace
    完成 Bridge 安装或升级；不要求粘贴路径、打开终端，也不直接编辑 Codex TOML。
-4. 新任务中 Codex 展示 hook 定义，用户审核并信任；BrainPet 不代替用户做安全确认。
-5. 用户新建一个 Codex 任务；BrainPet 开始显示工作、等待授权和完成状态。
-6. 如果要完全替代视觉体验，用户手动收起 Codex 原生宠物。BrainPet 不修改或删除 Codex 原生宠物资源。
+5. 新任务中 Codex 展示 hook 定义，用户审核并信任；BrainPet 不代替用户做安全确认。
+6. 用户新建一个 Codex 任务；BrainPet 开始显示工作、等待授权和完成状态。
+7. 如果要完全替代视觉体验，用户手动收起 Codex 原生宠物。BrainPet 不修改或删除 Codex 原生宠物资源。
 
-可接受的最终人工安全步骤只有 **信任 hook**；安装、升级和卸载 Bridge 均由
-BrainPet 明确按钮发起，并保留原子配置备份和脱敏 receipt。
+可接受的最终人工安全步骤有两类：首次运行未签名安装包时的 **操作系统确认**，以及
+首次连接 Bridge 时的 **信任 hook**。安装、升级和卸载 Bridge 均由 BrainPet 明确按钮发起，并保留原子配置备份和脱敏 receipt。
+
+### 系统原生确认路径
+
+- Windows：出现“Windows 已保护你的电脑”时，先核对文件名和 Release hash；只有界面提供绕过时才选择“更多信息”→“仍要运行”。组织策略或 Smart App Control 禁止继续时应停止，不关闭 SmartScreen，不添加 Defender 排除项。微软说明未签名文件会显示该警告，企业策略可能完全禁止绕过：[SmartScreen reputation for Windows app developers](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation)。
+- macOS：首次尝试打开后，到“系统设置”→“隐私与安全性”，仅对 BrainPet 选择“仍要打开/Open Anyway”，再在复现的对话框中确认；不运行 `xattr`、不执行 `spctl --master-disable`，不降低全局 Gatekeeper。苹果明确警告未签名、未公证软件风险，并记录此单应用例外路径：[Open apps safely on your Mac](https://support.apple.com/102445)。
+- Linux：AppImage 可能需要在文件属性中允许“作为程序执行”，`.deb` 可用系统软件安装器打开；不需要商店账号。具体安全提示依发行版而异，用户应只使用 Release 原件并核对 hash。
 
 ## 分阶段分发
 
@@ -48,9 +55,11 @@ BrainPet 明确按钮发起，并保留原子配置备份和脱敏 receipt。
 
 ### 公开发行
 
-- BrainPet Desktop Runtime 独立签名、独立 appId、独立更新通道和卸载项。
-- BrainPet Codex Bridge 提交到 ChatGPT/Codex 共用的公开插件目录。
-- 官网的主按钮下载 runtime；首次启动引导用户从插件目录安装桥接。
+- BrainPet Desktop Runtime 使用独立 appId、独立更新通道和卸载项，但按产品决策不做 Authenticode、Developer ID 或 Apple notarization。
+- 所有安装包文件名带 `Unsigned`；公开页面必须同步说明平台不会显示已验证发布者。
+- GitHub Actions 使用 OIDC 生成 Sigstore keyless provenance；它证明仓库、workflow、提交与文件 digest 的绑定，不替代平台签名。
+- BrainPet Codex Bridge 随安装包内置 marketplace 分发，不依赖 ChatGPT/Codex 公共目录注册。
+- GitHub Release 提供 runtime 安装包；首次启动通过 BrainPet 按钮调用 Codex CLI 安装内置桥接。
 - Bridge 版本声明最低 BrainPet IPC 版本，runtime 对旧/新 bridge 做兼容协商；二者可独立更新。
 
 ## 必须替换的开发依赖
@@ -72,14 +81,14 @@ brainpet-codex-bridge/
 
 Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discovery 发送一次本机 IPC。每次连接尝试最多 350ms；热连接、冷启动轮询和最终发送共享 2600ms 内部 deadline，为 Codex 的 3 秒 Hook 预算保留启动与退出余量。若 runtime 未运行，helper 会读取 per-user 安装标记，验证它只指向当前平台的 BrainPet 可执行文件后再启动。runtime 同时原子写入 `.bak`；主 marker 损坏或陈旧时 helper 只接受该备份或平台固定 BrainPet 安装位置，不采信损坏内容中的路径。Linux AppImage 记录原始 `APPIMAGE` 路径，而不是临时挂载目录。它不启动游戏、不访问网络、不写用户任务内容。
 
-## `0dacd88` 历史发行合同
+## `0dacd88` 历史发行合同（已由 2026-08-16 决策替代）
 
 - `config/brainpet-distribution.json` 是产品身份、Bridge 版本、deadline 与六平台目标矩阵的机器事实源。
-- Electron builder 分为 `electron-builder.brainpet.base.yml`、`electron-builder.brainpet.private.yml` 和 `electron-builder.brainpet.public.yml`。私测包进入 `dist-brainpet/private-test`；公开包缺签名/公证凭据时 fail closed。
+- Electron builder 分为 `electron-builder.brainpet.base.yml`、`electron-builder.brainpet.private.yml` 和 `electron-builder.brainpet.public.yml`。私测包进入 `dist-brainpet/private-test`；公开包固定关闭平台签名与公证，并对意外签名 fail closed。
 - `apps/desktop/scripts/brainpet-package.mjs` 只接受平台、架构、产物类型与 `private-test/public-release` 模式；`package:brainpet:matrix` 对六目标和两种模式做无副作用 dry-run。
 - `integrations/codex/scripts/assemble-bridge-release.mjs` 只从 CI helper 产物装配插件，并生成逐文件 SHA-256 回执。
-- `brainpet:bridge:validate-release` 是二进制发行门；源码 checkout 没有六个 helper 时失败是正确行为。`brainpet:release:test` 是本地源码与装配逻辑门，不替代签名或实机验证。
-- `.github/workflows/brainpet-portability-gate.yml` 构建六类 runtime/helper 私测产物，不发布 Release，也不把未签名包称为公开安装包。
+- `brainpet:bridge:validate-release` 是二进制发行门；源码 checkout 没有六个 helper 时失败是正确行为。`brainpet:release:test` 是本地源码与装配逻辑门，不替代 Sigstore 或实机验证。
+- `.github/workflows/brainpet-portability-gate.yml` 构建六类 runtime/helper 私测产物，不发布 Release；公开候选只能来自专用 public workflow。
 
 ## RC6 真实产物与可信回执
 
@@ -91,8 +100,7 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
 - 私测 portability workflow 在 GitHub 托管的干净 runner 上，对 Windows x64 NSIS、
   macOS arm64 DMG、Linux x64 AppImage/deb 运行真实安装、默认 discovery、包内 helper、
   Adapter 安装/升级/卸载、冷唤醒、状态保留升级和 runtime 卸载。
-- 公开 workflow 还要求 Windows Authenticode、macOS Developer ID + notarization ticket，
-  并在 GitHub-hosted runner 上使用 GitHub OIDC 与 Sigstore keyless bundle 为所有
+- 公开 workflow 反向验证 Windows Authenticode 为 `NotSigned`、macOS 不含 Developer ID 且 Gatekeeper/stapler 不接受，并在 GitHub-hosted runner 上使用 GitHub OIDC 与 Sigstore keyless bundle 为所有
   installer、lifecycle 和 Bridge 回执建立 provenance。聚合器先绑定 artifact hash，
   再用 `cosign verify-blob` 校验 Fulcio/Rekor bundle 中的 repository、workflow 名称与
   路径、触发事件和精确 source commit；该流程不依赖仅 Enterprise Cloud 私有仓库可用的
@@ -100,20 +108,20 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
 - Sigstore public-good 服务会把证书身份与 artifact digest 写入公开透明日志；该身份包含
   repository、workflow/ref 和 commit 元数据，但不会上传安装包、源码、用户配置或人工回执正文。
 - `aggregate-brainpet-release-receipt.mjs` 聚合六目标 runtime、四种真实 installer
-  lifecycle、六 helper Bridge、Adapter 和人工物理回执。Stable 目标仍缺任何签名、
-  公证、安装或物理证据时，只列出 `missingEvidence`，绝不写公开就绪。
+  lifecycle、六 helper Bridge、Adapter 和人工物理回执。Stable 目标仍缺任何未签名策略、
+  provenance、安装或物理用户确认时，只列出 `missingEvidence`，绝不写公开就绪。
 
 ### 不可循环的候选与物理回执流程
 
 公开发行严格分成三次、同 commit 的可信运行，不能在验收后重新构建安装包：
 
-1. 手动运行 `BrainPet public release gate`。它构建并验证六目标签名/公证候选、四条
+1. 手动运行 `BrainPet public release gate`。它构建并验证六目标未签名候选、四条
    installer lifecycle、Bridge 和 provenance，生成 `brainpet-public-candidate-receipt`
    与配套 `brainpet-public-provenance`；由于尚无物理回执，此时必须保持
    `publicReleaseReady=false`。
 2. 从该候选 run 下载 Windows x64 NSIS 和 macOS arm64 DMG 原件，在两台 Stable
    物理机上运行对应验收脚本。intake 后的公开回执只保存平台、显示器摘要、安装包
-   文件名/大小/hash、trust 结果、人工检查结果和 reviewer；本地 note 会被清空，不保存
+   文件名/大小/hash、平台签名缺席、系统警告与人工确认结果和 reviewer；本地 note 会被清空，不保存
    本机绝对路径、Agent 内容或配置正文。
 3. 将两份 JSON 通过 `intake-brainpet-physical-receipts.mjs` 合并为最小 JSON 数组，
    在同 commit 上手动运行 `BrainPet physical receipt intake`。最后运行
@@ -124,13 +132,13 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
 Windows x64：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/brainpet-physical-acceptance.ps1 -RunInteractive -ArtifactPath <signed-setup.exe> -SourceCommit <40-char-sha> -OutputDirectory <new-output-dir>
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/brainpet-physical-acceptance.ps1 -RunInteractive -ArtifactPath <BrainPet-Unsigned-setup.exe> -SourceCommit <40-char-sha> -OutputDirectory <new-output-dir>
 ```
 
 macOS arm64：
 
 ```bash
-node apps/desktop/scripts/brainpet-macos-physical-acceptance.mjs --artifact <notarized.dmg> --source-commit <40-char-sha> --output <new-output-dir>
+node apps/desktop/scripts/brainpet-macos-physical-acceptance.mjs --artifact <BrainPet-Unsigned.dmg> --source-commit <40-char-sha> --output <new-output-dir>
 ```
 
 在任一维护环境合并两份回执；stdout 是可粘贴到 intake workflow 的 JSON。人工 note
@@ -140,19 +148,19 @@ node apps/desktop/scripts/brainpet-macos-physical-acceptance.mjs --artifact <not
 node scripts/intake-brainpet-physical-receipts.mjs --receipt <windows-receipt.json> --receipt <macos-receipt.json> --source-commit <40-char-sha>
 ```
 
-当前机器事实：`hmhm2333/brainpet` 尚未配置 BrainPet Windows/macOS 签名凭据；因此
-公开 workflow 现在应 fail closed。这是外部发行凭据缺口，不得以 self-signed、ad-hoc
-签名或伪造 receipt 替代。
+当前发行策略不需要七个 Windows/macOS 签名 Secret，也不需要 Apple Developer 或商店注册。
+这些值不得随机生成或写入仓库。workflow 只使用 GitHub 自带 OIDC 获取短期 Sigstore 身份；
+若产物意外带平台签名、没有 provenance，或实机没有完成系统警告确认，发行门应 fail closed。
 
 ## Runtime 支持等级
 
 | 目标 | 当前等级 | 升级条件 |
 | --- | --- | --- |
-| Windows x64 | Stable | Authenticode、NSIS 生命周期和物理回执全部绑定同一 commit |
-| macOS arm64 | Stable | Developer ID、公证 DMG、生命周期和物理回执全部绑定同一 commit |
+| Windows x64 | Stable | 未签名状态、Sigstore、NSIS 生命周期和系统警告物理回执全部绑定同一 commit |
+| macOS arm64 | Stable | 未签名/未公证状态、Sigstore、DMG 生命周期和系统警告物理回执全部绑定同一 commit |
 | macOS x64 | Beta | 完成独立真实安装与物理回执后再评估 Stable |
 | Linux x64 | Beta | AppImage/deb 生命周期与可信 provenance 已进入 RC6 门；仍按首发扩展门管理 |
-| Windows arm64 | Preview | 原生 runner、安装/卸载和厂商信任回执齐全后升级 |
+| Windows arm64 | Preview | 原生 runner、安装/卸载和未签名用户确认回执齐全后升级 |
 | Linux arm64 | Preview | 原生 runner、安装/卸载回执齐全后升级 |
 
 托盘“BrainPet 安装与恢复”页给出三类分离证据：runtime 标记与运行版本、Codex/Bridge 检测安装状态、新任务是否真的送达首条 lifecycle。状态、配置备份和操作 receipt 均保存在 BrainPet 独立用户目录；Bridge 版本变化会使旧 lifecycle 证据失效。暂停或卸载 Bridge 不影响离线宠物与训练；卸载 runtime 会删除主/备安装标记并让 Bridge 快速 no-op，但默认保留用户训练进度。
@@ -173,11 +181,12 @@ BrainPet 与 OpenPets 使用独立 discovery 命名空间，避免两款应用�
 
 ## 发布门
 
-- Windows 安装包有代码签名、独立 appId、卸载和更新回退。
+- 六目标安装包均明确标注 `Unsigned`，没有平台签名；具有独立 appId、卸载和更新回退。
+- GitHub/Sigstore provenance、SHA-256、系统警告与用户确认必须绑定同一候选提交。
 - Helper 无 Node/npm 依赖，冷启动和单次 hook 总耗时有实测预算。
 - 插件 manifest 有图标、主页、仓库、隐私政策、许可证和支持链接。
 - 完成四类真实 Codex hook 实测：工作、等待授权、完成、任务结束。
 - 多任务并发不会互相覆盖；BrainPet 关闭/崩溃不会阻塞 Codex。
 - 安装、信任、新任务生效、升级重新信任和卸载均有人工回执。
 
-官方依据：Codex 插件可由本地或 repo marketplace 分发测试，也可提交到 ChatGPT/Codex 共用的公开目录；插件安装后需新开任务，插件 hooks 使用与其他 hooks 相同的 hash-based 信任审核。
+Bridge 使用包内 marketplace，不要求公共目录上架；插件安装后需新开任务，插件 hooks 使用与其他 hooks 相同的 hash-based 信任审核。

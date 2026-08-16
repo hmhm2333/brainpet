@@ -14,7 +14,7 @@ import { assertBrainPetBinary } from "./brainpet-binary-format.mjs";
 import { brainPetPhysicalCheckIds, validateBrainPetPhysicalReceiptSet } from "./brainpet-physical-receipt-contract.mjs";
 import { intakeBrainPetPhysicalReceipts } from "./intake-brainpet-physical-receipts.mjs";
 import { brainPetPublicReleaseFinalizeWorkflow, brainPetPublicReleaseWorkflow, signBrainPetReleaseEvidence, signBrainPetSubjects, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
-import { createBrainPetBuilderInvocation, parseBrainPetPackageArgs, prepareBrainPetBundledMarketplace, validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
+import { createBrainPetBuilderInvocation, parseBrainPetPackageArgs, prepareBrainPetBundledMarketplace, resolveBrainPetElectronDist, validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const testRoot = join(root, "output", "brainpet-m5-release-test", String(process.pid));
@@ -38,15 +38,21 @@ try {
   assert.equal(new Set(receipt.files.map((file) => file.sha256)).size, 6);
   assert.deepEqual(validateBridgeRelease(pluginRoot), { targetCount: 6, receipt: true });
   assert.throws(() => assertBrainPetBinary(Buffer.alloc(20 * 1024, 7), brainPetReleaseTargets[0]), /Unsupported executable/);
-  assert.throws(() => validatePublicReleaseEnvironment(brainPetReleaseTargets.find((target) => target.id === "windows-x64"), {}), /signing credentials/);
-  assert.throws(() => validatePublicReleaseEnvironment(brainPetReleaseTargets.find((target) => target.id === "macos-arm64"), {}), /Developer ID/);
-  assert.throws(() => validatePublicReleaseEnvironment(brainPetReleaseTargets.find((target) => target.id === "linux-x64"), {}), /provenance/i);
+  for (const target of brainPetReleaseTargets) assert.deepEqual(validatePublicReleaseEnvironment(target), brainPetDistributionContract.releasePolicy);
   assert.deepEqual(brainPetReleaseTargets.map((target) => target.supportLevel), ["stable", "preview", "beta", "stable", "beta", "preview"]);
   const versionFixture = parseBrainPetPackageArgs(["--platform", "windows", "--arch", "x64", "--target", "dir", "--mode", "private-test", "--app-version", "3.3.999", "--output", "apps/desktop/dist-brainpet/contract-fixture"]);
   const invocation = createBrainPetBuilderInvocation(versionFixture);
   assert.ok(invocation.args.some((arg) => arg.endsWith("extraMetadata.version=3.3.999")));
+  const publicWindowsInvocation = createBrainPetBuilderInvocation(parseBrainPetPackageArgs(["--platform", "windows", "--arch", "x64", "--target", "installer", "--mode", "public-release", "--dry-run"]));
+  assert.ok(publicWindowsInvocation.args.includes("nsis"));
+  assert.equal(publicWindowsInvocation.args.includes("portable"), false);
+  const publicLinuxInvocation = createBrainPetBuilderInvocation(parseBrainPetPackageArgs(["--platform", "linux", "--arch", "x64", "--target", "installer", "--mode", "public-release", "--dry-run"]));
+  assert.ok(publicLinuxInvocation.args.includes("AppImage"));
+  assert.ok(publicLinuxInvocation.args.includes("deb"));
+  const dryRunFixture = parseBrainPetPackageArgs(["--platform", "linux", "--arch", "x64", "--target", "installer", "--mode", "private-test", "--dry-run"]);
+  assert.match(resolveBrainPetElectronDist(dryRunFixture, () => assert.fail("dry-run must not load or download Electron")), /node_modules[\\/]electron[\\/]dist$/);
   assert.ok(invocation.args.some((arg) => arg.includes("directories.output=")));
-  assert.throws(() => parseBrainPetPackageArgs(["--mode", "public-release", "--defer-trust"]), /GitHub Actions/);
+  assert.throws(() => parseBrainPetPackageArgs(["--mode", "public-release", "--defer-trust"]), /was removed/);
   const windowsTarget = brainPetReleaseTargets.find((target) => target.id === "windows-x64");
   const staged = prepareBrainPetBundledMarketplace({ releaseTarget: windowsTarget, helperPath: join(artifactsRoot, windowsTarget.id, windowsTarget.helperName) });
   const stagedPlugin = join(staged.stagingMarketplaceRoot, "plugins", "brainpet-codex-bridge");
@@ -67,10 +73,10 @@ try {
   assert.equal(aggregateReceipt.rc6GatePassed, true);
   assert.equal(aggregateReceipt.publicReleaseReady, false);
   assert.deepEqual(aggregateReceipt.missingEvidence.sort(), [
+    "macos-arm64:direct-runtime-package",
     "macos-arm64:physical-acceptance",
-    "macos-arm64:trusted-runtime-package",
+    "windows-x64:direct-runtime-package",
     "windows-x64:physical-acceptance",
-    "windows-x64:trusted-runtime-package",
   ]);
   const tamperedArtifact = aggregateFixture.artifacts.get("windows-x64/nsis");
   const originalArtifactBytes = readFileSync(tamperedArtifact);
@@ -90,6 +96,9 @@ try {
   const unsafePhysicalReceipt = structuredClone(physicalReceipts[0]);
   unsafePhysicalReceipt.artifact.name = "C:\\Users\\person\\BrainPet-setup.exe";
   assert.throws(() => validateBrainPetPhysicalReceiptSet([unsafePhysicalReceipt, physicalReceipts[1]], { expectedSourceCommit: receipt.source.commit }), /local path/i);
+  const consentMissingReceipt = structuredClone(physicalReceipts[0]);
+  consentMissingReceipt.checks = consentMissingReceipt.checks.filter((check) => check.id !== "unsigned-security-prompt");
+  assert.throws(() => validateBrainPetPhysicalReceiptSet([consentMissingReceipt, physicalReceipts[1]], { expectedSourceCommit: receipt.source.commit }), /check set/i);
   const intakeRoot = join(testRoot, "physical-intake");
   assert.equal(intakeBrainPetPhysicalReceipts({
     receiptPaths: [],
@@ -103,6 +112,22 @@ try {
   assert.ok(existsSync(join(intakeRoot, "brainpet-physical-intake.json")));
   assert.equal(JSON.parse(readFileSync(join(intakeRoot, "windows-x64", "brainpet-physical-receipt.json"), "utf8")).checks[0].note, "");
   preparePublicAggregateFixture(receipt.source.commit);
+  const signedClaimReceiptPath = join(packagesRoot, "windows-x64", "brainpet-package-receipt-windows-x64.json");
+  const signedClaimReceipt = JSON.parse(readFileSync(signedClaimReceiptPath, "utf8"));
+  signedClaimReceipt.signatureValidated = true;
+  writeFileSync(signedClaimReceiptPath, `${JSON.stringify(signedClaimReceipt, null, 2)}\n`, "utf8");
+  assert.throws(() => aggregateBrainPetReleaseReceipt({
+    packagesRoot,
+    lifecycleRoot,
+    bridgeRoot: pluginRoot,
+    provenanceRoot,
+    outputPath: join(receiptsRoot, "signed-claim-release-receipt.json"),
+    receiptRoot: receiptsRoot,
+    releaseMode: "public-release",
+    provenanceVerifier: () => undefined,
+  }), /must not claim a platform publisher signature/i);
+  signedClaimReceipt.signatureValidated = false;
+  writeFileSync(signedClaimReceiptPath, `${JSON.stringify(signedClaimReceipt, null, 2)}\n`, "utf8");
   assert.throws(() => signBrainPetSubjects([aggregateFixture.artifacts.get("windows-x64/nsis")], join(testRoot, "untrusted-provenance"), {
     environment: trustedSigningEnvironment(receipt.source.commit, { RUNNER_ENVIRONMENT: "self-hosted" }),
     signer: () => assert.fail("untrusted signing must not run"),
@@ -256,7 +281,7 @@ function createAggregateFixture(sourceCommit) {
       return { kind, path: path.slice(packageRoot.length + 1).replaceAll("\\", "/"), bytes: bytes.length, sha256: sha256(bytes) };
     });
     writeFileSync(join(packageRoot, `brainpet-package-receipt-${target.id}.json`), `${JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       product: "brainpet",
       appId: brainPetDistributionContract.identity.appId,
       appVersion: "0.3.0",
@@ -272,6 +297,12 @@ function createAggregateFixture(sourceCommit) {
       artifacts: artifactRecords,
       installerValidated: true,
       signatureValidated: false,
+      unsignedPolicyValidated: false,
+      platformSignatureStatus: "not-evaluated",
+      distributionChannel: "private-test",
+      userConsentRequired: false,
+      publisherRegistrationRequired: false,
+      provenanceValidated: false,
       runtimeReleaseReady: false,
       publicReleaseReady: false,
     }, null, 2)}\n`, "utf8");
@@ -334,10 +365,10 @@ function sha256(bytes) {
 
 function createPhysicalReceipt(targetId, sourceCommit, artifactHash) {
   const isWindows = targetId === "windows-x64";
-  const artifactSha256 = artifactHash ?? createHash("sha256").update(`${targetId}-signed-installer`).digest("hex");
+  const artifactSha256 = artifactHash ?? createHash("sha256").update(`${targetId}-unsigned-installer`).digest("hex");
   return {
-    schemaVersion: 3,
-    scriptVersion: "brainpet-release-v3.0",
+    schemaVersion: 4,
+    scriptVersion: "brainpet-release-v4.0",
     product: "brainpet",
     target: targetId,
     sourceCommit,
@@ -347,6 +378,10 @@ function createPhysicalReceipt(targetId, sourceCommit, artifactHash) {
     mode: "interactive",
     reviewer: "release-fixture",
     overallStatus: "passed",
+    distributionChannel: "direct-download",
+    platformSignatureStatus: "absent-by-policy",
+    systemWarningObserved: true,
+    userConsentConfirmed: true,
     environment: {
       platform: isWindows ? "win32" : "darwin",
       arch: isWindows ? "x64" : "arm64",
@@ -355,10 +390,10 @@ function createPhysicalReceipt(targetId, sourceCommit, artifactHash) {
     },
     artifact: {
       kind: isWindows ? "nsis" : "dmg",
-      name: isWindows ? "BrainPet-3.4.0-x64-setup.exe" : "BrainPet-3.4.0-arm64.dmg",
+      name: isWindows ? "BrainPet-Unsigned-3.4.0-win-x64-setup.exe" : "BrainPet-Unsigned-3.4.0-mac-arm64.dmg",
       sizeBytes: 32 * 1024,
       sha256: artifactSha256,
-      ...(isWindows ? { authenticodeStatus: "Valid" } : { gatekeeperStatus: "Accepted", staplerStatus: "Valid" }),
+      ...(isWindows ? { authenticodeStatus: "NotSigned" } : { developerIdStatus: "Absent", gatekeeperStatus: "Rejected", staplerStatus: "Invalid" }),
     },
     artifactSha256,
     checks: brainPetPhysicalCheckIds.map((id) => ({ id, status: "pass", note: "" })),
@@ -371,8 +406,14 @@ function preparePublicAggregateFixture(sourceCommit) {
     const receiptPath = join(packageRoot, `brainpet-package-receipt-${target.id}.json`);
     const packageReceipt = JSON.parse(readFileSync(receiptPath, "utf8"));
     packageReceipt.releaseMode = "public-release";
-    packageReceipt.signatureValidated = target.platform !== "linux";
-    packageReceipt.runtimeReleaseReady = target.platform !== "linux";
+    packageReceipt.signatureValidated = false;
+    packageReceipt.unsignedPolicyValidated = true;
+    packageReceipt.platformSignatureStatus = "absent-by-policy";
+    packageReceipt.distributionChannel = "direct-download";
+    packageReceipt.userConsentRequired = true;
+    packageReceipt.publisherRegistrationRequired = false;
+    packageReceipt.provenanceValidated = false;
+    packageReceipt.runtimeReleaseReady = true;
     packageReceipt.source = {
       repository: brainPetDistributionContract.identity.repository,
       commit: sourceCommit,

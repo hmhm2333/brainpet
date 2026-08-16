@@ -45,7 +45,7 @@ Check preload syntax → Compile tests to .test-dist → Run behavior tests → 
 brainpet-electron-smoke.mjs → isolated profile → native hotspot click → stage/lifecycle assertions → scoped process-tree cleanup
 brainpet-package.mjs → stage exact target helper → electron-builder → automatic validate-brainpet-package.mjs
 brainpet-package-lifecycle.mjs → disposable GitHub-hosted runner → real install/start/default discovery/helper/upgrade/uninstall receipt
-brainpet-physical-acceptance.ps1 / brainpet-macos-physical-acceptance.mjs → signed Stable installer trust probe → manual lifecycle/display acceptance → privacy-minimized schema-v3 receipt
+brainpet-physical-acceptance.ps1 / brainpet-macos-physical-acceptance.mjs → unsigned Stable installer policy probe → OS-warning consent plus lifecycle/display acceptance → privacy-minimized schema-v4 receipt
 ```
 
 ## Integration Points
@@ -63,10 +63,10 @@ brainpet-physical-acceptance.ps1 / brainpet-macos-physical-acceptance.mjs → si
 - `run-tests.mjs`: Desktop test runner for preload syntax checks, `.test-dist` behavior/contract tests, and remaining runtime checks
 - `brainpet-electron-smoke.mjs`: BrainPet native-entry, stage, performance, crash-isolation, and cleanup smoke
 - `brainpet-package.mjs`: Six-target BrainPet builder that cannot complete without automatic package validation
-- `validate-brainpet-package.mjs`: Runtime/asar/helper/installer/signing/notarization/provenance validator and target receipt writer
+- `validate-brainpet-package.mjs`: Runtime/asar/helper/installer and explicit platform-signature-absence validator and target receipt writer
 - `brainpet-package-lifecycle.mjs`: CI-only real NSIS/DMG/AppImage/deb install, cold-wake, upgrade, Adapter, and uninstall exerciser
-- `brainpet-physical-acceptance.ps1`: Windows x64 signed-NSIS, lifecycle, display/DPI, sleep/wake, and manual schema-v3 physical receipt writer
-- `brainpet-macos-physical-acceptance.mjs`: Apple Silicon notarized-DMG, Gatekeeper/stapler, lifecycle, display, sleep/wake, and manual schema-v3 physical receipt writer
+- `brainpet-physical-acceptance.ps1`: Windows x64 unsigned-NSIS, SmartScreen consent, lifecycle, display/DPI, sleep/wake, and manual schema-v4 physical receipt writer
+- `brainpet-macos-physical-acceptance.mjs`: Apple Silicon unsigned-DMG, Gatekeeper/Open Anyway consent, lifecycle, display, sleep/wake, and manual schema-v4 physical receipt writer
 
 ## Build Plan (release-local.mjs)
 

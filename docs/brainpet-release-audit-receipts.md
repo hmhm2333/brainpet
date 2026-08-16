@@ -88,5 +88,5 @@ dispose、进程/内存证据和 OpenPets 隔离；最终确认原五项与后�
 ### 审核边界
 
 Audit B 只证明 RC-3/RC-4 的内聚、耦合、资源生命周期、性能预算和 OpenPets profile
-退出门。安装/升级/卸载、包内 helper、签名、公证、默认 packaged discovery 和真实小白
+退出门。安装/升级/卸载、包内 helper、未签名策略、Sigstore、系统警告用户确认、默认 packaged discovery 和真实小白
 流程仍由 RC-5、RC-6、Audit C 与 RC-7 负责；本回执不声明公开发行就绪。

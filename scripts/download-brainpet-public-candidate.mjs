@@ -41,12 +41,16 @@ export function downloadBrainPetPublicCandidate(options) {
   const candidatePaths = findFiles(receiptRoot, /^brainpet-release-receipt\.json$/);
   assert.equal(candidatePaths.length, 1, "Public candidate aggregate receipt is missing.");
   const candidate = readJson(candidatePaths[0]);
+  assert.equal(candidate.schemaVersion, 2);
   assert.equal(candidate.product, "brainpet");
   assert.equal(candidate.releaseMode, "public-release");
   assert.equal(candidate.sourceCommit.toLowerCase(), options.sourceCommit.toLowerCase());
   assert.equal(String(candidate.sourceRunId), options.runId, "Public candidate receipt does not bind the selected workflow run.");
   assert.equal(candidate.rc6GatePassed, true);
   assert.equal(candidate.publicReleaseReady, false);
+  assert.deepEqual(candidate.releasePolicy, brainPetDistributionContract.releasePolicy);
+  assert.equal(candidate.operatingSystemPublisherTrust, false);
+  assert.equal(candidate.manualUserConsentRequired, true);
   assert.deepEqual(candidate.missingEvidence.sort(), ["macos-arm64:physical-acceptance", "windows-x64:physical-acceptance"]);
   const provenanceVerifier = options.provenanceVerifier ?? verifyBrainPetSigstoreSubject;
   provenanceVerifier({

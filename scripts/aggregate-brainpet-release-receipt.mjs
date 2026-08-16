@@ -71,7 +71,7 @@ export function aggregateBrainPetReleaseReceipt(options) {
   const stableTargets = brainPetReleaseTargets.filter((target) => target.supportLevel === "stable");
   for (const target of stableTargets) {
     const packageReceipt = packages.find((entry) => entry.target === target.id);
-    if (!packageReceipt?.runtimeReleaseReady) missingEvidence.push(`${target.id}:trusted-runtime-package`);
+    if (!packageReceipt?.runtimeReleaseReady) missingEvidence.push(`${target.id}:direct-runtime-package`);
     if (!lifecycle.some((entry) => entry.target === target.id && entry.overallStatus === "passed")) missingEvidence.push(`${target.id}:install-lifecycle`);
     if (!physical.some((entry) => entry.target === target.id && entry.overallStatus === "passed")) missingEvidence.push(`${target.id}:physical-acceptance`);
   }
@@ -84,11 +84,14 @@ export function aggregateBrainPetReleaseReceipt(options) {
     && bridge.releaseReady;
   const publicReleaseReady = releaseMode === "public-release" && rc6GatePassed && missingEvidence.length === 0;
   const receiptCore = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     product: "brainpet",
     appId: brainPetDistributionContract.identity.appId,
     appVersion,
     releaseMode,
+    releasePolicy: brainPetDistributionContract.releasePolicy,
+    operatingSystemPublisherTrust: false,
+    manualUserConsentRequired: releaseMode === "public-release",
     sourceCommit,
     sourceRunId,
     sourceRunAttempt,
@@ -117,7 +120,7 @@ function validatePackageReceipt(paths, packagesRoot, target, releaseMode, proven
   assert.equal(candidates.length, 1, `Expected exactly one package receipt for ${target.id}.`);
   const path = candidates[0];
   const receipt = readJson(path);
-  assert.equal(receipt.schemaVersion, 1);
+  assert.equal(receipt.schemaVersion, 2);
   assert.equal(receipt.product, "brainpet");
   assert.equal(receipt.appId, brainPetDistributionContract.identity.appId);
   assert.equal(receipt.target, target.id);
@@ -144,16 +147,18 @@ function validatePackageReceipt(paths, packagesRoot, target, releaseMode, proven
     assert.match(receipt.source.runAttempt ?? "", /^\d{1,10}$/, `Public package ${target.id} lacks a workflow run attempt.`);
     assert.equal(receipt.source.treeDirty, false, `Public package ${target.id} came from a dirty tracked tree.`);
     assert.equal(receipt.installerValidated, true, `Public package ${target.id} did not pass its installer structure gate.`);
-    if (target.platform === "linux") {
-      assert.equal(typeof receipt.signatureValidated, "boolean", `Public Linux package ${target.id} lacks its deferred trust state.`);
-    } else {
-      assert.equal(receipt.signatureValidated, true, `Public package ${target.id} did not pass its platform signature gate.`);
-      assert.equal(receipt.runtimeReleaseReady, true, `Public package ${target.id} did not pass its platform trust gate.`);
-    }
+    assert.equal(receipt.signatureValidated, false, `Public package ${target.id} must not claim a platform publisher signature.`);
+    assert.equal(receipt.unsignedPolicyValidated, true, `Public package ${target.id} did not prove signature absence according to policy.`);
+    assert.equal(receipt.platformSignatureStatus, "absent-by-policy", `Public package ${target.id} has the wrong platform signature policy.`);
+    assert.equal(receipt.distributionChannel, "direct-download", `Public package ${target.id} has the wrong distribution channel.`);
+    assert.equal(receipt.userConsentRequired, true, `Public package ${target.id} must require explicit user consent.`);
+    assert.equal(receipt.publisherRegistrationRequired, false, `Public package ${target.id} must not require publisher registration.`);
+    assert.equal(receipt.provenanceValidated, false, `Package-stage receipt ${target.id} must defer Sigstore validation to aggregation.`);
+    assert.equal(receipt.runtimeReleaseReady, true, `Public package ${target.id} did not pass its unsigned direct-release gate.`);
     validateSigstoreProvenance(receiptRoot, receipt, target, provenanceRoot, provenanceVerifier);
   }
   assertUnderRoot(path, packagesRoot, "package receipt");
-  return releaseMode === "public-release" ? { ...receipt, signatureValidated: true, provenanceValidated: true, runtimeReleaseReady: true } : receipt;
+  return releaseMode === "public-release" ? { ...receipt, provenanceValidated: true } : receipt;
 }
 
 function validateSigstoreProvenance(receiptRoot, receipt, target, provenanceRoot, provenanceVerifier) {

@@ -16,9 +16,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-if ([string]::IsNullOrWhiteSpace($ArtifactPath)) { $ArtifactPath = Join-Path $scriptDirectory "..\dist-brainpet\public-release\BrainPet-3.4.0-win-x64-setup.exe" }
+if ([string]::IsNullOrWhiteSpace($ArtifactPath)) { $ArtifactPath = Join-Path $scriptDirectory "..\dist-brainpet\public-release\BrainPet-Unsigned-3.4.0-win-x64-setup.exe" }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path $scriptDirectory "..\..\..\output\physical-acceptance" }
-$scriptVersion = "brainpet-release-v3.0"
+$scriptVersion = "brainpet-release-v4.0"
 $startedAt = Get-Date
 $runId = "$($startedAt.ToString('yyyyMMdd-HHmmss-fff'))-$PID"
 $outputRoot = [System.IO.Path]::GetFullPath($OutputDirectory)
@@ -165,19 +165,20 @@ $overallStatus = "inventory-only"
 
 if ($RunInteractive) {
   if (-not $artifact.exists) { throw "Release installer not found: $([System.IO.Path]::GetFullPath($ArtifactPath))" }
-  if ($artifact.authenticodeStatus -ne "Valid") { throw "Release installer Authenticode status is $($artifact.authenticodeStatus), expected Valid." }
+  if ($artifact.authenticodeStatus -ne "NotSigned") { throw "Unsigned direct-release installer Authenticode status is $($artifact.authenticodeStatus), expected NotSigned." }
   if ($SourceCommit -notmatch '^[a-fA-F0-9]{40}$') { throw "RunInteractive requires -SourceCommit with the exact 40-character release commit." }
-  Write-Host "BrainPet physical acceptance opens the signed installer but never locks Windows, changes display settings, or stops processes." -ForegroundColor Yellow
+  Write-Host "BrainPet physical acceptance opens the explicitly unsigned installer but never disables SmartScreen, changes Windows security settings, locks Windows, changes display settings, or stops processes." -ForegroundColor Yellow
   $reviewer = Read-Host "Reviewer identifier (name, initials, or team code)"
   if ([string]::IsNullOrWhiteSpace($reviewer) -or $reviewer.Length -gt 128) { throw "Reviewer identifier must contain 1-128 characters." }
   Start-Process -FilePath ([System.IO.Path]::GetFullPath($ArtifactPath)) | Out-Null
   Write-Host "Complete the normal per-user install, first-run Agent connection, and the requested checks before recording each answer."
-  $checks += Read-Check -Id "clean-install" -Prompt "Confirm a new user can install the signed NSIS package and reach BrainPet without opening a terminal."
+  $checks += Read-Check -Id "unsigned-security-prompt" -Prompt "Confirm the browser-downloaded Unsigned installer showed the Windows security/SmartScreen warning and you deliberately used the system-provided confirmation path. Do not disable SmartScreen."
+  $checks += Read-Check -Id "clean-install" -Prompt "Confirm a new user can install the Unsigned NSIS package and reach BrainPet without opening a terminal after the one-time system confirmation."
   $checks += Read-Check -Id "default-install-path" -Prompt "Confirm BrainPet runs from the default per-user Programs\brainpet path."
   $checks += Read-Check -Id "no-development-toolchain" -Prompt "Confirm lifecycle and training work with Node, npm, pnpm, Cargo, and Rust removed from PATH."
   $checks += Read-Check -Id "default-discovery" -Prompt "Confirm the packaged Adapter discovers BrainPet without OPENPETS_DISCOVERY_FILE or another override."
   $checks += Read-Check -Id "adapter-first-lifecycle" -Prompt "Run a real Agent task and confirm the first lifecycle event wakes and updates exactly one BrainPet instance."
-  $checks += Read-Check -Id "upgrade-state-preserved" -Prompt "Upgrade from the prior signed candidate and confirm progress plus Adapter trust are preserved or refreshed once."
+  $checks += Read-Check -Id "upgrade-state-preserved" -Prompt "Upgrade from the prior unsigned candidate and confirm progress plus Adapter connection are preserved or refreshed once."
   $checks += Read-Check -Id "uninstall-agent-fail-open" -Prompt "Uninstall BrainPet and confirm the Agent continues normally without Hook errors or a stale wakeup."
   $checks += Read-Check -Id "native-pet-recovery" -Prompt "Confirm uninstall does not remove or modify the Agent's native pet resources."
   $checks += Read-Check -Id "primary-display-edges" -Prompt "Move the pet to all four primary-display edges and open the stage each time. It must remain inside the work area and follow the pet."
@@ -196,7 +197,7 @@ if ($RunInteractive) {
 }
 
 $receipt = [pscustomobject]@{
-  schemaVersion = 3
+  schemaVersion = 4
   scriptVersion = $scriptVersion
   product = "brainpet"
   target = $TargetId
@@ -207,6 +208,10 @@ $receipt = [pscustomobject]@{
   mode = $mode
   reviewer = $reviewer
   overallStatus = $overallStatus
+  distributionChannel = "direct-download"
+  platformSignatureStatus = "absent-by-policy"
+  systemWarningObserved = @($checks | Where-Object { $_.id -eq "unsigned-security-prompt" -and $_.status -eq "pass" }).Count -eq 1
+  userConsentConfirmed = @($checks | Where-Object { $_.id -eq "unsigned-security-prompt" -and $_.status -eq "pass" }).Count -eq 1
   environment = [pscustomobject]@{
     platform = "win32"
     arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x64" }

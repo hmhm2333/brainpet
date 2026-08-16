@@ -21,6 +21,13 @@ export async function runMacosPhysicalAcceptance(options) {
   assert.equal(bytes.toString("ascii", bytes.length - 512, bytes.length - 508), "koly", "BrainPet physical artifact is not a structurally valid DMG.");
   const gatekeeper = spawnSync("spctl", ["--assess", "--type", "open", "--context", "context:primary-signature", "--verbose=2", artifactPath], { encoding: "utf8", timeout: 30_000 });
   const stapler = spawnSync("xcrun", ["stapler", "validate", artifactPath], { encoding: "utf8", timeout: 30_000 });
+  const developerId = spawnSync("codesign", ["--display", "--verbose=4", artifactPath], { encoding: "utf8", timeout: 30_000 });
+  for (const [label, result] of [["Gatekeeper", gatekeeper], ["stapler", stapler], ["Developer ID", developerId]]) {
+    assert.equal(result.error, undefined, `Unable to run the macOS ${label} probe.`);
+    assert.ok(Number.isInteger(result.status), `macOS ${label} probe did not return an exit status.`);
+  }
+  const developerIdOutput = `${developerId.stdout ?? ""}\n${developerId.stderr ?? ""}`;
+  assert.doesNotMatch(developerIdOutput, /Authority=Developer ID Application:/, "Unsigned BrainPet DMG unexpectedly contains a Developer ID signature.");
   const displays = readMacDisplays();
   const startedAt = new Date().toISOString();
   const prompt = createInterface({ input: stdin, output: stdout });
@@ -29,8 +36,8 @@ export async function runMacosPhysicalAcceptance(options) {
     const checks = [];
     for (const id of brainPetPhysicalCheckIds) checks.push(await readCheck(prompt, id, physicalPrompt(id)));
     const receipt = {
-      schemaVersion: 3,
-      scriptVersion: "brainpet-release-v3.0",
+      schemaVersion: 4,
+      scriptVersion: "brainpet-release-v4.0",
       product: "brainpet",
       target: "macos-arm64",
       sourceCommit: options.sourceCommit.toLowerCase(),
@@ -39,13 +46,18 @@ export async function runMacosPhysicalAcceptance(options) {
       completedAt: new Date().toISOString(),
       mode: "interactive",
       reviewer,
-      overallStatus: gatekeeper.status === 0 && stapler.status === 0 && displays.length >= 2 && checks.every((check) => check.status === "pass") ? "passed" : "incomplete",
+      overallStatus: gatekeeper.status !== 0 && stapler.status !== 0 && displays.length >= 2 && checks.every((check) => check.status === "pass") ? "passed" : "incomplete",
+      distributionChannel: "direct-download",
+      platformSignatureStatus: "absent-by-policy",
+      systemWarningObserved: checks.find((check) => check.id === "unsigned-security-prompt")?.status === "pass",
+      userConsentConfirmed: checks.find((check) => check.id === "unsigned-security-prompt")?.status === "pass",
       environment: { platform: process.platform, arch: process.arch, displayCount: displays.length, displays },
       artifact: {
         kind: "dmg",
         name: basename(artifactPath),
         sizeBytes: lstatSync(artifactPath).size,
         sha256: createHash("sha256").update(bytes).digest("hex"),
+        developerIdStatus: "Absent",
         gatekeeperStatus: gatekeeper.status === 0 ? "Accepted" : "Rejected",
         staplerStatus: stapler.status === 0 ? "Valid" : "Invalid",
       },
@@ -88,12 +100,13 @@ async function readCheck(prompt, id, message) {
 
 function physicalPrompt(id) {
   const prompts = {
-    "clean-install": "Install the signed DMG as a new user and confirm setup requires no terminal.",
+    "unsigned-security-prompt": "Open the browser-downloaded Unsigned DMG. Confirm macOS blocks or warns first, then use the system-provided Open/Open Anyway flow deliberately; do not use Terminal or disable Gatekeeper.",
+    "clean-install": "Install the Unsigned DMG as a new user and confirm setup requires no terminal after the one-time system confirmation.",
     "default-install-path": "Confirm BrainPet runs from /Applications/BrainPet.app.",
     "no-development-toolchain": "Confirm lifecycle and training work without Node, npm, pnpm, or Rust on PATH.",
     "default-discovery": "Confirm the packaged Adapter finds BrainPet without a discovery override.",
     "adapter-first-lifecycle": "Run a real Agent task and confirm its first lifecycle event wakes and updates one BrainPet instance.",
-    "upgrade-state-preserved": "Upgrade from the prior signed candidate and confirm progress plus Adapter trust are preserved or refreshed once.",
+    "upgrade-state-preserved": "Upgrade from the prior unsigned candidate and confirm progress plus Adapter connection are preserved or refreshed once.",
     "uninstall-agent-fail-open": "Uninstall BrainPet and confirm the Agent continues normally without Hook errors.",
     "native-pet-recovery": "Confirm uninstall does not remove or alter the Agent's native pet resources.",
     "primary-display-edges": "Move the pet to all primary-display edges and verify stage bounds.",

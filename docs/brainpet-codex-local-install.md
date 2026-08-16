@@ -1,6 +1,6 @@
 # BrainPet：本机 Codex 私测替换方案
 
-> 适用日期：2026-08-15。当前是可回退 private-test，不是公开签名发行版。
+> 适用日期：2026-08-15。当前是可回退 private-test，不是由可信 CI 生成且带 Sigstore provenance 的公开未签名发行版。
 
 ## 1. 2026-08-15 实装结果
 
@@ -23,7 +23,7 @@
 
 ## 3. 风险
 
-- 安装包未签名，Windows 可能显示 SmartScreen/未知发布者；它只用于本机私测，不得对外分发。
+- 安装包未签名，Windows 可能显示 SmartScreen/未知发布者；该本机历史包没有公开候选的 Sigstore provenance，不得对外分发。正式直装包同样未签名，但文件名带 `Unsigned`，且必须来自公开发行 workflow。
 - 更新 Bridge 会改变 Hook hash；Codex 可能要求新任务重新审核，这是预期安全行为。
 - 私测 Bridge 依赖本机 Node fallback；公开用户版不能沿用该依赖。
 - Codex 没有已验证的原生宠物替换 API，因此不能承诺从配置层彻底接管内置宠物。

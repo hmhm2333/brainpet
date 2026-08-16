@@ -3,23 +3,24 @@ extends: ./electron-builder.brainpet.base.yml
 directories:
   output: dist-brainpet/public-release
 
-artifactName: BrainPet-${version}-${os}-${arch}.${ext}
+artifactName: BrainPet-Unsigned-${version}-${os}-${arch}.${ext}
 
 mac:
-  hardenedRuntime: true
-  gatekeeperAssess: true
-  notarize: true
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  notarize: false
   target:
     - dmg
 
 win:
-  signAndEditExecutable: true
-  verifyUpdateCodeSignature: true
+  signAndEditExecutable: false
+  verifyUpdateCodeSignature: false
   target:
     - nsis
 
 nsis:
-  artifactName: BrainPet-${version}-win-${arch}-setup.${ext}
+  artifactName: BrainPet-Unsigned-${version}-win-${arch}-setup.${ext}
 
 linux:
   target:

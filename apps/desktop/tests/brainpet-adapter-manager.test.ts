@@ -170,7 +170,7 @@ test("one-click install backs up config, connects the bundled selector, and writ
   }
 });
 
-test("upgrade removes every legacy BrainPet selector before installing the signed-profile selector", async () => {
+test("upgrade removes every legacy BrainPet selector before installing the explicit product-profile selector", async () => {
   const fixture = createFixture({ plugins: [
     { pluginId: "brainpet-codex-bridge@personal", name: "brainpet-codex-bridge", version: "0.1.0" },
     { pluginId: "brainpet-codex-bridge@brainpet", name: "brainpet-codex-bridge", version: "0.2.0" },

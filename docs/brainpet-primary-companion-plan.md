@@ -61,7 +61,7 @@ Agent providers
 ### 3.3 自动唤醒与收起
 
 - BrainPet 已运行：bridge 直接发送事件，主宠按状态显示。
-- BrainPet 未运行：bridge 读取安装标记，启动签名 runtime；连接、冷启动轮询和重发共享 2.8 秒总 deadline。
+- BrainPet 未运行：bridge 读取并验证产品/平台绑定的安装标记，启动已安装 runtime；连接、冷启动轮询和重发共享 2.8 秒总 deadline。
 - runtime 使用单实例锁；同时到达的多个 hook 不会启动多份进程或多只宠物。
 - 用户选择“本次收起”：当前没有新事件时保持隐藏，下一个新的 Agent 事件可以再次唤醒。
 - 用户选择“暂停跟随 Agent”：持续隐藏且 bridge 不触发窗口，直到用户从托盘选择“唤醒 BrainPet”。
@@ -206,7 +206,7 @@ Codex 当前桥接只具备 `observeLifecycle`。在找到并验证公开的动�
 
 ### M5：安装、适配与跨平台验证
 
-实现状态（2026-08-14）：发行基础设施代码完成，公开发布门尚未宣称通过。BrainPet 已有独立 `appId`、可执行文件名、产物目录、更新仓库和 Windows 卸载标记清理；统一打包入口覆盖 Windows/macOS/Linux 的 x64/arm64 六目标。Codex Bridge 同步覆盖六目标 launcher，并新增原生 helper 装配、SHA-256 回执和强制二进制发行验证。首次运行由宠物气泡引导，托盘提供像素风“安装与恢复”回执页；运行时、Bridge 信任和新任务生效分开显示，卸载/恢复语义不混淆。CI 可在六类 runner 上构建 runtime 与 Rust helper，但代码签名、公证、真实 Codex Hook 信任和六平台实机透明窗口仍是公开发行前的人工门。
+实现状态（2026-08-16 更新）：发行基础设施代码完成，公开发布门尚未宣称通过。BrainPet 已有独立 `appId`、可执行文件名、产物目录、更新仓库和 Windows 卸载标记清理；统一打包入口覆盖 Windows/macOS/Linux 的 x64/arm64 六目标。Codex Bridge 同步覆盖六目标 launcher，并新增原生 helper 装配、SHA-256 回执和强制二进制发行验证。首次运行由宠物气泡引导，托盘提供像素风“安装与恢复”回执页；运行时、Bridge 信任和新任务生效分开显示，卸载/恢复语义不混淆。CI 可在六类 runner 上构建 runtime 与 Rust helper；按产品决策，公开包不做平台签名/公证，改由 Sigstore provenance、系统警告用户确认、真实 Codex Hook 信任和 Stable 实机透明窗口共同放行。
 
 - BrainPet runtime：Windows x64/arm64、macOS Intel/Apple Silicon、Linux x64/arm64；
 - bridge 层：原生 hook 优先，MCP/CLI wrapper 为降级渠道；
@@ -234,7 +234,7 @@ Codex 当前桥接只具备 `observeLifecycle`。在找到并验证公开的动�
 - 主宠收起/暂停/唤醒状态机；
 - activity tray 上限、排序、未读计数与清除；
 - action nonce、到期、重复提交和 provider 断开；
-- install marker 路径校验、签名发行路径和启动超时；
+- install marker 路径校验、未签名直装发行路径和启动超时；
 - 单实例与 20 个并发 hook；
 - 缩放、shape、热点、舞台锚点的纯几何测试；
 - `BRAINPET_ENABLED=0` 回退。

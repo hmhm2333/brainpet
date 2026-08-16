@@ -224,7 +224,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `brainpet/session-authority.ts`: Host-canonical session issuance, scoring, state transitions, and persistence
 - `brainpet/interaction-rig-controller.ts`: Pet/stage anchor ownership, drag transactions, geometry application, and timer disposal
 - `brainpet-installation-state.ts`: Atomic BrainPet runtime/Bridge/lifecycle evidence store and Bridge-version reauthorization policy
-- `generated-brainpet-distribution.ts`: Generated Bridge version, signed-profile identity, and six-target facts consumed by desktop installation code
+- `generated-brainpet-distribution.ts`: Generated Bridge version, product identity, unsigned direct-release policy, and six-target facts consumed by desktop installation code
 - `brainpet-adapter-manager.ts`: Codex CLI detection plus serialized install/upgrade/uninstall transactions, config backup/rollback, bundle hash verification, and redacted receipts
 - `brainpet-setup-guide.ts`: Sender-bound setup IPC that exposes adapter status and explicit one-click connect/remove actions to the sandboxed setup renderer
 - `lifecycle.ts`: Generic app event handlers (quit, window-all-closed, second-instance); delegates focus and one composed disposer without importing concrete services

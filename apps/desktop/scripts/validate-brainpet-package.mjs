@@ -5,12 +5,11 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract, brainPetReleaseTargets } from "../../../scripts/brainpet-release-contract.mjs";
 import { assertBrainPetBinary, inspectExecutableBinary } from "../../../scripts/brainpet-binary-format.mjs";
-import { brainPetPublicReleaseWorkflow, verifyBrainPetSigstoreSubject } from "../../../scripts/brainpet-sigstore-provenance.mjs";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -23,7 +22,7 @@ const unpackedNames = {
   "linux-arm64": "linux-arm64-unpacked",
 };
 
-export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-test", packageTarget = "installer", provenancePath, allowPendingTrust = false }) {
+export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-test", packageTarget = "installer" }) {
   const target = brainPetReleaseTargets.find((candidate) => candidate.id === targetId);
   assert.ok(target, `Unknown BrainPet package target: ${targetId}`);
   assert.ok(["installer", "portable", "dir"].includes(packageTarget), `Unknown BrainPet package artifact target: ${packageTarget}`);
@@ -80,15 +79,17 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
   const packageArtifacts = findPackageArtifacts(resolvedOutput, target, packageTarget);
   const artifactRecords = packageArtifacts.map((artifact) => validatePackageArtifact(artifact, target, resolvedOutput));
   assertRequiredArtifacts(artifactRecords, target, packageTarget);
+  if (mode === "public-release") assertNoUntrackedPublicArtifacts(resolvedOutput, packageArtifacts);
   const installerValidated = packageTarget === "installer" && artifactRecords.length > 0;
   if (mode === "public-release") assert.equal(packageTarget, "installer", `Public ${target.id} releases must produce an installer.`);
-  const signatureValidated = mode === "public-release"
-    ? validatePublicTrust({ appRoot, executable, artifacts: packageArtifacts, target, provenancePath, allowPendingTrust })
+  const unsignedPolicyValidated = mode === "public-release"
+    ? validateUnsignedPlatformPolicy({ appRoot, executable, artifacts: packageArtifacts, target })
     : false;
-  const runtimeReleaseReady = mode === "public-release" && installerValidated && signatureValidated;
+  const signatureValidated = false;
+  const runtimeReleaseReady = mode === "public-release" && installerValidated && unsignedPolicyValidated;
   const buildIdentity = resolveBuildIdentity();
   const receipt = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     target: target.id,
     supportLevel: target.supportLevel,
     product: "brainpet",
@@ -106,12 +107,16 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
     artifacts: artifactRecords,
     installerValidated,
     signatureValidated,
+    unsignedPolicyValidated,
+    platformSignatureStatus: mode === "public-release" ? "absent-by-policy" : "not-evaluated",
+    distributionChannel: mode === "public-release" ? "direct-download" : "private-test",
+    userConsentRequired: mode === "public-release",
+    publisherRegistrationRequired: false,
+    provenanceValidated: false,
     runtimeReleaseReady,
     publicReleaseReady: false,
     note: mode === "public-release"
-      ? signatureValidated
-        ? "Runtime and installer passed their target trust gate. Aggregate public release readiness still requires Bridge, lifecycle, Adapter and physical evidence."
-        : "Public artifact structure passed, but target trust evidence is pending; aggregate public release readiness is false."
+      ? "Unsigned direct-download runtime and installer passed structure and signature-absence gates. Aggregate readiness still requires Sigstore provenance, Bridge, lifecycle, Adapter and physical user-consent evidence."
       : "Private-test runtime; not eligible for public release.",
   };
   writeFileSync(join(resolvedOutput, `brainpet-package-receipt-${target.id}.json`), `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
@@ -123,20 +128,17 @@ function parseArgs(argv) {
   let outputRoot;
   let targetId;
   let packageTarget = "installer";
-  let provenancePath;
-  let allowPendingTrust = false;
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === "--output") outputRoot = argv[++index];
     else if (argv[index] === "--target") targetId = argv[++index];
     else if (argv[index] === "--mode") mode = argv[++index];
     else if (argv[index] === "--package-target") packageTarget = argv[++index];
-    else if (argv[index] === "--provenance") provenancePath = argv[++index];
-    else if (argv[index] === "--allow-pending-trust") allowPendingTrust = true;
+    else if (["--provenance", "--allow-pending-trust"].includes(argv[index])) throw new Error(`${argv[index]} was removed from package validation; Sigstore provenance is validated by the aggregate release gate.`);
     else throw new Error(`Unknown package validation argument: ${argv[index]}`);
   }
   if (!targetId) throw new Error("Usage: validate-brainpet-package.mjs --target <release-target> [--output <directory>]");
   if (!["private-test", "public-release"].includes(mode)) throw new Error(`Invalid package validation mode: ${mode}`);
-  return { outputRoot: outputRoot ?? join(appDir, "dist-brainpet", mode), targetId, mode, packageTarget, provenancePath, allowPendingTrust };
+  return { outputRoot: outputRoot ?? join(appDir, "dist-brainpet", mode), targetId, mode, packageTarget };
 }
 
 function readAsarPackageJson(appAsar) {
@@ -189,44 +191,41 @@ function assertRequiredArtifacts(artifacts, target, packageTarget) {
   for (const kind of expected) assert.ok(actual.has(kind), `${target.id} package is missing required ${kind} artifact.`);
 }
 
-function validatePublicTrust({ appRoot, executable, artifacts, target, provenancePath, allowPendingTrust }) {
-  if (allowPendingTrust) return false;
+function assertNoUntrackedPublicArtifacts(outputRoot, artifacts) {
+  const tracked = new Set(artifacts.map((artifact) => resolve(artifact.path).toLowerCase()));
+  const releaseFiles = readdirSync(outputRoot, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /\.(?:exe|dmg|appimage|deb|zip|tar\.(?:gz|xz))$/i.test(entry.name))
+    .map((entry) => resolve(outputRoot, entry.name));
+  for (const path of releaseFiles) assert.ok(tracked.has(path.toLowerCase()), `Public output contains an untracked distributable artifact: ${path}`);
+}
+
+function validateUnsignedPlatformPolicy({ appRoot, executable, artifacts, target }) {
   if (target.platform === "windows") {
     for (const path of [executable, ...artifacts.map((artifact) => artifact.path)]) {
-      const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-AuthenticodeSignature -LiteralPath '${path.replaceAll("'", "''")}').Status`], { encoding: "utf8", windowsHide: true });
+      const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `$securityModule = Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1'; Import-Module $securityModule -ErrorAction Stop; (Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -LiteralPath '${path.replaceAll("'", "''")}').Status`], { encoding: "utf8", windowsHide: true });
       assert.equal(result.status, 0, result.stderr || "Authenticode validation failed to run.");
-      assert.equal(result.stdout.trim(), "Valid", `BrainPet Authenticode signature is not valid for ${path}: ${result.stdout.trim()}`);
+      assert.equal(result.stdout.trim(), "NotSigned", `BrainPet direct-release artifact unexpectedly has an Authenticode status for ${path}: ${result.stdout.trim()}`);
     }
     return true;
   }
   if (target.platform === "macos") {
     const appBundle = appRoot.endsWith("Contents") ? dirname(appRoot) : appRoot;
-    const result = spawnSync("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appBundle], { encoding: "utf8" });
-    assert.equal(result.status, 0, result.stderr || "BrainPet code signature is invalid.");
-    const appAssessment = spawnSync("spctl", ["--assess", "--type", "execute", "--verbose=2", appBundle], { encoding: "utf8" });
-    assert.equal(appAssessment.status, 0, appAssessment.stderr || "BrainPet signed app assessment failed.");
+    const signature = spawnSync("codesign", ["--display", "--verbose=4", appBundle], { encoding: "utf8" });
+    assert.equal(signature.error, undefined, "Unable to run the macOS code-signature probe.");
+    assert.ok(Number.isInteger(signature.status), "macOS code-signature probe did not return an exit status.");
+    const signatureOutput = `${signature.stdout ?? ""}\n${signature.stderr ?? ""}`;
+    assert.doesNotMatch(signatureOutput, /Authority=Developer ID Application:/, "BrainPet direct-release app must not contain a Developer ID signature.");
     for (const artifact of artifacts.map((candidate) => candidate.path)) {
       const assessment = spawnSync("spctl", ["--assess", "--type", "open", "--context", "context:primary-signature", "--verbose=2", artifact], { encoding: "utf8" });
-      assert.equal(assessment.status, 0, assessment.stderr || "BrainPet notarized installer assessment failed.");
+      assert.equal(assessment.error, undefined, "Unable to run the macOS Gatekeeper probe.");
+      assert.ok(Number.isInteger(assessment.status), "macOS Gatekeeper probe did not return an exit status.");
+      assert.notEqual(assessment.status, 0, "BrainPet direct-release DMG unexpectedly passed Gatekeeper publisher assessment.");
       const stapler = spawnSync("xcrun", ["stapler", "validate", artifact], { encoding: "utf8" });
-      assert.equal(stapler.status, 0, stapler.stderr || "BrainPet notarization ticket is not stapled to the DMG.");
+      assert.equal(stapler.error, undefined, "Unable to run the macOS notarization-ticket probe.");
+      assert.ok(Number.isInteger(stapler.status), "macOS notarization-ticket probe did not return an exit status.");
+      assert.notEqual(stapler.status, 0, "BrainPet direct-release DMG unexpectedly contains a valid notarization ticket.");
     }
     return true;
-  }
-  assert.ok(provenancePath, "Public Linux release requires --provenance <Sigstore bundle directory>.");
-  const sourceCommit = resolveBuildIdentity().commit;
-  assert.match(sourceCommit, /^[a-f0-9]{40}$/i, "Public Linux provenance requires an exact source commit.");
-  const repository = brainPetDistributionContract.identity.repository;
-  for (const artifact of artifacts) {
-    verifyBrainPetSigstoreSubject({
-      subjectPath: artifact.path,
-      bundlesRoot: resolve(provenancePath),
-      repository,
-      workflowPath: brainPetPublicReleaseWorkflow.path,
-      workflowName: brainPetPublicReleaseWorkflow.name,
-      sourceCommit,
-      label: basename(artifact.path),
-    });
   }
   return true;
 }

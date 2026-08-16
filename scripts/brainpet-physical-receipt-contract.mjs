@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { brainPetDistributionContract, brainPetReleaseTargets } from "./brainpet-release-contract.mjs";
 
 export const brainPetPhysicalCheckIds = Object.freeze([
+  "unsigned-security-prompt",
   "clean-install",
   "default-install-path",
   "no-development-toolchain",
@@ -24,10 +25,14 @@ const stableTargets = brainPetReleaseTargets.filter((target) => target.supportLe
 
 export function validateBrainPetPhysicalReceipt(receipt, options = {}) {
   assert.ok(isRecord(receipt), "Physical receipt must be a JSON object.");
-  assert.equal(receipt.schemaVersion, 3, "Physical receipt must use schema v3.");
+  assert.equal(receipt.schemaVersion, 4, "Physical receipt must use schema v4.");
   assert.equal(receipt.product, "brainpet");
   assert.equal(receipt.mode, "interactive", "Only an interactive physical acceptance receipt is releasable.");
   assert.equal(receipt.overallStatus, "passed", "Physical acceptance did not pass.");
+  assert.equal(receipt.distributionChannel, "direct-download", "Physical receipt must cover the direct-download channel.");
+  assert.equal(receipt.platformSignatureStatus, "absent-by-policy", "Physical receipt must acknowledge the unsigned release policy.");
+  assert.equal(receipt.systemWarningObserved, true, "Physical acceptance must observe the operating-system security warning.");
+  assert.equal(receipt.userConsentConfirmed, true, "Physical acceptance must record explicit user consent through the operating-system UI.");
   const target = stableTargets.find((candidate) => candidate.id === receipt.target);
   assert.ok(target, `Physical receipt target is not Stable: ${receipt.target}`);
   assert.match(receipt.sourceCommit, /^[a-f0-9]{40}$/i, "Physical receipt must bind an exact source commit.");
@@ -47,13 +52,15 @@ export function validateBrainPetPhysicalReceipt(receipt, options = {}) {
   assert.ok(isRecord(receipt.artifact));
   assert.equal(receipt.artifact.kind, target.platform === "windows" ? "nsis" : "dmg");
   assert.ok(typeof receipt.artifact.name === "string" && receipt.artifact.name.length > 0 && receipt.artifact.name.length <= 255 && !/[\\/]/.test(receipt.artifact.name), "Physical artifact name must not contain a local path.");
+  assert.match(receipt.artifact.name, /Unsigned/i, "Physical release artifact must be visibly labeled Unsigned.");
   assert.ok(Number.isSafeInteger(receipt.artifact.sizeBytes) && receipt.artifact.sizeBytes >= 16 * 1024, "Physical artifact is implausibly small.");
   assert.match(receipt.artifact.sha256, /^[a-f0-9]{64}$/i);
   assert.equal(receipt.artifactSha256, receipt.artifact.sha256, "Physical artifact hash fields disagree.");
-  if (target.platform === "windows") assert.equal(receipt.artifact.authenticodeStatus, "Valid", "Windows physical artifact is not Authenticode-valid.");
+  if (target.platform === "windows") assert.equal(receipt.artifact.authenticodeStatus, "NotSigned", "Windows direct-release artifact must remain Authenticode-unsigned.");
   else {
-    assert.equal(receipt.artifact.gatekeeperStatus, "Accepted", "macOS physical artifact failed Gatekeeper assessment.");
-    assert.equal(receipt.artifact.staplerStatus, "Valid", "macOS physical artifact lacks a valid stapled notarization ticket.");
+    assert.equal(receipt.artifact.developerIdStatus, "Absent", "macOS direct-release artifact must not contain a Developer ID signature.");
+    assert.equal(receipt.artifact.gatekeeperStatus, "Rejected", "macOS direct-release artifact must not claim Gatekeeper publisher trust.");
+    assert.equal(receipt.artifact.staplerStatus, "Invalid", "macOS direct-release artifact must not contain a notarization ticket.");
   }
 
   assert.ok(Array.isArray(receipt.checks));
@@ -66,7 +73,7 @@ export function validateBrainPetPhysicalReceipt(receipt, options = {}) {
   assert.equal(new Set(checkIds).size, checkIds.length, "Physical receipt contains duplicate checks.");
   assert.deepEqual([...checkIds].sort(), [...brainPetPhysicalCheckIds].sort(), "Physical receipt check set is incomplete or unknown.");
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     scriptVersion: bounded(receipt.scriptVersion, 64, "Physical receipt script version"),
     product: "brainpet",
     target: receipt.target,
@@ -77,6 +84,10 @@ export function validateBrainPetPhysicalReceipt(receipt, options = {}) {
     mode: "interactive",
     reviewer: receipt.reviewer.trim(),
     overallStatus: "passed",
+    distributionChannel: "direct-download",
+    platformSignatureStatus: "absent-by-policy",
+    systemWarningObserved: true,
+    userConsentConfirmed: true,
     environment: {
       platform: receipt.environment.platform,
       arch: receipt.environment.arch,
@@ -89,8 +100,8 @@ export function validateBrainPetPhysicalReceipt(receipt, options = {}) {
       sizeBytes: receipt.artifact.sizeBytes,
       sha256: receipt.artifact.sha256.toLowerCase(),
       ...(target.platform === "windows"
-        ? { authenticodeStatus: "Valid" }
-        : { gatekeeperStatus: "Accepted", staplerStatus: "Valid" }),
+        ? { authenticodeStatus: "NotSigned" }
+        : { developerIdStatus: "Absent", gatekeeperStatus: "Rejected", staplerStatus: "Invalid" }),
     },
     artifactSha256: receipt.artifactSha256.toLowerCase(),
     checks: receipt.checks.map((check) => ({ id: check.id, status: "pass", note: "" })),

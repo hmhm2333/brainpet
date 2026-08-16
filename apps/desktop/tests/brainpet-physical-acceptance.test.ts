@@ -19,23 +19,25 @@ test("physical acceptance harness is receipt-driven and does not automate destru
   assert.match(script, /RunInteractive/);
   assert.match(script, /Get-AuthenticodeSignature/);
   assert.match(script, /GetEffectiveDpi/);
-  assert.match(script, /schemaVersion = 3/);
+  assert.match(script, /schemaVersion = 4/);
   assert.match(script, /TargetId/);
   assert.match(script, /SourceCommit/);
   assert.match(script, /authenticodeStatus/);
   assert.match(script, /artifactSha256/);
   assert.doesNotMatch(script, /path = \$resolved/);
-  assert.doesNotMatch(script, /LockWorkStation|rundll32|Set-DisplayResolution|Stop-Process|Remove-Item/);
+  assert.doesNotMatch(script, /LockWorkStation|rundll32|Set-DisplayResolution|Stop-Process|Remove-Item|Set-MpPreference/);
+  assert.doesNotMatch(macScript, /spctl\s+--master-disable|xattr\s+-[cdr]/);
 });
 
-test("interactive receipts cover release lifecycle and physical checks", () => {
-  for (const check of ["clean-install", "default-install-path", "no-development-toolchain", "default-discovery", "adapter-first-lifecycle", "upgrade-state-preserved", "uninstall-agent-fail-open", "native-pet-recovery", "secondary-display-edges", "mixed-dpi", "sleep-wake", "agent-completion", "novice-rule-comprehension", "dynamic-visual"]) {
+test("interactive receipts cover unsigned consent, release lifecycle and physical checks", () => {
+  for (const check of ["unsigned-security-prompt", "clean-install", "default-install-path", "no-development-toolchain", "default-discovery", "adapter-first-lifecycle", "upgrade-state-preserved", "uninstall-agent-fail-open", "native-pet-recovery", "secondary-display-edges", "mixed-dpi", "sleep-wake", "agent-completion", "novice-rule-comprehension", "dynamic-visual"]) {
     assert.match(script, new RegExp(check));
     assert.match(macScript, new RegExp(check));
   }
   assert.match(script, /overallStatus = if \(\$requiredPassed/);
   assert.match(macScript, /spctl/);
   assert.match(macScript, /stapler/);
+  assert.match(macScript, /developerIdStatus/);
   assert.match(macScript, /system_profiler/);
 });
 

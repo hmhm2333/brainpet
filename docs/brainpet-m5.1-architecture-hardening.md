@@ -14,12 +14,12 @@
 | W3 单一契约 | 已实现 | 两个 `config/brainpet-*.json` 被源码与发行验证器校验 |
 | W4 Deadline / AppImage | 代码完成，跨平台 Rust 实编待 CI | Node/Rust 使用 2600ms 内部 deadline；非 TCP 写入有界；AppImage 持久路径测试通过 |
 | W5 安装状态 | 已实现 | runtime、Bridge 人工确认、与 Bridge 版本绑定的 lifecycle 证据分别持久化；升级会清除旧任务证据 |
-| W6 产物验证 | 本地发行门已实现；远端 public gate 未完成 | Windows unpacked、NSIS、portable 已生成；runtime/installer/签名回执分离；六目标 helper、四格式 lifecycle 与 GitHub OIDC/Sigstore provenance 已纳入候选工作流，仍待真实远端回执 |
+| W6 产物验证 | 本地发行门已实现；远端 public gate 未完成 | Windows unpacked、NSIS、portable 已生成；runtime/installer/未签名策略回执分离；六目标 helper、四格式 lifecycle 与 GitHub OIDC/Sigstore provenance 已纳入候选工作流，仍待真实远端回执 |
 | W7 本机替换 | 待用户最终确认 | 安装包已就绪；尚未运行安装器、写 Codex 插件状态或收起原生宠物 |
 
 ## 1. 目标与完成口径
 
-M5.1 把 M5 的“发行基础设施初版”收敛为可验证、可回退的独立 BrainPet 产品。代码完成和公开发行是两个门：本地代码门必须全部通过；六平台签名、公证、真实 Agent 信任仍需各平台回执，未执行时不得写“公开发行完成”。
+M5.1 把 M5 的“发行基础设施初版”收敛为可验证、可回退的独立 BrainPet 产品。代码完成和公开发行是两个门：本地代码门必须全部通过；2026-08-16 后以六平台未签名策略、Sigstore、Stable 系统警告用户确认和真实 Agent 信任回执为准，未执行时不得写“公开发行完成”。
 
 完成后必须满足：
 
@@ -30,7 +30,7 @@ M5.1 把 M5 的“发行基础设施初版”收敛为可验证、可回退的�
 - AppImage 记录原始 `APPIMAGE` 路径，退出后可由 Hook 冷唤醒。
 - 安装、Bridge 确认、新任务验证、重新授权、暂停和降级进入统一状态机；自动证据和人工确认明确区分。
 - Distribution identity、目标矩阵、版本和 Agent activity 字段拥有单一机器可读事实源。
-- 私测与公开发行模式分离；公开模式缺少签名或公证配置时 fail closed。
+- 私测与公开发行模式分离；公开模式若意外签名、公证或缺少 Sigstore provenance 时 fail closed。
 
 ### 1.1 独立审查问题的处理结果
 
@@ -43,7 +43,7 @@ M5.1 把 M5 的“发行基础设施初版”收敛为可验证、可回退的�
 - unpackaged 正常与回退 Electron smoke：通过。
 - packaged Windows x64 正常与回退 smoke：通过；正常启动 845ms，舞台打开 167ms。
 - Windows 私测安装器：`BrainPet-PrivateTest-3.4.0-win-x64-setup.exe`，175,806,147 bytes，SHA-256 `c8af844b8219248ac094b89811b6fb55e6dc50ae308fb561d21400218754b064`，结构与内容验证通过，`NotSigned` 符合 private-test 定义。
-- 本机没有 Cargo；Rust 六目标真实编译、`--self-test`、macOS/Linux installer 与签名/公证只能由 portability CI 和对应平台完成，当前保持 pending。
+- 本机没有 Cargo；Rust 六目标真实编译、`--self-test`、macOS/Linux installer、未签名策略与 Sigstore 只能由 portability/public CI 和对应平台完成，当前保持 pending。
 
 ## 2. 目标依赖方向
 
@@ -104,7 +104,7 @@ UI、provider adapter、任务 runtime 和发行脚本不互相读取内部状�
 
 二进制验证器解析 PE/Mach-O/ELF header 和目标架构；runtime validator 从 `app.asar`/manifest 验证产品身份，不能把 appId 硬编码进回执。Electron builder 拆分 base、private-test、public-release 三层配置。公开模式必须验签，私测产物和回执明确写 private-test。
 
-退出门：六目标真实 helper 和 runtime directory 通过格式/架构验证；Windows ARM64 使用原生 runner；NSIS、DMG、AppImage、deb 至少生成并进入各自安装测试；公开模式缺签名立即失败。
+退出门：六目标真实 helper 和 runtime directory 通过格式/架构验证；Windows ARM64 使用原生 runner；NSIS、DMG、AppImage、deb 至少生成并进入各自安装测试；公开模式若不符合明确的未签名策略或缺 Sigstore 立即失败。
 
 ### W7：本机替换与回退
 
@@ -131,4 +131,4 @@ Windows 本机先生成 private-test 安装包和 Bridge；备份当前 Codex �
 
 ## 6. 最终退出门
 
-代码门：桌面全量测试、M5.1 合同、Electron 正常/回退 smoke、Windows 真实私测安装包与打包后 runtime smoke 全部通过。安装器真正写入本机和 Codex Hook 信任属于 W7 人工门，必须先取得用户针对精确路径与回退动作的确认。平台门：六平台 CI 真实构建通过；未执行的签名、公证或实机项必须保持 pending。
+代码门：桌面全量测试、M5.1 合同、Electron 正常/回退 smoke、Windows 真实私测安装包与打包后 runtime smoke 全部通过。安装器真正写入本机和 Codex Hook 信任属于 W7 人工门，必须先取得用户针对精确路径与回退动作的确认。平台门：六平台 CI 真实构建通过；未执行的未签名策略、Sigstore、系统警告用户确认或实机项必须保持 pending。

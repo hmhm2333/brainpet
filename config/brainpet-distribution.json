@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "identity": {
     "profile": "brainpet",
     "displayName": "BrainPet",
@@ -14,6 +14,14 @@
     "hookDeadlineMs": 2600,
     "connectAttemptMs": 350,
     "pollIntervalMs": 50
+  },
+  "releasePolicy": {
+    "channel": "direct-download",
+    "platformSignatureStatus": "absent-by-policy",
+    "userConsentRequired": true,
+    "storeRegistrationRequired": false,
+    "publisherRegistrationRequired": false,
+    "provenance": "sigstore-keyless"
   },
   "releaseTargets": [
     { "id": "windows-x64", "platform": "windows", "nodePlatform": "win32", "electronPlatform": "win", "arch": "x64", "rustTarget": "x86_64-pc-windows-msvc", "helperName": "brainpet-hook.exe", "binaryFormat": "pe", "machine": 34404, "supportLevel": "stable" },

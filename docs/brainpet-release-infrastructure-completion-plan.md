@@ -1,6 +1,6 @@
 # BrainPet Release 基础设施收工计划
 
-> 状态：实施中。RC-0～RC-5 已通过对应退出门，RC-6 正在执行真实跨平台 CI；本文定义从当前 `0dacd88` 收敛到可发行版本的工作，
+> 状态：实施中。RC-0～RC-5 已通过对应退出门，RC-6 正在执行真实跨平台 CI；2026-08-16 经产品所有者确认，发行路线修订为全平台未签名直装，不进商店且不注册平台发行者。本文定义从当前实现收敛到可发行版本的工作，
 > 不代表相关能力已经完成，也不命名为新的产品里程碑。当前冻结新游戏、积分、
 > 天梯、商业化和未经验证的新 Agent，直到本文全部退出门通过。
 
@@ -12,7 +12,7 @@
 | RC-1～RC-2 | 已通过 | `80dc0a3`、`36083ce`；Audit A 整改与独立复审在 `a23270e`、`6cf53bd` 通过 |
 | RC-3～RC-4 | 已通过 | `6464fe3`、`b8d87fa`；Audit B 整改与独立复审在 `73ffb47`、`9e6a691` 通过 |
 | RC-5 | 已通过 | `f9802a9`；Windows x64 native-only 包、一次点击 Codex、single-instance、冷唤醒恢复与真实 packaged UI smoke 通过 |
-| RC-6 | 进行中 | 默认 package 自动 validator、真实 installer lifecycle、可信 provenance、候选→物理 intake→finalize 三段聚合回执已完成本地门；远端六目标/四格式/Stable 实机回执未通过前不标完成 |
+| RC-6 | 进行中 | 默认 package 自动 validator、真实 installer lifecycle、未签名直装合同、可信 provenance、候选→物理 intake→finalize 三段聚合回执已完成本地门；Windows x64 未签名公开包已通过本机结构/Authenticode 缺席验证；远端六目标/四格式/Stable 实机回执未通过前不标完成 |
 | RC-7 | 待实施 | 未满足对应退出门前不得标记完成 |
 
 ## 1. 最终目标
@@ -31,7 +31,7 @@ Release 完成后，普通用户只需要：
 5. 从宠物直接进入训练，Agent 状态和游戏互不阻塞；
 6. 可以从系统卸载入口完整回退，不破坏 Agent 配置和原生宠物。
 
-完成口径不是“开发模式能跑”，而是签名安装包中的真实 runtime、内置 helper、
+完成口径不是“开发模式能跑”，而是明确标注未签名的安装包中的真实 runtime、内置 helper、
 默认 discovery、安装/升级/卸载和至少一条真实 Agent 生命周期全部通过。
 
 ## 2. 设计原则
@@ -63,8 +63,17 @@ Release 完成后，普通用户只需要：
 
 ### 2.2 Installed-first
 
-所有设计首先回答“签名安装包里的新用户能否成功”，再考虑开发模式便利性。
+所有设计首先回答“未签名直装包里的新用户能否看懂风险提示并成功安装”，再考虑开发模式便利性。
 workspace 路径、全局 Node、开发环境变量或人工缓存都不能成为 release 依赖。
+
+### 2.5 未签名直装发行合同
+
+- Windows、macOS、Linux 均从 GitHub Release 直接下载，不进入应用商店；
+- 不申请 Apple Developer、Microsoft 代码签名证书或其他平台发行者注册；
+- Windows 与 macOS 安装包必须明确标注 `Unsigned`，不得声称已获平台信任；
+- 用户必须看见系统安全警告并主动确认后才能继续，产品文档提供系统原生确认路径；
+- CI 使用 GitHub OIDC 的 Sigstore keyless provenance 绑定仓库、workflow、提交和 SHA-256；这证明来源与完整性，不等同于 Authenticode、Developer ID 或 notarization；
+- `publicReleaseReady=true` 仅表示“可诚实发布的未签名直装候选”完成全部自动门和 Stable 实机验收，不表示操作系统信任发布者。
 
 ### 2.3 能力诚实
 
@@ -138,7 +147,7 @@ adapterVersion
 
 - BrainPet 首次引导生成的所有 Adapter 配置都显式写入 BrainPet target；
 - 显式 target 不存在时 fail-open，不得静默连接另一产品；
-- 通用 CLI 必须要求 `--product brainpet|openpets`，或从已签名安装来源取得 target；
+- 通用 CLI 必须要求 `--product brainpet|openpets`，或从已验证的 BrainPet 安装标记取得 target；
 - OpenPets 与 BrainPet 同时运行是必须通过的合同场景；
 - Codex、Claude、OpenCode、Cursor/MCP 共享同一 target resolver，不再各自维护
   相反的 discovery 优先级。
@@ -202,8 +211,8 @@ OpenPets 通用插件平台仍保留为 Optional Service，但不因训练而在
 
 每个平台发布一个普通用户可识别的产物：
 
-- Windows：签名 per-user NSIS installer；
-- macOS：签名并公证的 DMG；
+- Windows：文件名明确带 `Unsigned` 的 per-user NSIS installer；
+- macOS：文件名明确带 `Unsigned`、未签名且未公证的 DMG；
 - Linux x64：AppImage + deb；Linux arm64 在达到真实 runner 门禁前标 Preview。
 
 安装包内必须包含 runtime、对应架构的 native helper、Adapter 源/manifest、字体、
@@ -341,7 +350,7 @@ no-op；隐私 rejected fields 无法进入协议。
 - 实现一次点击 Agent 检测与连接；
 - 原子配置备份、升级、卸载和 receipt；
 - 完成 single-instance、跟随 Agent 冷唤醒、损坏 marker 恢复；
-- 更新源、appId、数据目录和 Adapter 目标全部绑定签名 profile。
+- 更新源、appId、数据目录和 Adapter 目标全部绑定 BrainPet product profile。
 
 退出门：干净虚拟机上从下载到第一条宠物状态无需终端；升级保留状态；卸载后
 Agent 正常运行且无残留 Hook 错误。
@@ -353,11 +362,11 @@ Agent 正常运行且无残留 Hook 错误。
 - package 命令自动调用 validator；
 - 使用包内 client/helper 和默认 discovery 跑 packaged E2E；
 - 真实验证 NSIS、DMG、AppImage、deb 的安装/启动/升级/卸载；
-- Windows 签名、macOS 签名公证、Linux provenance 进入可信 CI receipt；
+- 六目标均验证平台签名按政策缺席，Sigstore keyless provenance 进入可信 CI receipt；
 - release receipt 聚合 runtime、installer、helper、Adapter 和人工物理回执。
 
 退出门：任何缺失项都不能写 `publicReleaseReady=true`；Stable 平台必须有真实
-安装回执，不以 dry-run 或伪造二进制代替。
+安装回执，回执须证明系统警告出现且用户主动确认，不以 dry-run 或伪造二进制代替。
 
 ### RC-7：Release Candidate 验收
 
@@ -444,7 +453,7 @@ Agent 正常运行且无残留 Hook 错误。
 - macOS Intel/Apple Silicon；
 - Linux x64/arm64；
 - 多屏、125%/150% DPI、睡眠恢复；
-- 真实 Codex/Claude/OpenCode 安装与厂商信任界面；
+- 真实 Codex/Claude/OpenCode 安装、操作系统未签名警告与用户确认界面；
 - 安装、升级、卸载和原生宠物恢复录制回执。
 
 ## 10. 独立 SubAgent 审核制度
@@ -474,7 +483,7 @@ profile 回归不变。
 
 时点：RC-5、RC-6 完成后，RC 候选构建之前。
 
-范围：干净机安装、Adapter 检测/信任、冷唤醒、升级/卸载、签名、公证、默认
+范围：干净机安装、Adapter 检测/信任、冷唤醒、升级/卸载、未签名策略、Sigstore、系统警告用户确认、默认
 discovery、支持等级和文档真实性。
 
 退出门：所有 P0/P1 清零；审核者确认测试使用真实包而非 workspace 替身。
@@ -505,7 +514,7 @@ discovery、支持等级和文档真实性。
 - [ ] 普通用户安装不需要终端和开发工具；
 - [ ] Agent 首次事件可以安全冷唤醒 single-instance runtime；
 - [ ] 性能预算、30 分钟 soak 和 24 小时 idle 通过；
-- [ ] Stable 平台有签名/公证、安装、升级、卸载回执；
+- [ ] Stable 平台有平台签名缺席、Sigstore、系统警告用户确认、安装、升级、卸载回执；
 - [ ] 默认包命令自动执行真实 package validator；
 - [ ] rollback smoke、双宿主、packaged discovery 进入默认发行门；
 - [ ] 三次独立 SubAgent 审核无未解决 P0/P1；

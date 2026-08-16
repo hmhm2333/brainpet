@@ -30,10 +30,24 @@ assert.match(baseConfig, /\.brainpet-package\/marketplace/);
 assert.match(privateConfig, /dist-brainpet\/private-test/);
 assert.match(privateConfig, /signAndEditExecutable: false/);
 assert.match(publicConfig, /dist-brainpet\/public-release/);
-assert.match(publicConfig, /hardenedRuntime: true/);
-assert.match(publicConfig, /verifyUpdateCodeSignature: true/);
+assert.match(publicConfig, /BrainPet-Unsigned-/);
+assert.match(publicConfig, /identity: null/);
+assert.match(publicConfig, /hardenedRuntime: false/);
+assert.match(publicConfig, /gatekeeperAssess: false/);
+assert.match(publicConfig, /notarize: false/);
+assert.match(publicConfig, /signAndEditExecutable: false/);
+assert.match(publicConfig, /verifyUpdateCodeSignature: false/);
 assert.equal(brainPetDistributionContract.identity.appId, "dev.brainpet.app");
 assert.equal(brainPetDistributionContract.identity.executableName, "brainpet");
+assert.equal(brainPetDistributionContract.schemaVersion, 2);
+assert.deepEqual(brainPetDistributionContract.releasePolicy, {
+  channel: "direct-download",
+  platformSignatureStatus: "absent-by-policy",
+  userConsentRequired: true,
+  storeRegistrationRequired: false,
+  publisherRegistrationRequired: false,
+  provenance: "sigstore-keyless",
+});
 assert.deepEqual(releaseCapabilities.productIds, ["openpets", "brainpet"]);
 assert.deepEqual(Object.keys(releaseCapabilities.runtimeSnapshots.openpets), releaseCapabilities.capabilityIds);
 assert.deepEqual(Object.keys(releaseCapabilities.runtimeSnapshots.brainpetEnabled), releaseCapabilities.capabilityIds);
@@ -97,6 +111,9 @@ assert.match(sigstoreSource, /RUNNER_ENVIRONMENT/);
 const publicReleaseWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-public-release-gate.yml"), "utf8");
 assert.match(publicReleaseWorkflow, /sigstore\/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6/);
 assert.match(publicReleaseWorkflow, /brainpet-public-provenance/);
+assert.match(publicReleaseWorkflow, /CSC_IDENTITY_AUTO_DISCOVERY: "false"/);
+assert.doesNotMatch(publicReleaseWorkflow, /BRAINPET_(?:WIN|MAC)|WIN_CSC|CSC_LINK|CSC_KEY_PASSWORD|APPLE_ID|APPLE_TEAM_ID|APPLE_APP_SPECIFIC_PASSWORD/);
+assert.doesNotMatch(publicReleaseWorkflow, /--defer-trust/);
 assert.doesNotMatch(publicReleaseWorkflow, /actions\/attest|gh attestation/, "Private-repository RC6 must not depend on GitHub Artifact Attestations.");
 const portabilityWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-portability-gate.yml"), "utf8");
 for (const [name, source] of [["portability", portabilityWorkflow], ["public release", publicReleaseWorkflow]]) {
@@ -152,6 +169,7 @@ const installationStateSource = readFileSync(join(desktop, "src", "brainpet-inst
 const installMarkerSource = readFileSync(join(desktop, "src", "brainpet-install-marker.ts"), "utf8");
 const generatedDistributionSource = readFileSync(join(desktop, "src", "generated-brainpet-distribution.ts"), "utf8");
 assert.match(generatedDistributionSource, new RegExp(`brainPetBridgeVersion = "${brainPetDistributionContract.bridge.version.replaceAll(".", "\\.")}"`));
+assert.match(generatedDistributionSource, /brainPetReleasePolicy/);
 assert.match(installationStateSource, /from "\.\/generated-brainpet-distribution\.js"/, "Installation evidence must consume the generated Bridge version.");
 const adapterManagerSource = readFileSync(join(desktop, "src", "brainpet-adapter-manager.ts"), "utf8");
 assert.match(adapterManagerSource, /plugin", "marketplace", "add"/, "BrainPet one-click setup must add the bundled marketplace through Codex CLI.");
