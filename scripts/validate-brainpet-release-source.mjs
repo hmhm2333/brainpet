@@ -146,6 +146,10 @@ assert.doesNotMatch(publicReleaseWorkflow, /BRAINPET_(?:WIN|MAC)|WIN_CSC|CSC_LIN
 assert.doesNotMatch(publicReleaseWorkflow, /--defer-trust/);
 assert.doesNotMatch(publicReleaseWorkflow, /actions\/attest|gh attestation/, "Private-repository RC6 must not depend on GitHub Artifact Attestations.");
 const portabilityWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-portability-gate.yml"), "utf8");
+assert.match(portabilityWorkflow, /^on:\r?\n\s+workflow_dispatch:\s*$/m, "Six-target portability must remain an explicit RC-boundary dispatch.");
+assert.doesNotMatch(portabilityWorkflow, /^\s+(?:push|pull_request|schedule):/m, "Daily Git activity must not trigger six-target portability packaging.");
+assert.match(publicReleaseWorkflow, /^on:\r?\n\s+workflow_dispatch:\s*$/m, "Public candidate packaging must remain an explicit RC-boundary dispatch.");
+assert.doesNotMatch(publicReleaseWorkflow, /^\s+(?:push|pull_request|schedule):/m, "Daily Git activity must not trigger public candidate packaging.");
 assert.match(portabilityWorkflow, /name:\s*brainpet-codex-bridge\r?\n\s+path:\s*output\/brainpet-release\/brainpet-codex-bridge\r?\n\s+include-hidden-files:\s*true/, "Private Bridge artifact must preserve .codex-plugin and every other hidden release entry.");
 for (const [name, source] of [["portability", portabilityWorkflow], ["public release", publicReleaseWorkflow]]) {
   assert.match(source, /pnpm --filter @open-pets\/desktop\.\.\. install --frozen-lockfile --ignore-scripts/, `BrainPet ${name} runtime jobs must install without executing unrelated root-only build scripts.`);
@@ -274,6 +278,7 @@ assert.match(performanceRunnerSource, /identity\.creationDate === expected\.crea
 assert.match(performanceRunnerSource, /identity\.executablePath/);
 assert.match(performanceRunnerSource, /commandNeedles\.every/);
 assert.match(performanceRunnerSource, /createCleanPerformanceEnvironment\([\s\S]*BRAINPET_ENFORCE_RESOURCE_BUDGET: "1"/);
+assert.match(performanceRunnerSource, /"SystemDrive"[\s\S]*"ProgramData"/, "Formal Windows performance sampling must preserve absolute machine roots required by native components.");
 assert.match(performanceRunnerSource, /validateBrainPetPreparedPerformanceCandidate/);
 assert.match(performanceRunnerSource, /--candidate <prepared-manifest>/);
 assert.doesNotMatch(performanceRunnerSource, /package:brainpet:unpacked/, "Formal performance runs must not rebuild a private package locally.");
@@ -285,6 +290,8 @@ assert.match(performanceRunnerSource, /supervisorExitCode[\s\S]*validateWindowsJ
 assert.match(performanceRunnerSource, /completion publication failed[\s\S]*preserving the recovery lease/);
 assert.match(performanceRunnerSource, /caught instanceof BrainPetPerformanceReceiptRollbackError[\s\S]*throw caught/);
 assert.match(performanceRunnerSource, /renameReplaceAtomicWithRetry[\s\S]*\["EPERM", "EACCES", "EBUSY"\]/, "Windows performance lease replacement must retry only bounded transient file-lock errors.");
+const electronSmokeSource = readFileSync(join(desktop, "scripts", "brainpet-electron-smoke.mjs"), "utf8");
+assert.match(electronSmokeSource, /spawnSync\(stagedHelper[\s\S]*cwd: wakeRoot[\s\S]*stdio: \["pipe", "ignore", "ignore"\]/, "Cold-wake timing must wait for the helper process without retaining output pipes in the detached runtime.");
 const performanceJobSupervisorSource = readFileSync(join(desktop, "scripts", "brainpet-windows-job-supervisor.ps1"), "utf8");
 assert.match(performanceJobSupervisorSource, /CREATE_SUSPENDED[\s\S]*JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE[\s\S]*AssignProcessToJobObject[\s\S]*TerminateProcess[\s\S]*Suspended child termination wait/);
 assert.match(performanceJobSupervisorSource, /WaitForPermit\(resumePermitPath[\s\S]*ResumeThread[\s\S]*QueryActiveProcesses[\s\S]*TerminateJobObject/);

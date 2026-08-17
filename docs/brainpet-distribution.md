@@ -88,7 +88,7 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
 - `apps/desktop/scripts/brainpet-package.mjs` 只接受平台、架构、产物类型与 `private-test/public-release` 模式；`package:brainpet:matrix` 对六目标和两种模式做无副作用 dry-run。
 - `integrations/codex/scripts/assemble-bridge-release.mjs` 只从 CI helper 产物装配插件，并生成逐文件 SHA-256 回执。
 - `brainpet:bridge:validate-release` 是二进制发行门；源码 checkout 没有六个 helper 时失败是正确行为。`brainpet:release:test` 是本地源码与装配逻辑门，不替代 Sigstore 或实机验证。
-- `.github/workflows/brainpet-portability-gate.yml` 构建六类 runtime/helper 私测产物，不发布 Release；公开候选只能来自专用 public workflow。
+- `.github/workflows/brainpet-portability-gate.yml` 只在固定 RC SHA 上手动构建一次六类 runtime/helper 私测产物，不随日常 push/PR 运行，也不发布 Release；通过后才允许同一 SHA 手动运行专用 public workflow。候选源码/SHA 未改变时不得重复打包。
 
 ## RC6 真实产物与可信回执
 

@@ -204,7 +204,7 @@ if ($null -eq $process) { exit 3 }
 }
 
 export function createCleanPerformanceEnvironment(overrides = {}) {
-  const allowed = ["PATH", "Path", "PATHEXT", "SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "PNPM_HOME"];
+  const allowed = ["PATH", "Path", "PATHEXT", "SystemRoot", "SystemDrive", "WINDIR", "ComSpec", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "ProgramData", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "PNPM_HOME"];
   const environment = new Map();
   for (const key of allowed) {
     if (!environment.has(key.toLowerCase()) && typeof process.env[key] === "string") environment.set(key.toLowerCase(), [key, process.env[key]]);

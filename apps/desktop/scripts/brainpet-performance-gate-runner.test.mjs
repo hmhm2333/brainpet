@@ -85,16 +85,24 @@ test("runner status rejects a changed formal result even for a failed run", () =
 test("formal runner environment drops inherited BrainPet/OpenPets bypass controls", () => {
   const originalBrainPet = process.env.BRAINPET_ENFORCE_RESOURCE_BUDGET;
   const originalOpenPets = process.env.OPENPETS_BRAINPET_EXERCISER;
+  const originalSystemDrive = process.env.SystemDrive;
+  const originalProgramData = process.env.ProgramData;
   process.env.BRAINPET_ENFORCE_RESOURCE_BUDGET = "0";
   process.env.OPENPETS_BRAINPET_EXERCISER = "unsafe";
+  process.env.SystemDrive = "C:";
+  process.env.ProgramData = "C:\\ProgramData";
   try {
     const clean = createCleanPerformanceEnvironment({ BRAINPET_ENFORCE_RESOURCE_BUDGET: "1" });
     assert.equal(clean.BRAINPET_ENFORCE_RESOURCE_BUDGET, "1");
     assert.equal(clean.OPENPETS_BRAINPET_EXERCISER, undefined);
+    assert.equal(clean.SystemDrive, "C:", "Windows components must retain the absolute system-drive root instead of expanding it relative to the repository.");
+    assert.equal(clean.ProgramData, "C:\\ProgramData", "Windows components must retain their machine-data root during formal sampling.");
     assert.equal(new Set(Object.keys(clean).map((key) => key.toLowerCase())).size, Object.keys(clean).length, "Windows environment keys must be unique case-insensitively.");
   } finally {
     if (originalBrainPet === undefined) delete process.env.BRAINPET_ENFORCE_RESOURCE_BUDGET; else process.env.BRAINPET_ENFORCE_RESOURCE_BUDGET = originalBrainPet;
     if (originalOpenPets === undefined) delete process.env.OPENPETS_BRAINPET_EXERCISER; else process.env.OPENPETS_BRAINPET_EXERCISER = originalOpenPets;
+    if (originalSystemDrive === undefined) delete process.env.SystemDrive; else process.env.SystemDrive = originalSystemDrive;
+    if (originalProgramData === undefined) delete process.env.ProgramData; else process.env.ProgramData = originalProgramData;
   }
 });
 

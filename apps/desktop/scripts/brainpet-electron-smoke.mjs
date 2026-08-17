@@ -728,13 +728,15 @@ async function runColdPerformancePreflight(samples) {
       let wakePrimaryError = null;
       try {
         const helperResult = spawnSync(stagedHelper, ["--agent", "codex"], {
+          cwd: wakeRoot,
           input: JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: wakeSessionId, turn_id: wakeTurnId }),
           encoding: "utf8",
+          stdio: ["pipe", "ignore", "ignore"],
           timeout: 5_000,
           windowsHide: true,
           env: { ...process.env, APPDATA: wakeRoaming, LOCALAPPDATA: wakeLocal, BRAINPET_INSTALL_MARKER_FILE: wakeMarkerPath, BRAINPET_PERFORMANCE_REMOTE_DEBUGGING_PORT: String(wakePort), OPENPETS_DISTRIBUTION_PROFILE: "brainpet", OPENPETS_DISABLE_PLUGIN_CATALOG: "1", OPENPETS_LOG_CONSOLE: "0" },
         });
-        assert.equal(helperResult.status, 0, helperResult.error?.message || helperResult.stderr || "Packaged BrainPet helper failed during cold wake.");
+        assert.equal(helperResult.status, 0, helperResult.error?.message || "Packaged BrainPet helper failed during cold wake.");
         wakeDiscovery = await waitForJsonFile(wakeDiscoveryPath, (value) => Number.isInteger(value?.pid) && value.pid > 0, startupTimeoutMs);
         const wakePetTarget = await waitForTarget(wakePort, (target) => target.title === "BrainPet Default Pet", startupTimeoutMs);
         await waitForEvaluation(wakePetTarget, `document.readyState === 'complete' && Boolean(document.querySelector('[data-companion-toggle]'))`, 5_000);
