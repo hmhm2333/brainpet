@@ -12,6 +12,7 @@ import { validateBrainPetPerformanceReceiptSet } from "./brainpet-performance-re
 import { brainPetPerformanceReceiptWorkflow, brainPetSigstoreBundlePath, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
 import { formatBrainPetPerformanceApprovalComment } from "./intake-brainpet-performance-receipts.mjs";
 import { validateEnvironmentApprovalHistory } from "./intake-brainpet-physical-receipts.mjs";
+import { validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
 
 export function downloadBrainPetPerformanceReceipts(options) {
   assert.match(options.runId ?? "", /^\d{1,20}$/);
@@ -19,7 +20,9 @@ export function downloadBrainPetPerformanceReceipts(options) {
   assert.equal(options.repository, brainPetDistributionContract.identity.repository);
   const outputRoot = resolve(options.outputRoot);
   assert.equal(existsSync(outputRoot), false, `Performance receipt output already exists: ${outputRoot}`);
-  const run = JSON.parse(runGh(["api", `repos/${options.repository}/actions/runs/${options.runId}`]).stdout);
+  const invokeGh = options.runGh ?? runGh;
+  const provenanceVerifier = options.provenanceVerifier ?? verifyBrainPetSigstoreSubject;
+  const run = JSON.parse(invokeGh(["api", `repos/${options.repository}/actions/runs/${options.runId}`]).stdout);
   assert.equal(String(run.id), options.runId);
   assert.equal(String(run.path).split("@")[0], brainPetPerformanceReceiptWorkflow.path);
   assert.equal(run.head_sha.toLowerCase(), options.sourceCommit.toLowerCase());
@@ -29,8 +32,8 @@ export function downloadBrainPetPerformanceReceipts(options) {
   assert.equal(String(run.run_attempt), "1");
   const actor = run.actor?.login;
   assert.ok(typeof actor === "string" && actor.length > 0);
-  const approvals = JSON.parse(runGh(["api", `repos/${options.repository}/actions/runs/${options.runId}/approvals`]).stdout);
-  runGh(["run", "download", options.runId, "--repo", options.repository, "--name", "brainpet-performance-receipts", "--dir", outputRoot]);
+  const approvals = JSON.parse(invokeGh(["api", `repos/${options.repository}/actions/runs/${options.runId}/approvals`]).stdout);
+  invokeGh(["run", "download", options.runId, "--repo", options.repository, "--name", "brainpet-performance-receipts", "--dir", outputRoot]);
   assertExactEntries(outputRoot, ["performance", "provenance"]);
   const performanceRoot = join(outputRoot, "performance");
   const provenanceRoot = join(outputRoot, "provenance");
@@ -41,7 +44,17 @@ export function downloadBrainPetPerformanceReceipts(options) {
   const candidate = JSON.parse(candidateBytes.toString("utf8"));
   const windowsPackage = candidate.packages?.find((entry) => entry.target === "windows-x64");
   assert.ok(windowsPackage);
-  const expectedCandidate = { runId: String(candidate.sourceRunId), receiptSha256: sha256(candidateBytes), challenge: candidate.physicalChallenge.toLowerCase() };
+  const candidateReceiptSha256 = sha256(candidateBytes);
+  const packageClosure = validateBrainPetPackageArtifactClosure(resolve(options.candidatePackageRoot), "windows-x64");
+  assert.deepEqual(windowsPackage, { ...packageClosure.receipt, provenanceValidated: true }, "Performance download Windows package differs from the official candidate receipt.");
+  const candidateBundlePath = brainPetSigstoreBundlePath(resolve(options.candidateProvenanceRoot), candidateReceiptSha256);
+  const expectedCandidate = {
+    runId: String(candidate.sourceRunId),
+    receiptSha256: candidateReceiptSha256,
+    challenge: candidate.physicalChallenge.toLowerCase(),
+    packageReceiptSha256: sha256(readRegular(packageClosure.receiptPath)),
+    provenanceBundleSha256: sha256(readRegular(candidateBundlePath)),
+  };
   const intakePath = join(performanceRoot, "brainpet-performance-intake.json");
   const intake = JSON.parse(readRegular(intakePath).toString("utf8"));
   assert.equal(intake.schemaVersion, 1);
@@ -61,20 +74,26 @@ export function downloadBrainPetPerformanceReceipts(options) {
   assert.equal(intake.github.environmentReviewer, reviewer);
 
   const receiptPaths = [join(performanceRoot, "brainpet-active-30m.json"), join(performanceRoot, "brainpet-idle-24h.json")];
-  const receipts = validateBrainPetPerformanceReceiptSet(receiptPaths.map((path) => JSON.parse(readRegular(path).toString("utf8"))), { sourceCommit: options.sourceCommit, packageReceipt: windowsPackage });
+  const receipts = validateBrainPetPerformanceReceiptSet(receiptPaths.map((path) => JSON.parse(readRegular(path).toString("utf8"))), {
+    sourceCommit: options.sourceCommit,
+    packageReceipt: windowsPackage,
+    packageReceiptSha256: expectedCandidate.packageReceiptSha256,
+    publicCandidateReceiptSha256: expectedCandidate.receiptSha256,
+    provenanceBundleSha256: expectedCandidate.provenanceBundleSha256,
+  });
   for (const receipt of receipts) {
     const path = join(performanceRoot, `brainpet-${receipt.gateProfile}.json`);
     assert.equal(intake.profiles.find((entry) => entry.gateProfile === receipt.gateProfile)?.receiptSha256, sha256(readRegular(path)));
-    verifyProvenance(path, provenanceRoot, options);
+    verifyProvenance(path, provenanceRoot, options, provenanceVerifier);
   }
-  verifyProvenance(intakePath, provenanceRoot, options);
+  verifyProvenance(intakePath, provenanceRoot, options, provenanceVerifier);
   const expectedBundles = [...receiptPaths, intakePath].map((path) => basename(brainPetSigstoreBundlePath(provenanceRoot, sha256(readRegular(path)))));
   assertExactEntries(provenanceRoot, expectedBundles);
   return { performanceRoot, provenanceRoot, receipts, intake };
 }
 
-function verifyProvenance(path, provenanceRoot, options) {
-  verifyBrainPetSigstoreSubject({ subjectPath: path, bundlesRoot: provenanceRoot, repository: options.repository, workflowPath: brainPetPerformanceReceiptWorkflow.path, workflowName: brainPetPerformanceReceiptWorkflow.name, sourceCommit: options.sourceCommit, label: basename(path) });
+function verifyProvenance(path, provenanceRoot, options, provenanceVerifier) {
+  provenanceVerifier({ subjectPath: path, bundlesRoot: provenanceRoot, repository: options.repository, workflowPath: brainPetPerformanceReceiptWorkflow.path, workflowName: brainPetPerformanceReceiptWorkflow.name, sourceCommit: options.sourceCommit, label: basename(path) });
 }
 
 function assertExactEntries(directory, expected) {
@@ -104,10 +123,12 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === "--run-id") options.runId = argv[++index];
     else if (argv[index] === "--candidate-receipt") options.candidateReceiptPath = argv[++index];
+    else if (argv[index] === "--candidate-package") options.candidatePackageRoot = argv[++index];
+    else if (argv[index] === "--candidate-provenance") options.candidateProvenanceRoot = argv[++index];
     else if (argv[index] === "--output") options.outputRoot = argv[++index];
     else throw new Error(`Unknown performance download argument: ${argv[index]}`);
   }
-  assert.ok(options.runId && options.candidateReceiptPath && options.outputRoot);
+  assert.ok(options.runId && options.candidateReceiptPath && options.candidatePackageRoot && options.candidateProvenanceRoot && options.outputRoot);
   assert.equal(process.env.GITHUB_ACTIONS, "true");
   assert.equal(process.env.RUNNER_ENVIRONMENT, "github-hosted");
   return options;

@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,7 @@ import { assertBrainPetBinary } from "./brainpet-binary-format.mjs";
 import { brainPetPhysicalCheckIds, validateBrainPetPhysicalReceiptSet } from "./brainpet-physical-receipt-contract.mjs";
 import { createBrainPetPhysicalApprovalComment, intakeBrainPetPhysicalReceipts, validateEnvironmentApproval } from "./intake-brainpet-physical-receipts.mjs";
 import { createCompressedPayload, formatBrainPetPerformanceApprovalComment, intakeBrainPetPerformanceReceipts } from "./intake-brainpet-performance-receipts.mjs";
+import { downloadBrainPetPerformanceReceipts } from "./download-brainpet-performance-receipts.mjs";
 import { validateBrainPetPerformanceReceiptSet } from "./brainpet-performance-release-contract.mjs";
 import { brainPetPerformanceReceiptWorkflow, brainPetPhysicalReceiptWorkflow, brainPetPublicReleaseFinalizeWorkflow, brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, signBrainPetReleaseEvidence, signBrainPetSubjects, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
 import { stageBrainPetPackageArtifacts, validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
@@ -457,6 +458,37 @@ try {
   for (const subjectPath of [join(publicPerformanceRoot, "brainpet-active-30m.json"), join(publicPerformanceRoot, "brainpet-idle-24h.json"), join(publicPerformanceRoot, "brainpet-performance-intake.json")]) {
     writeFileSync(brainPetSigstoreBundlePath(performanceProvenanceRoot, sha256(readFileSync(subjectPath))), "{}\n", "utf8");
   }
+  const downloadedPerformanceRoot = join(testRoot, "downloaded-performance");
+  const downloadedPerformanceProvenance = [];
+  const downloadedPerformance = downloadBrainPetPerformanceReceipts({
+    runId: "789",
+    repository: brainPetDistributionContract.identity.repository,
+    sourceCommit: receipt.source.commit,
+    candidateReceiptPath: publicCandidatePath,
+    candidatePackageRoot: join(publicPackagesRoot, "windows-x64"),
+    candidateProvenanceRoot: provenanceRoot,
+    outputRoot: downloadedPerformanceRoot,
+    runGh: (args) => {
+      const endpoint = args[1];
+      if (args[0] === "api" && endpoint.endsWith("/approvals")) return { stdout: readFileSync(performanceApprovalHistoryPath, "utf8") };
+      if (args[0] === "api") return { stdout: JSON.stringify({ id: 789, path: brainPetPerformanceReceiptWorkflow.path, head_sha: receipt.source.commit, conclusion: "success", event: "workflow_dispatch", repository: { full_name: brainPetDistributionContract.identity.repository }, run_attempt: 1, actor: { login: "release-dispatcher" } }) };
+      assert.deepEqual(args.slice(0, 3), ["run", "download", "789"]);
+      const destination = args[args.indexOf("--dir") + 1];
+      cpSync(publicPerformanceRoot, join(destination, "performance"), { recursive: true, errorOnExist: true });
+      cpSync(performanceProvenanceRoot, join(destination, "provenance"), { recursive: true, errorOnExist: true });
+      return { stdout: "" };
+    },
+    provenanceVerifier: (options) => downloadedPerformanceProvenance.push(options),
+  });
+  assert.equal(downloadedPerformance.receipts.length, 2);
+  assert.equal(downloadedPerformanceProvenance.length, 3);
+  assert.deepEqual(downloadedPerformance.intake.candidate, {
+    runId: "123",
+    receiptSha256: sha256(readFileSync(publicCandidatePath)),
+    challenge: publicCandidate.physicalChallenge,
+    packageReceiptSha256: sha256(readFileSync(signedClaimReceiptPath)),
+    provenanceBundleSha256: sha256(readFileSync(brainPetSigstoreBundlePath(provenanceRoot, sha256(readFileSync(publicCandidatePath))))),
+  });
   const physicalCandidate = { runId: "123", receiptSha256: sha256(readFileSync(publicCandidatePath)), challenge: publicCandidate.physicalChallenge };
   const publicPhysicalReceipts = [];
   for (const [targetId, artifactKind] of [["windows-x64", "nsis"], ["macos-arm64", "dmg"]]) {

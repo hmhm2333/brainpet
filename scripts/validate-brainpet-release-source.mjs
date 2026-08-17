@@ -187,6 +187,7 @@ assert.match(performanceIntakeWorkflow, /brainpet-active-30m\.json[\s\S]*brainpe
 assert.match(performanceIntakeWorkflow, /brainpet-sigstore-provenance\.mjs/);
 assert.match(publicFinalizeWorkflow, /--performance output\/performance\/performance --performance-provenance output\/performance\/provenance/);
 assert.match(publicFinalizeWorkflow, /--candidate-receipt output\/candidate\/candidate-receipt\/brainpet-release-receipt\.json/, "Final public aggregation must bind the exact candidate receipt used by performance evidence.");
+assert.match(publicFinalizeWorkflow, /download-brainpet-performance-receipts\.mjs[\s\S]*--candidate-package output\/candidate\/packages\/brainpet-public-runtime-current-windows-x64 --candidate-provenance output\/candidate\/provenance/, "Final performance download must bind the same official package and provenance closures as protected intake.");
 assert.match(publicFinalizeWorkflow, /BRAINPET_CANDIDATE_RUN_ID: \$\{\{ inputs\.candidate_run_id \}\}/);
 assert.match(publicFinalizeWorkflow, /BRAINPET_PHYSICAL_RECEIPT_RUN_ID: \$\{\{ inputs\.physical_receipt_run_id \}\}/);
 assert.match(publicFinalizeWorkflow, /BRAINPET_PERFORMANCE_RECEIPT_RUN_ID: \$\{\{ inputs\.performance_receipt_run_id \}\}/);
@@ -244,6 +245,8 @@ const aggregateReleaseSource = readFileSync(join(root, "scripts", "aggregate-bra
 assert.match(aggregateReleaseSource, /validatePublicCandidatePerformanceBinding[\s\S]*packageReceiptSha256[\s\S]*publicCandidateReceiptSha256[\s\S]*provenanceBundleSha256/, "Final aggregation must derive exact performance bindings from the official public candidate bytes.");
 const performanceIntakeSource = readFileSync(join(root, "scripts", "intake-brainpet-performance-receipts.mjs"), "utf8");
 assert.match(performanceIntakeSource, /validateBrainPetPackageArtifactClosure[\s\S]*publicCandidateReceiptSha256[\s\S]*packageReceiptSha256[\s\S]*provenanceBundleSha256/, "Protected performance intake must bind every receipt to the official public candidate bytes.");
+const performanceDownloadSource = readFileSync(join(root, "scripts", "download-brainpet-performance-receipts.mjs"), "utf8");
+assert.match(performanceDownloadSource, /validateBrainPetPackageArtifactClosure[\s\S]*candidateBundlePath[\s\S]*packageReceiptSha256[\s\S]*provenanceBundleSha256/, "Final performance download must reconstruct the exact protected-intake candidate binding.");
 for (const scriptName of ["package:brainpet", "package:brainpet:portable", "package:brainpet:unpacked"]) assert.match(desktopPackage.scripts[scriptName], /^node scripts\/brainpet-package\.mjs/, `${scriptName} must use the self-contained fresh package entrypoint.`);
 const packageSource = readFileSync(join(desktop, "scripts", "brainpet-package.mjs"), "utf8");
 assert.match(packageSource, /workspacePackageNames[\s\S]*"apps\/desktop\/src"[\s\S]*packages\/\$\{name\}\/src[\s\S]*\["dist", "\.test-dist", "\.brainpet-package"\][\s\S]*\["dist", "\.test-dist"\][\s\S]*assertCanonicalPackageInputsTracked\(\)[\s\S]*"pnpm\.cmd"[\s\S]*"@open-pets\/desktop", "build"/);
