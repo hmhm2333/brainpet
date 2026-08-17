@@ -30,10 +30,21 @@ const realRepoRoot = realpathSync.native(repoRoot);
 const performanceRoot = join(repoRoot, "output", "performance");
 const runsRoot = join(performanceRoot, "runs");
 const leasePath = join(performanceRoot, "brainpet-performance-gate.lease.json");
+const defaultPerformancePaths = Object.freeze({ performanceRoot, runsRoot, leasePath });
 const profiles = Object.freeze({
   "active-30m": Object.freeze({ soakMs: "1800000", task: "cargo-signal" }),
   "idle-24h": Object.freeze({ idleSoakMs: "86400000" }),
 });
+
+export function createBrainPetPerformanceGatePaths(root) {
+  const isolatedPerformanceRoot = resolve(root);
+  assertSafeEvidencePath(isolatedPerformanceRoot, false);
+  return Object.freeze({
+    performanceRoot: isolatedPerformanceRoot,
+    runsRoot: join(isolatedPerformanceRoot, "runs"),
+    leasePath: join(isolatedPerformanceRoot, "brainpet-performance-gate.lease.json"),
+  });
+}
 
 export async function startBrainPetPerformanceGate(profile) {
   assert.equal(process.platform, "win32", "The detached BrainPet performance runner currently requires Windows.");
@@ -84,8 +95,11 @@ export async function startBrainPetPerformanceGate(profile) {
         commandNeedles: [basename(scriptPath), "worker", runId],
       },
     };
+    // The worker cannot observe the manifest until the startup process has handed it
+    // exclusive lease-writer ownership. This prevents a parent/worker RMW race from
+    // overwriting activeChild during startup.
+    await updateOwnedLease(runId, currentProcessIdentity(), { owner: manifest.runner, phase: "worker-awaiting-manifest" });
     await writeJsonExclusiveAtomic(manifestPath, manifest);
-    await updateOwnedLease(runId, { owner: manifest.runner, phase: "running" });
     child.unref();
     return { manifestPath, manifest };
   } catch (error) {
@@ -98,11 +112,11 @@ export async function startBrainPetPerformanceGate(profile) {
   }
 }
 
-export function readBrainPetPerformanceGateStatus(manifestPath, queryProcessIdentity = queryWindowsProcessIdentity) {
+export function readBrainPetPerformanceGateStatus(manifestPath, queryProcessIdentity = queryWindowsProcessIdentity, paths = defaultPerformancePaths) {
   assertSafeEvidencePath(manifestPath, true);
   const resolvedManifestPath = resolve(manifestPath);
   const manifest = readJsonRegularFile(resolvedManifestPath, 128 * 1024, "BrainPet performance run manifest");
-  validateManifest(manifest, resolvedManifestPath);
+  validateManifest(manifest, resolvedManifestPath, paths.leasePath, paths.runsRoot);
   const expectedReceiptPath = resolveRepoRelative(manifest.expectedReceipt, "expected performance receipt");
   const completionPath = resolveRepoRelative(manifest.completion, "performance completion record");
   const resultPath = resolveRepoRelative(manifest.result, "performance gate result");
@@ -187,14 +201,14 @@ export function createCleanPerformanceEnvironment(overrides = {}) {
   return { ...environment, ...overrides };
 }
 
-export function recoverOrRejectPerformanceLease(queryProcessIdentity = queryWindowsProcessIdentity, terminateProcessTree = terminateWindowsProcessTree) {
-  if (!existsSync(leasePath)) return false;
-  assertSafeEvidencePath(leasePath, true);
-  const lease = readJsonRegularFile(leasePath, 64 * 1024, "BrainPet performance lease");
+export function recoverOrRejectPerformanceLease(queryProcessIdentity = queryWindowsProcessIdentity, terminateProcessTree = terminateWindowsProcessTree, paths = defaultPerformancePaths) {
+  if (!existsSync(paths.leasePath)) return false;
+  assertSafeEvidencePath(paths.leasePath, true);
+  const lease = readJsonRegularFile(paths.leasePath, 64 * 1024, "BrainPet performance lease");
   if (lease.manifest) {
     const manifestPath = resolveRepoRelative(lease.manifest, "performance lease manifest");
     if (existsSync(manifestPath)) {
-      const status = readBrainPetPerformanceGateStatus(manifestPath, queryProcessIdentity);
+      const status = readBrainPetPerformanceGateStatus(manifestPath, queryProcessIdentity, paths);
       assert.notEqual(status.state, "running", `BrainPet ${status.manifest.profile} is already running as PID ${status.manifest.runner.pid}.`);
       if (status.state === "interrupted" && status.receiptPath) rmSyncExact(status.receiptPath);
     } else if (matchesProcessIdentity(queryProcessIdentity(lease.owner?.pid), lease.owner)) {
@@ -203,8 +217,8 @@ export function recoverOrRejectPerformanceLease(queryProcessIdentity = queryWind
   } else if (matchesProcessIdentity(queryProcessIdentity(lease.owner?.pid), lease.owner)) {
     throw new Error(`BrainPet performance gate startup is already owned by PID ${lease.owner.pid}.`);
   }
-  if (lease.activeChild && matchesProcessIdentity(queryProcessIdentity(lease.activeChild.pid), lease.activeChild)) terminateProcessTree(lease.activeChild);
-  rmSyncExact(leasePath);
+  if (lease.activeChild) terminateProcessTree(lease.activeChild);
+  rmSyncExact(paths.leasePath);
   return true;
 }
 
@@ -227,7 +241,7 @@ async function runWorker(options) {
   let completion;
   let writtenReceiptPath = null;
   try {
-    const packageExit = await runPnpmDesktopScript("package:brainpet:unpacked", createCleanPerformanceEnvironment(), options.runId);
+    const packageExit = await runPnpmDesktopScript("package:brainpet:unpacked", createCleanPerformanceEnvironment(), options.runId, manifest.runner);
     if (packageExit !== 0) throw new Error(`BrainPet package command exited with code ${packageExit}.`);
     const sourceRoot = join(appDir, "dist-brainpet", "private-test");
     assert.equal(existsSync(stagingRoot), false, "BrainPet per-run candidate staging root already exists.");
@@ -243,7 +257,7 @@ async function runWorker(options) {
       BRAINPET_PACKAGE_RECEIPT: stagedReceipt,
       ...(options.profile === "active-30m" ? { BRAINPET_SOAK_MS: profiles[options.profile].soakMs, BRAINPET_PERFORMANCE_EXECUTABLE: stagedExecutable, BRAINPET_SMOKE_TASK: profiles[options.profile].task } : { BRAINPET_IDLE_SOAK_MS: profiles[options.profile].idleSoakMs }),
     });
-    const smokeExit = await runNodeScript(join(scriptDir, "brainpet-electron-smoke.mjs"), smokeEnvironment, options.runId);
+    const smokeExit = await runNodeScript(join(scriptDir, "brainpet-electron-smoke.mjs"), smokeEnvironment, options.runId, manifest.runner);
     if (smokeExit !== 0) throw new Error(`BrainPet ${options.profile} command exited with code ${smokeExit}.`);
     const gateFile = readJsonRegularFile(resultPath, 16 * 1024 * 1024, "BrainPet formal gate result");
     assert.equal(gateFile.schemaVersion, 1);
@@ -275,7 +289,7 @@ async function runWorker(options) {
     completion = { schemaVersion: 2, kind: "brainpet-performance-gate-completion", ...completionCore, completionCoreDigest: sha256Bytes(Buffer.from(JSON.stringify(completionCore))), receiptSha256: null };
   }
   try {
-    await writeJsonExclusiveAtomic(completionPath, completion);
+    await writePerformanceCompletionOrRollback({ completionPath, completion, writtenReceiptPath });
   } finally {
     releaseOwnedLease(options.runId);
   }
@@ -283,7 +297,16 @@ async function runWorker(options) {
   process.exitCode = completion.exitCode;
 }
 
-function validateManifest(manifest, manifestPath) {
+export async function writePerformanceCompletionOrRollback({ completionPath, completion, writtenReceiptPath }) {
+  try {
+    await writeJsonExclusiveAtomic(completionPath, completion);
+  } catch (error) {
+    if (writtenReceiptPath) await rm(writtenReceiptPath, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+function validateManifest(manifest, manifestPath, expectedLeasePath = leasePath, expectedRunsRoot = runsRoot) {
   assert.equal(manifest.schemaVersion, 2);
   assert.equal(manifest.kind, "brainpet-performance-gate-run");
   assertPerformanceProfile(manifest.profile);
@@ -292,9 +315,9 @@ function validateManifest(manifest, manifestPath) {
   assert.match(manifest.source?.commit ?? "", /^[a-f0-9]{40}$/i);
   assert.equal(manifest.source?.treeDirty, false);
   assert.equal(Number.isNaN(Date.parse(manifest.startedAt)), false);
-  assert.equal(dirname(resolve(manifestPath)), runsRoot);
+  assert.equal(dirname(resolve(manifestPath)), expectedRunsRoot);
   for (const [key, label] of [["completion", "completion"], ["result", "result"], ["log", "log"], ["stagingRoot", "staging"], ["lease", "lease"]]) resolveRepoRelative(manifest[key], `performance ${label}`);
-  assert.equal(resolveRepoRelative(manifest.lease, "performance lease"), leasePath);
+  assert.equal(resolveRepoRelative(manifest.lease, "performance lease"), expectedLeasePath);
   assert.ok(Array.isArray(manifest.runner?.commandNeedles) && manifest.runner.commandNeedles.length === 3 && manifest.runner.commandNeedles.every((needle) => typeof needle === "string" && needle.length > 0));
 }
 
@@ -327,20 +350,23 @@ function validateGateFile(gateFile, manifest) {
 }
 
 async function acquirePerformanceLease(value) {
-  try { await writeJsonExclusiveAtomic(leasePath, { ...value, phase: "starting", activeChild: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); }
+  try { await writeJsonExclusiveAtomic(leasePath, { ...value, revision: 0, phase: "starting", activeChild: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); }
   catch (error) { if (error?.code === "EEXIST") throw new Error("Another BrainPet performance gate acquired the global lease first."); throw error; }
 }
 
-async function updateOwnedLease(runId, patch) {
+async function updateOwnedLease(runId, expectedOwner, patch) {
   const current = readJsonRegularFile(leasePath, 64 * 1024, "BrainPet performance lease");
   assert.equal(current.runId, runId, "BrainPet performance lease ownership changed unexpectedly.");
-  await writeJsonReplaceAtomic(leasePath, { ...current, ...patch, updatedAt: new Date().toISOString() });
+  assert.deepEqual(current.owner, expectedOwner, "BrainPet performance lease writer ownership changed unexpectedly.");
+  assert.ok(Number.isInteger(current.revision) && current.revision >= 0, "BrainPet performance lease revision is invalid.");
+  await writeJsonReplaceAtomic(leasePath, { ...current, ...patch, revision: current.revision + 1, updatedAt: new Date().toISOString() });
 }
 
 function releaseOwnedLease(runId) {
   if (!existsSync(leasePath)) return;
   const current = readJsonRegularFile(leasePath, 64 * 1024, "BrainPet performance lease");
   assert.equal(current.runId, runId, "Refusing to release another BrainPet performance run's lease.");
+  assert.equal(current.activeChild, null, "Refusing to release a BrainPet performance lease while a child tree may still be active.");
   rmSyncExact(leasePath);
 }
 
@@ -352,26 +378,70 @@ function currentProcessIdentity() {
 
 function matchesProcessIdentity(identity, expected) { return Boolean(identity && expected && identity.creationDate === expected.creationDate && normalizeWindowsPath(identity.executablePath) === normalizeWindowsPath(expected.executable) && Array.isArray(expected.commandNeedles) && expected.commandNeedles.every((needle) => identity.commandLine.includes(needle))); }
 
-function terminateWindowsProcessTree(expected) {
+function terminateWindowsProcessTree(activeChild) {
+  const identities = [activeChild?.process, activeChild?.wrapper ?? activeChild].filter(Boolean);
+  for (const expected of identities) terminateExactWindowsProcessTree(expected);
+}
+
+function terminateExactWindowsProcessTree(expected) {
   const script = String.raw`
 $expected = $env:BRAINPET_CHILD_IDENTITY | ConvertFrom-Json
 $all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CreationDate, ExecutablePath, CommandLine)
 $root = $all | Where-Object { [uint32]$_.ProcessId -eq [uint32]$expected.pid } | Select-Object -First 1
-if ($null -eq $root) { exit 0 }
-$same = $root.CreationDate.ToUniversalTime().ToString('o') -eq [string]$expected.creationDate -and
-  [string]::Equals([string]$root.ExecutablePath, [string]$expected.executable, [StringComparison]::OrdinalIgnoreCase)
-foreach ($needle in @($expected.commandNeedles)) { if (-not $root.CommandLine -or $root.CommandLine.IndexOf([string]$needle, [StringComparison]::Ordinal) -lt 0) { $same = $false } }
-if (-not $same) { throw 'Refusing to terminate a PID that no longer matches the leased BrainPet child identity.' }
+$roots = [System.Collections.Generic.List[object]]::new()
+if ($null -ne $root) {
+  $same = $root.CreationDate.ToUniversalTime().ToString('o') -eq [string]$expected.creationDate -and
+    [string]::Equals([string]$root.ExecutablePath, [string]$expected.executable, [StringComparison]::OrdinalIgnoreCase)
+  foreach ($needle in @($expected.commandNeedles)) { if (-not $root.CommandLine -or $root.CommandLine.IndexOf([string]$needle, [StringComparison]::Ordinal) -lt 0) { $same = $false } }
+  if (-not $same) { throw 'Refusing to terminate a PID that no longer matches the leased BrainPet child identity.' }
+  $roots.Add($root)
+} elseif ($null -ne $expected.descendantExpectation) {
+  $minimumCreation = [datetime]::Parse([string]$expected.creationDate).ToUniversalTime()
+  foreach ($candidate in @($all | Where-Object { [uint32]$_.ParentProcessId -eq [uint32]$expected.pid })) {
+    $matches = $candidate.CreationDate.ToUniversalTime() -ge $minimumCreation -and
+      [string]::Equals([System.IO.Path]::GetFileName([string]$candidate.ExecutablePath), [string]$expected.descendantExpectation.executableBasename, [StringComparison]::OrdinalIgnoreCase)
+    foreach ($needle in @($expected.descendantExpectation.commandNeedles)) { if (-not $candidate.CommandLine -or $candidate.CommandLine.IndexOf([string]$needle, [StringComparison]::Ordinal) -lt 0) { $matches = $false } }
+    if ($matches) { $roots.Add($candidate) }
+  }
+  if ($roots.Count -gt 1) { throw 'Multiple descendants matched a dead BrainPet child wrapper; refusing ambiguous cleanup.' }
+}
+if ($roots.Count -eq 0) { exit 0 }
 $ids = [System.Collections.Generic.HashSet[uint32]]::new()
-[void]$ids.Add([uint32]$root.ProcessId)
-do {
-  $changed = $false
-  foreach ($process in $all) { if ($ids.Contains([uint32]$process.ParentProcessId) -and $ids.Add([uint32]$process.ProcessId)) { $changed = $true } }
-} while ($changed)
-foreach ($id in @($ids) | Sort-Object -Descending) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
-Start-Sleep -Milliseconds 300
-$remaining = Get-CimInstance Win32_Process -Filter "ProcessId = $($expected.pid)" | Select-Object -First 1
-if ($null -ne $remaining -and $remaining.CreationDate.ToUniversalTime().ToString('o') -eq [string]$expected.creationDate) { throw 'BrainPet leased child process tree did not terminate.' }
+$depth = @{}
+$creation = @{}
+foreach ($candidateRoot in $roots) {
+  $id = [uint32]$candidateRoot.ProcessId
+  [void]$ids.Add($id)
+  $depth[$id] = 0
+  $creation[$id] = $candidateRoot.CreationDate.ToUniversalTime().ToString('o')
+}
+for ($round = 0; $round -lt 8; $round++) {
+  $snapshot = if ($round -eq 0) { $all } else { @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CreationDate, ExecutablePath, CommandLine) }
+  do {
+    $changed = $false
+    foreach ($process in $snapshot) {
+      $parentId = [uint32]$process.ParentProcessId
+      $id = [uint32]$process.ProcessId
+      if ($ids.Contains($parentId) -and -not $ids.Contains($id) -and $process.CreationDate.ToUniversalTime() -ge [datetime]::Parse([string]$creation[$parentId]).ToUniversalTime()) {
+        [void]$ids.Add($id)
+        $depth[$id] = [int]$depth[$parentId] + 1
+        $creation[$id] = $process.CreationDate.ToUniversalTime().ToString('o')
+        $changed = $true
+      }
+    }
+  } while ($changed)
+  $targets = @($snapshot | Where-Object { $id = [uint32]$_.ProcessId; $ids.Contains($id) -and $_.CreationDate.ToUniversalTime().ToString('o') -eq [string]$creation[$id] })
+  foreach ($process in $targets | Sort-Object { -[int]$depth[[uint32]$_.ProcessId] }) { Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue }
+  Start-Sleep -Milliseconds 100
+}
+$final = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CreationDate)
+$remaining = @($final | Where-Object {
+  $id = [uint32]$_.ProcessId
+  $parentId = [uint32]$_.ParentProcessId
+  ($ids.Contains($id) -and $_.CreationDate.ToUniversalTime().ToString('o') -eq [string]$creation[$id]) -or
+    ($ids.Contains($parentId) -and $_.CreationDate.ToUniversalTime() -ge [datetime]::Parse([string]$creation[$parentId]).ToUniversalTime())
+})
+if ($remaining.Count -gt 0) { throw 'BrainPet leased child process tree did not reach a quiescent terminated state.' }
 `;
   const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], { env: { ...createCleanPerformanceEnvironment(), BRAINPET_CHILD_IDENTITY: JSON.stringify(expected) }, encoding: "utf8", windowsHide: true });
   assert.equal(result.status, 0, result.stderr || result.stdout || "Unable to terminate the leased BrainPet child process tree.");
@@ -445,9 +515,10 @@ function rmSyncExact(path) {
   assert.equal(result.status, 0, result.stderr || `Unable to remove exact BrainPet evidence path: ${path}`);
 }
 
-function runPnpmDesktopScript(scriptName, environment, runId) { return runChild("cmd.exe", ["/d", "/s", "/c", "pnpm.cmd", "--filter", "@open-pets/desktop", scriptName], repoRoot, environment, runId); }
-function runNodeScript(path, environment, runId) { return runChild(process.execPath, [path], appDir, environment, runId); }
-async function runChild(command, args, cwd, environment, runId) {
+function runPnpmDesktopScript(scriptName, environment, runId, leaseOwner) { return runChild("cmd.exe", ["/d", "/s", "/c", "pnpm.cmd", "--filter", "@open-pets/desktop", scriptName], repoRoot, environment, runId, leaseOwner); }
+function runNodeScript(path, environment, runId, leaseOwner) { return runChild(process.execPath, [path], appDir, environment, runId, leaseOwner); }
+async function runChild(command, args, cwd, environment, runId, leaseOwner) {
+  const descendantExpectation = createDescendantExpectation(command, args);
   const wrapper = spawn(process.execPath, [scriptPath, "child", "--run-id", runId], {
     cwd: repoRoot,
     env: { ...createCleanPerformanceEnvironment(), BRAINPET_WRAPPED_CHILD_SPEC: JSON.stringify({ command, args, cwd, environment }) },
@@ -455,28 +526,66 @@ async function runChild(command, args, cwd, environment, runId) {
     windowsHide: true,
   });
   assert.ok(Number.isInteger(wrapper.pid) && wrapper.pid > 0, "BrainPet leased child wrapper lacks a PID.");
+  let rejectStarted;
+  let resolveCompletedAttestation;
+  const completedAttestation = new Promise((resolvePromise) => { resolveCompletedAttestation = resolvePromise; });
+  const started = new Promise((resolvePromise, reject) => {
+    rejectStarted = reject;
+    wrapper.on("message", (message) => {
+      if (message?.command === "child-started") resolvePromise(message.identity);
+      else if (message?.command === "child-completed") {
+        resolveCompletedAttestation(message.exitCode);
+      }
+    });
+  });
   const completion = new Promise((resolvePromise, reject) => {
-    wrapper.once("error", reject);
-    wrapper.once("exit", (code, signal) => signal ? reject(new Error(`BrainPet child wrapper was terminated by ${signal}.`)) : resolvePromise(code ?? 1));
+    wrapper.once("error", (error) => { rejectStarted(error); reject(error); });
+    wrapper.once("exit", (code, signal) => {
+      const error = signal ? new Error(`BrainPet child wrapper was terminated by ${signal}.`) : null;
+      if (error) { rejectStarted(error); reject(error); }
+      else { rejectStarted(new Error("BrainPet child wrapper exited before reporting its child identity.")); resolvePromise(code ?? 1); }
+    });
   });
   let leaseUpdated = false;
+  let safeToClear = false;
   let primaryError = null;
+  let activeChild = null;
   try {
     const identity = await waitForWindowsProcessIdentity(wrapper.pid, 5_000);
-    const activeChild = { pid: wrapper.pid, creationDate: identity.creationDate, executable: process.execPath, commandNeedles: [basename(scriptPath), "child", runId] };
-    await updateOwnedLease(runId, { activeChild, phase: "child-running" });
+    const wrapperIdentity = { pid: wrapper.pid, creationDate: identity.creationDate, executable: process.execPath, commandNeedles: [basename(scriptPath), "child", runId], descendantExpectation };
+    activeChild = { wrapper: wrapperIdentity, process: null };
+    await updateOwnedLease(runId, leaseOwner, { activeChild, phase: "child-wrapper-ready" });
     leaseUpdated = true;
-    wrapper.send({ command: "start" });
-    return await completion;
+    await sendWrapperMessage(wrapper, { command: "start" });
+    const childIdentity = await started;
+    assert.ok(childIdentity && Number.isInteger(childIdentity.pid) && childIdentity.pid > 0, "BrainPet child wrapper reported an invalid process identity.");
+    assert.deepEqual(childIdentity.commandNeedles, descendantExpectation.commandNeedles, "BrainPet child wrapper changed its command binding.");
+    assert.equal(matchesProcessIdentity(queryWindowsProcessIdentity(childIdentity.pid), childIdentity), true, "BrainPet child process identity did not match the leased command.");
+    activeChild = { wrapper: wrapperIdentity, process: childIdentity };
+    await updateOwnedLease(runId, leaseOwner, { activeChild, phase: "child-running" });
+    const exitCode = await completion;
+    const reportedExitCode = await Promise.race([
+      completedAttestation,
+      delay(1_000).then(() => { throw new Error("BrainPet child wrapper exited without a child-completed attestation."); }),
+    ]);
+    assert.equal(reportedExitCode, exitCode, "BrainPet child wrapper exit code differs from its completion attestation.");
+    safeToClear = true;
+    return exitCode;
   } catch (error) {
     primaryError = error;
     try { wrapper.kill(); } catch {}
     await completion.catch(() => {});
+    try {
+      if (activeChild) terminateWindowsProcessTree(activeChild);
+      safeToClear = true;
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "BrainPet child wrapper failed and its leased process tree could not be proven terminated.");
+    }
     throw error;
   } finally {
-    if (leaseUpdated) {
+    if (leaseUpdated && safeToClear) {
       try {
-        await updateOwnedLease(runId, { activeChild: null, phase: "running" });
+        await updateOwnedLease(runId, leaseOwner, { activeChild: null, phase: "running" });
       } catch (error) {
         if (primaryError) throw new AggregateError([primaryError, error], "BrainPet child failed and its lease could not be cleared.");
         throw error;
@@ -498,12 +607,30 @@ async function runWrappedChild(options) {
       resolvePromise();
     });
   });
+  const descendantExpectation = createDescendantExpectation(spec.command, spec.args);
   const child = spawn(spec.command, spec.args, { cwd: spec.cwd, env: spec.environment, stdio: "inherit", windowsHide: true });
+  assert.ok(Number.isInteger(child.pid) && child.pid > 0, "BrainPet wrapped process lacks a PID.");
+  const identity = await waitForWindowsProcessIdentity(child.pid, 5_000);
+  const childIdentity = { pid: child.pid, creationDate: identity.creationDate, executable: identity.executablePath, commandNeedles: descendantExpectation.commandNeedles };
+  await sendWrapperMessage(process, { command: "child-started", identity: childIdentity });
   const exitCode = await new Promise((resolvePromise, reject) => {
     child.once("error", reject);
     child.once("exit", (code, signal) => signal ? reject(new Error(`BrainPet wrapped child was terminated by ${signal}.`)) : resolvePromise(code ?? 1));
   });
+  await sendWrapperMessage(process, { command: "child-completed", exitCode });
   process.exitCode = exitCode;
+}
+
+function createDescendantExpectation(command, args) {
+  const commandNeedles = [basename(command), ...args].filter((value) => typeof value === "string" && value.length > 0);
+  return { executableBasename: basename(command), commandNeedles };
+}
+
+function sendWrapperMessage(target, message) {
+  return new Promise((resolvePromise, reject) => {
+    if (typeof target.send !== "function" || target.connected === false) { reject(new Error("BrainPet child wrapper IPC channel is unavailable.")); return; }
+    target.send(message, (error) => error ? reject(error) : resolvePromise());
+  });
 }
 
 async function waitForWindowsProcessIdentity(pid, timeoutMs) { const startedAt = Date.now(); while (Date.now() - startedAt < timeoutMs) { const identity = queryWindowsProcessIdentity(pid); if (identity) return identity; await delay(100); } throw new Error(`Timed out resolving detached BrainPet gate worker PID ${pid}.`); }

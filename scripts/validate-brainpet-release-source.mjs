@@ -184,6 +184,7 @@ const packageValidatorSource = readFileSync(join(desktop, "scripts", "validate-b
 assert.match(packageValidatorSource, /assertMacosCodeObjectIsUnsigned/);
 assert.match(packageValidatorSource, /--appimage-signature/);
 assert.match(packageValidatorSource, /deb unexpectedly contains an embedded signature or non-standard archive member/);
+assert.match(packageValidatorSource, /assertBrainPetAsarWorkspaceClosure[\s\S]*non-runtime workspace file/);
 assert.match(packageValidatorSource, /appAsarSha256:/, "Package receipts must bind the packaged application bytes.");
 assert.match(packageValidatorSource, /const runtimeTree = createBrainPetRuntimeTree\(unpackedRoot\)[\s\S]*runtimeTree,/, "Package receipts must bind the complete unpacked runtime tree.");
 const performanceReceiptSource = readFileSync(join(desktop, "scripts", "brainpet-performance-receipt.mjs"), "utf8");
@@ -206,7 +207,8 @@ assert.equal(desktopPackage.scripts["test:brainpet-soak"], "pnpm brainpet:active
 assert.equal(desktopPackage.scripts["test:brainpet-idle-soak"], "pnpm brainpet:idle-gate:start");
 for (const scriptName of ["package:brainpet", "package:brainpet:portable", "package:brainpet:unpacked"]) assert.match(desktopPackage.scripts[scriptName], /^node scripts\/brainpet-package\.mjs/, `${scriptName} must use the self-contained fresh package entrypoint.`);
 const packageSource = readFileSync(join(desktop, "scripts", "brainpet-package.mjs"), "utf8");
-assert.match(packageSource, /assertCanonicalPackageInputsTracked\(\)[\s\S]*\["dist", "\.brainpet-package"\][\s\S]*"pnpm\.cmd"[\s\S]*"@open-pets\/desktop", "build"/);
+assert.match(packageSource, /workspacePackageNames[\s\S]*"apps\/desktop\/src"[\s\S]*packages\/\$\{name\}\/src[\s\S]*\["dist", "\.test-dist", "\.brainpet-package"\][\s\S]*\["dist", "\.test-dist"\][\s\S]*assertCanonicalPackageInputsTracked\(\)[\s\S]*"pnpm\.cmd"[\s\S]*"@open-pets\/desktop", "build"/);
+assert.match(baseConfig, /!node_modules\/@open-pets\/\*\/src[\s\S]*!node_modules\/@open-pets\/\*\/\.test-dist[\s\S]*!node_modules\/@open-pets\/\*\/tests[\s\S]*!node_modules\/@open-pets\/\*\/contracts[\s\S]*!node_modules\/@open-pets\/\*\/codemap/);
 assert.match(packageSource, /cargo(?:\.exe)?"[\s\S]*"build", "--locked", "--release"/);
 assert.deepEqual(Object.fromEntries(brainPetDistributionContract.releaseTargets.map((target) => [target.id, target.supportLevel])), {
   "windows-x64": "stable",

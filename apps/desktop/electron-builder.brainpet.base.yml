@@ -10,6 +10,15 @@ files:
   - brainpet-setup-preload.cjs
   - assets/**
   - package.json
+  # pnpm workspace links point at source directories. Ship only their freshly
+  # rebuilt runtime dist and manifests; tests, source, and ignored emissions
+  # must never influence app.asar bytes.
+  - "!node_modules/@open-pets/*/src{,/**}"
+  - "!node_modules/@open-pets/*/.test-dist{,/**}"
+  - "!node_modules/@open-pets/*/tests{,/**}"
+  - "!node_modules/@open-pets/*/contracts{,/**}"
+  - "!node_modules/@open-pets/*/codemap.md"
+  - "!node_modules/@open-pets/*/tsconfig*.json"
 
 extraMetadata:
   brainpetDistribution:

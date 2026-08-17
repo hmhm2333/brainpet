@@ -46,6 +46,7 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
   const appAsar = join(resources, "app.asar");
   assert.ok(existsSync(appAsar), "BrainPet app.asar is missing.");
   const appPackage = readAsarPackageJson(appAsar);
+  assertBrainPetAsarWorkspaceClosure(appAsar);
   const runtimeTree = createBrainPetRuntimeTree(unpackedRoot);
   for (const preload of ["pet-preload.cjs", "brainpet-preload.cjs", "brainpet-setup-preload.cjs"]) {
     assertAsarFile(appAsar, preload, `BrainPet package is missing required host preload ${preload}.`);
@@ -162,6 +163,26 @@ function assertAsarFile(appAsar, path, message) {
   const builderRequire = createRequire(require.resolve("electron-builder"));
   const asar = builderRequire("@electron/asar");
   assert.doesNotThrow(() => asar.extractFile(appAsar, path), message);
+}
+
+export function assertBrainPetAsarWorkspaceClosure(appAsar) {
+  const require = createRequire(import.meta.url);
+  const builderRequire = createRequire(require.resolve("electron-builder"));
+  const asar = builderRequire("@electron/asar");
+  const allowedPackages = new Set(["adapter-core", "agent-events", "claude", "cli", "client", "cursor", "mcp", "opencode"]);
+  for (const rawPath of asar.listPackage(appAsar)) {
+    const path = rawPath.replaceAll("\\", "/").replace(/^\/+/, "");
+    if (!path.startsWith("node_modules/@open-pets/")) continue;
+    const [packageName, ...restParts] = path.slice("node_modules/@open-pets/".length).split("/");
+    assert.equal(allowedPackages.has(packageName), true, `BrainPet app.asar contains an unexpected workspace package: ${packageName}`);
+    const rest = restParts.join("/");
+    const allowed = rest === ""
+      || rest === "package.json"
+      || rest === "dist"
+      || rest.startsWith("dist/")
+      || (packageName === "cli" && (rest === "schemas" || rest.startsWith("schemas/")));
+    assert.equal(allowed, true, `BrainPet app.asar contains a non-runtime workspace file: ${path}`);
+  }
 }
 
 function findPackageArtifacts(outputRoot, target, packageTarget) {

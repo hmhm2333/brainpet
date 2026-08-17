@@ -15,6 +15,9 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(scriptDir, "..");
 const repoRoot = resolve(appDir, "..", "..");
 const stagingMarketplaceRoot = join(appDir, ".brainpet-package", "marketplace");
+const workspacePackageNames = Object.freeze([
+  "adapter-core", "agent-events", "claude", "cli", "client", "cursor", "install-pet", "mcp", "opencode", "pet-format", "pi", "sdk",
+]);
 const require = createRequire(import.meta.url);
 const electronBuilderCli = require.resolve("electron-builder/out/cli/cli.js");
 
@@ -158,11 +161,22 @@ export function prepareBrainPetBundledMarketplace(options) {
 
 export function assertCanonicalPackageInputsTracked() {
   const inputs = [
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "tsconfig.base.json",
     "apps/desktop/assets",
+    "apps/desktop/build/brainpet-installer.nsh",
+    "apps/desktop/src",
     "apps/desktop/pet-preload.cjs",
     "apps/desktop/brainpet-preload.cjs",
     "apps/desktop/brainpet-setup-preload.cjs",
     "apps/desktop/package.json",
+    "apps/desktop/postcss.config.cjs",
+    "apps/desktop/tailwind.config.cjs",
+    "apps/desktop/tsconfig.json",
+    "apps/desktop/tsconfig.renderer.json",
+    "apps/desktop/vite.config.ts",
     "apps/desktop/electron-builder.brainpet.base.yml",
     "apps/desktop/electron-builder.brainpet.private.yml",
     "apps/desktop/electron-builder.brainpet.public.yml",
@@ -170,9 +184,21 @@ export function assertCanonicalPackageInputsTracked() {
     "native/brainpet-hook/src",
     "native/brainpet-hook/Cargo.toml",
     "native/brainpet-hook/Cargo.lock",
+    ...workspacePackageNames.flatMap((name) => [
+      `packages/${name}/src`,
+      `packages/${name}/package.json`,
+      `packages/${name}/tsconfig.json`,
+      `packages/${name}/tsconfig.tests.json`,
+    ]),
   ];
+  const generatedPathExclusions = workspacePackageNames.flatMap((name) => [
+    `:(exclude)packages/${name}/dist/**`,
+    `:(exclude)packages/${name}/.test-dist/**`,
+    `:(exclude)packages/${name}/node_modules/**`,
+  ]);
+  const packageRoots = workspacePackageNames.map((name) => `packages/${name}`);
   for (const ignored of [false, true]) {
-    const args = ["ls-files", "--others", ...(ignored ? ["--ignored"] : []), "--exclude-standard", "--", ...inputs];
+    const args = ["ls-files", "--others", ...(ignored ? ["--ignored"] : []), "--exclude-standard", "--", ...inputs, ...packageRoots, ...generatedPathExclusions];
     const result = spawnSync("git", args, { cwd: repoRoot, encoding: "utf8", windowsHide: true });
     if (result.status !== 0) throw new Error(result.stderr || "Unable to inspect canonical BrainPet package inputs.");
     const unexpected = result.stdout.split(/\r?\n/).filter(Boolean);
@@ -181,8 +207,12 @@ export function assertCanonicalPackageInputsTracked() {
 }
 
 async function prepareFreshPackageInputs(options) {
+  for (const name of ["dist", ".test-dist", ".brainpet-package"]) rmSync(join(appDir, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  for (const name of workspacePackageNames) {
+    const packageRoot = join(repoRoot, "packages", name);
+    for (const output of ["dist", ".test-dist"]) rmSync(join(packageRoot, output), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
   assertCanonicalPackageInputsTracked();
-  for (const name of ["dist", ".brainpet-package"]) rmSync(join(appDir, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   await runCommand(
     process.platform === "win32" ? "cmd.exe" : "pnpm",
     process.platform === "win32" ? ["/d", "/s", "/c", "pnpm.cmd", "--filter", "@open-pets/desktop", "build"] : ["--filter", "@open-pets/desktop", "build"],

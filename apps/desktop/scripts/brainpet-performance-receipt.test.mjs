@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -67,6 +67,13 @@ test("performance receipt is digest-checked and cannot overwrite an existing suc
     writeBrainPetPerformanceReceipt({ receiptPath, candidate, gateProfile: "idle-24h", startedAt, gateResult, runEvidence }),
     /EEXIST|exists/i,
   );
+
+  const shortReceiptPath = resolveBrainPetPerformanceReceiptPath(candidate, "idle-24h", join(fixture.root, "output", "short-performance"));
+  await assert.rejects(
+    writeBrainPetPerformanceReceipt({ receiptPath: shortReceiptPath, candidate, gateProfile: "idle-24h", startedAt: new Date().toISOString(), gateResult, runEvidence }),
+    /wall-clock/i,
+  );
+  assert.equal(existsSync(shortReceiptPath), false, "A short formal run must fail before publishing any receipt bytes.");
 
   const tampered = JSON.parse(readFileSync(receiptPath, "utf8"));
   tampered.gateResult.idleSoak.samples = 1;

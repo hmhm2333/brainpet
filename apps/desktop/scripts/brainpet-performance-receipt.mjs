@@ -137,10 +137,18 @@ export async function writeBrainPetPerformanceReceipt({ receiptPath, candidate, 
     runEvidence,
     gateResult: normalizedGateResult,
   };
+  assertBrainPetPerformanceWallClock(core.startedAt, core.completedAt, brainPetFormalPerformanceContract[gateProfile].durationMs);
   const receipt = { ...core, evidenceDigest: sha256Bytes(Buffer.from(JSON.stringify(core))) };
-  await writeJsonExclusiveAtomic(receiptPath, receipt);
-  const validated = validateBrainPetPerformanceReceipt(receiptPath, { candidate, gateProfile });
-  return { path: resolve(receiptPath), sha256: sha256File(receiptPath), receipt: validated };
+  let published = false;
+  try {
+    await writeJsonExclusiveAtomic(receiptPath, receipt);
+    published = true;
+    const validated = validateBrainPetPerformanceReceipt(receiptPath, { candidate, gateProfile });
+    return { path: resolve(receiptPath), sha256: sha256File(receiptPath), receipt: validated };
+  } catch (error) {
+    if (published) await rm(receiptPath, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 export function validateBrainPetPerformanceReceipt(receiptPath, { candidate, gateProfile } = {}) {
