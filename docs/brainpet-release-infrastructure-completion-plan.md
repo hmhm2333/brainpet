@@ -363,7 +363,7 @@ Agent 正常运行且无残留 Hook 错误。
 - 使用包内 client/helper 和默认 discovery 跑 packaged E2E；
 - 真实验证 NSIS、DMG、AppImage、deb 的安装/启动/升级/卸载；
 - 六目标均以 fail-closed 探针验证平台签名按政策缺席，公开 runtime 使用严格 allowlist，Bridge 签名 manifest 覆盖 exact file/directory tree；
-- release receipt 聚合 runtime、installer、helper、Adapter、正式性能回执，以及绑定候选 challenge、受保护 reviewer 身份并经 Sigstore OIDC 封存的人工物理回执。
+- release receipt 聚合 runtime、installer、helper、Adapter、正式性能回执，以及绑定候选 challenge、受保护 reviewer 身份并经 Sigstore OIDC 封存的人工物理回执；finalize 必须从原始候选闭包重算 package receipt、候选聚合回执和候选 Sigstore bundle 的 SHA-256，并逐项比对两份性能回执，不能只检查两个 profile 彼此一致。
 
 退出门：任何缺失项都不能写 `publicReleaseReady=true`；Stable 平台必须有真实
 安装回执，回执须绑定候选 run、回执 hash、一次性 challenge 和实际 artifact hash，证明系统警告出现且用户主动确认；
@@ -377,7 +377,7 @@ intake 必须经过 protected Environment 的非触发者 reviewer，审批评�
 
 - 真实 Codex/Claude/OpenCode 任务连续运行；
 - 24 小时 idle、30 分钟游戏 soak、崩溃恢复、睡眠唤醒、多显示器和 DPI；
-- 正式性能 runner 只接受成功公开 workflow 的 Windows x64 NSIS：下载 package/aggregate receipt 与 Sigstore bundle，安全解包后按完整 runtime tree 复验，并在两条长测前后绑定同一 run、attempt、installer、executable、app.asar 和 runtime-tree digest；禁止本机重打 private-test 后冒充公开候选；
+- 正式性能 runner 只接受成功公开 workflow 的 Windows x64 NSIS：下载 package/aggregate receipt 与 Sigstore bundle，对候选回执、package receipt 和 NSIS 逐项执行 `cosign verify-blob` 并绑定精确 repository/workflow/trigger/commit/subject，安全解包后按完整 runtime tree 复验，并在两条长测前后绑定同一 run、attempt、installer、executable、app.asar 和 runtime-tree digest；禁止本机重打 private-test 后冒充公开候选；
 - Windows 正式 runner 以 suspended 创建、精确 lease 绑定和禁止 breakaway 的 Job Object 承载每个命令；只有完整 Job 进程树归零才可发布 completion 或释放 lease；
 - 安装说明、隐私政策、支持矩阵、诊断导出和回退说明最终校验；
 - 修复所有 P0/P1，P2 必须有明确延期 ADR。

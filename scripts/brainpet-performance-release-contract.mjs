@@ -48,6 +48,16 @@ export function validateBrainPetPerformanceReceiptSet(receipts, expected = {}) {
       assert.equal(receipt.candidate.runtimeTreeDigest.toLowerCase(), packageReceipt.runtimeTree?.digest?.toLowerCase(), "BrainPet performance runtime tree differs from the public package.");
     }
   }
+  for (const [expectedKey, candidateKey, label] of [
+    ["packageReceiptSha256", "packageReceiptSha256", "package receipt"],
+    ["publicCandidateReceiptSha256", "publicCandidateReceiptSha256", "public candidate receipt"],
+    ["provenanceBundleSha256", "provenanceBundleSha256", "public candidate provenance bundle"],
+  ]) {
+    if (expected[expectedKey]) {
+      assert.match(expected[expectedKey], /^[a-f0-9]{64}$/i, `Expected BrainPet ${label} digest is invalid.`);
+      for (const receipt of validated) assert.equal(receipt.candidate[candidateKey].toLowerCase(), expected[expectedKey].toLowerCase(), `BrainPet performance ${label} differs from the official public candidate.`);
+    }
+  }
   return validated;
 }
 

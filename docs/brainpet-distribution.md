@@ -135,15 +135,15 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
    本机绝对路径、Agent 内容或配置正文。
 3. 在 Windows x64 上先执行
    `pnpm brainpet:performance:candidate:prepare -- --run-id <candidate-run-id> --commit <40-char-sha>`。
-   该事务只下载上述成功 run 的 Windows x64 package closure、候选聚合回执与 Sigstore bundle；Sigstore 证书/透明日志验签已由该成功 workflow 在生成 aggregate 时执行，本地准备阶段继续逐项绑定
+   维护机必须可调用已认证的 `gh`、`cosign` 3.1.3 和系统 `tar.exe`。该事务只下载上述成功 run 的 Windows x64 package closure、候选聚合回执与 Sigstore bundle；本地准备阶段会对候选回执、package receipt 和 NSIS 逐项执行 `cosign verify-blob`，重新校验 Fulcio/Rekor bundle 的 repository、workflow 名称与路径、触发事件、精确 commit 和 subject bytes，而不是信任任意 JSON bundle 或仅复用 workflow 的自报结论。随后继续绑定
    workflow、run/attempt、commit、receipt/installer hash；在解包前拒绝绝对路径、遍历和冲突路径，再用系统 `tar.exe`
    从原始 NSIS 无安装解出 runtime，并以 package receipt 的完整 runtime tree 复验。随后在同一干净 commit 上分别运行
    `node apps/desktop/scripts/brainpet-performance-gate-runner.mjs start active-30m --candidate <prepared-manifest>` 与
    `node apps/desktop/scripts/brainpet-performance-gate-runner.mjs start idle-24h --candidate <prepared-manifest>`。
    runner 会排除外部 `BRAINPET_*`/`OPENPETS_*` 覆盖、获取跨会话全局租约，并在长测前后重验同一份公开候选；它不再本机重打 private-test 包。
-   回执绑定 prepared manifest、公开候选回执、NSIS、Sigstore bundle、完整 runtime tree、原始 process/heap/latency timeline、总工作集预算、execution log 前缀和 completion。
+   准备目录只保留候选回执、Windows package receipt 与 NSIS 对应的三份已验签 bundle，拒绝它们之外的 prepared provenance entry；回执绑定 prepared manifest、公开候选回执、NSIS、Sigstore bundle、完整 runtime tree、原始 process/heap/latency timeline、总工作集预算、execution log 前缀和 completion。
    30 分钟 active 必须运行 `cargo-signal`；24 小时 idle 必须连续完成。随后用候选回执生成 performance dispatch envelope；
-   intake 会再次计算所有预算，并要求两份回执的 executable、app.asar 与 runtime-tree digest 和公开 Windows 候选完全一致。
+   protected intake 会再次计算所有预算，并从自己下载且已验签的官方候选目录重算 package receipt、候选聚合回执及其 Sigstore bundle 的 SHA-256；finalize 会再次独立重算同三项，除要求两份回执的 executable、app.asar 与 runtime-tree digest 和公开 Windows 候选完全一致外，也拒绝只让两份性能回执彼此一致的伪摘要。
 4. 物理与性能回执中的 reviewer 必须填写将批准 intake 环境的 GitHub 用户名。在仓库中一次性创建
    `brainpet-physical-acceptance` GitHub Environment，把允许确认实机结果的维护者设为 required reviewer，
    启用 Prevent self-review，并关闭管理员绕过；批准者必须与 workflow dispatcher 不同。

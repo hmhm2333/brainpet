@@ -365,11 +365,30 @@ try {
   const publicPerformanceRoot = join(testRoot, "public-performance");
   const publicPhysicalRoot = join(testRoot, "public-physical");
   const publicCandidatePath = join(receiptsRoot, "brainpet-public-candidate-receipt.json");
-  const performanceReceipts = createPerformanceReceiptFixtures(publicCandidate);
-  assert.equal(validateBrainPetPerformanceReceiptSet(performanceReceipts, {
+  writeFileSync(brainPetSigstoreBundlePath(provenanceRoot, sha256(readFileSync(publicCandidatePath))), "{}\n", "utf8");
+  const performanceReceipts = createPerformanceReceiptFixtures(publicCandidate, {
+    packageReceiptPath: signedClaimReceiptPath,
+    publicCandidatePath,
+    provenanceRoot,
+  });
+  const exactPerformanceBindings = {
     sourceCommit: receipt.source.commit,
     packageReceipt: publicCandidate.packages.find((entry) => entry.target === "windows-x64"),
-  }).length, 2);
+    packageReceiptSha256: sha256(readFileSync(signedClaimReceiptPath)),
+    publicCandidateReceiptSha256: sha256(readFileSync(publicCandidatePath)),
+    provenanceBundleSha256: sha256(readFileSync(brainPetSigstoreBundlePath(provenanceRoot, sha256(readFileSync(publicCandidatePath))))),
+  };
+  assert.equal(validateBrainPetPerformanceReceiptSet(performanceReceipts, exactPerformanceBindings).length, 2);
+  for (const key of ["packageReceiptSha256", "publicCandidateReceiptSha256", "provenanceBundleSha256"]) {
+    const forgedBindings = structuredClone(performanceReceipts);
+    for (const forged of forgedBindings) {
+      forged.candidate[key] = "0".repeat(64);
+      const core = { ...forged };
+      delete core.evidenceDigest;
+      forged.evidenceDigest = sha256(Buffer.from(JSON.stringify(core)));
+    }
+    assert.throws(() => validateBrainPetPerformanceReceiptSet(forgedBindings, exactPerformanceBindings), /differs from the official public candidate/i);
+  }
   const tamperedPerformanceReceipts = structuredClone(performanceReceipts);
   tamperedPerformanceReceipts[0].gateResult.soak.process.timeline[1].totalWorkingSetBytes += 1;
   const tamperedPerformanceCore = { ...tamperedPerformanceReceipts[0] };
@@ -389,6 +408,22 @@ try {
   shortWallClockReceipts[1].evidenceDigest = sha256(Buffer.from(JSON.stringify(shortWallClockCore)));
   assert.throws(() => validateBrainPetPerformanceReceiptSet(shortWallClockReceipts, { sourceCommit: receipt.source.commit }), /wall-clock span is shorter/i);
   const performancePayload = createCompressedPayload(performanceReceipts);
+  const forgedIntakeReceipts = structuredClone(performanceReceipts);
+  for (const forged of forgedIntakeReceipts) {
+    forged.candidate.publicCandidateReceiptSha256 = "0".repeat(64);
+    const core = { ...forged };
+    delete core.evidenceDigest;
+    forged.evidenceDigest = sha256(Buffer.from(JSON.stringify(core)));
+  }
+  assert.throws(() => intakeBrainPetPerformanceReceipts({
+    receiptPaths: [],
+    payload: createCompressedPayload(forgedIntakeReceipts),
+    candidateReceiptPath: publicCandidatePath,
+    candidatePackageRoot: join(publicPackagesRoot, "windows-x64"),
+    candidateProvenanceRoot: provenanceRoot,
+    sourceCommit: receipt.source.commit,
+    expectedReviewer: "release-fixture",
+  }), /differs from the official public candidate/i);
   const performanceCandidate = { runId: "123", receiptSha256: sha256(readFileSync(publicCandidatePath)), challenge: publicCandidate.physicalChallenge };
   const performanceApprovalHistoryPath = join(testRoot, "performance-approval-history.json");
   const performanceApprovalComment = formatBrainPetPerformanceApprovalComment(performanceCandidate, sha256(Buffer.from(performancePayload)));
@@ -397,6 +432,8 @@ try {
     receiptPaths: [],
     payload: performancePayload,
     candidateReceiptPath: publicCandidatePath,
+    candidatePackageRoot: join(publicPackagesRoot, "windows-x64"),
+    candidateProvenanceRoot: provenanceRoot,
     sourceCommit: receipt.source.commit,
     outputRoot: publicPerformanceRoot,
     approvalHistoryPath: performanceApprovalHistoryPath,
@@ -408,6 +445,7 @@ try {
     lifecycleRoot,
     bridgeRoot: pluginRoot,
     performanceRoot: publicPerformanceRoot,
+    candidateReceiptPath: publicCandidatePath,
     provenanceRoot,
     outputPath: join(receiptsRoot, "unsigned-performance-release-receipt.json"),
     receiptRoot: receiptsRoot,
@@ -469,6 +507,7 @@ try {
     physicalProvenanceRoot,
     performanceRoot: publicPerformanceRoot,
     performanceProvenanceRoot,
+    candidateReceiptPath: publicCandidatePath,
     provenanceRoot,
     outputPath: join(receiptsRoot, "rerun-physical-release-receipt.json"),
     receiptRoot: receiptsRoot,
@@ -485,6 +524,7 @@ try {
     physicalProvenanceRoot,
     performanceRoot: publicPerformanceRoot,
     performanceProvenanceRoot,
+    candidateReceiptPath: publicCandidatePath,
     provenanceRoot,
     outputPath: join(receiptsRoot, "brainpet-public-release-receipt.json"),
     receiptRoot: receiptsRoot,
@@ -494,7 +534,7 @@ try {
   });
   assert.equal(publicFinal.publicReleaseReady, true);
   assert.deepEqual(publicFinal.missingEvidence, []);
-  assert.equal(verifiedProvenance.length, 25);
+  assert.equal(verifiedProvenance.length, 26);
   console.log("BrainPet release assembly test passed.");
 } finally {
   rmSync(testRoot, { recursive: true, force: true });
@@ -680,9 +720,11 @@ function createPhysicalReceipt(targetId, sourceCommit, artifactHash, candidate =
   };
 }
 
-function createPerformanceReceiptFixtures(publicCandidate) {
+function createPerformanceReceiptFixtures(publicCandidate, bindings) {
   const windowsPackage = publicCandidate.packages.find((entry) => entry.target === "windows-x64");
   assert.ok(windowsPackage?.runtimeTree?.digest, "Public candidate lacks the Windows runtime tree binding.");
+  const publicCandidateReceiptSha256 = sha256(readFileSync(bindings.publicCandidatePath));
+  const publicCandidateBundlePath = brainPetSigstoreBundlePath(bindings.provenanceRoot, publicCandidateReceiptSha256);
   const candidate = {
     repository: brainPetDistributionContract.identity.repository,
     commit: publicCandidate.sourceCommit,
@@ -693,14 +735,14 @@ function createPerformanceReceiptFixtures(publicCandidate) {
     sourceRunId: String(windowsPackage.source.runId),
     sourceRunAttempt: String(windowsPackage.source.runAttempt),
     packageReceipt: "candidate/windows-x64/brainpet-package-receipt-windows-x64.json",
-    packageReceiptSha256: "f".repeat(64),
+    packageReceiptSha256: sha256(readFileSync(bindings.packageReceiptPath)),
     preparedManifest: "candidate/brainpet-performance-candidate.json",
     preparedManifestSha256: "e".repeat(64),
     publicCandidateReceipt: "candidate/brainpet-release-receipt.json",
-    publicCandidateReceiptSha256: "d".repeat(64),
+    publicCandidateReceiptSha256,
     installer: `candidate/windows-x64/${windowsPackage.artifacts.find((artifact) => artifact.kind === "nsis").path}`,
     installerSha256: windowsPackage.artifacts.find((artifact) => artifact.kind === "nsis").sha256,
-    provenanceBundleSha256: "c".repeat(64),
+    provenanceBundleSha256: sha256(readFileSync(publicCandidateBundlePath)),
     executable: windowsPackage.executable,
     executableSha256: windowsPackage.sha256,
     appAsar: windowsPackage.appAsar,

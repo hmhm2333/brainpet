@@ -136,7 +136,7 @@ for (const [name, source] of [["portability", portabilityWorkflow], ["public rel
 }
 assert.match(portabilityWorkflow, /source-contract:[\s\S]*?pnpm install --frozen-lockfile[\s\S]*?pnpm brainpet:release:test/, "The portability source-contract job must still install and test the complete workspace.");
 for (const [name, source] of [["portability", portabilityWorkflow], ["public release", publicReleaseWorkflow]]) {
-  const pnpmSetupCount = source.match(/pnpm\/action-setup@v4/g)?.length ?? 0;
+  const pnpmSetupCount = source.match(/pnpm\/action-setup@[a-f0-9]{40}/g)?.length ?? 0;
   const compatibleNodeSetupCount = source.match(/node-version:\s*22\b/g)?.length ?? 0;
   assert.ok(pnpmSetupCount > 0, `BrainPet ${name} workflow must install pnpm explicitly.`);
   assert.equal(compatibleNodeSetupCount, pnpmSetupCount, `BrainPet ${name} workflow must run pnpm 11 on Node 22.`);
@@ -148,6 +148,11 @@ assert.ok(existsSync(join(root, ".github", "workflows", "brainpet-public-release
 const physicalIntakeWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-physical-receipt-intake.yml"), "utf8");
 const performanceIntakeWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-performance-receipt-intake.yml"), "utf8");
 const publicFinalizeWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-public-release-finalize.yml"), "utf8");
+for (const [name, source] of [["portability", portabilityWorkflow], ["public release", publicReleaseWorkflow], ["physical intake", physicalIntakeWorkflow], ["performance intake", performanceIntakeWorkflow], ["public finalize", publicFinalizeWorkflow]]) {
+  const actionLines = source.split(/\r?\n/).filter((line) => /^\s*- uses:\s+/.test(line));
+  assert.ok(actionLines.length > 0, `BrainPet ${name} workflow must use at least one pinned action.`);
+  for (const line of actionLines) assert.match(line, /^\s*- uses:\s+[^@\s]+@[a-f0-9]{40}(?:\s+#.*)?$/, `BrainPet ${name} workflow action must be pinned to an exact 40-character commit: ${line.trim()}`);
+}
 for (const [name, source] of [["physical intake", physicalIntakeWorkflow], ["performance intake", performanceIntakeWorkflow], ["public finalize", publicFinalizeWorkflow]]) {
   assert.doesNotMatch(source, /^\s*run:.*\$\{\{\s*inputs\./m, `BrainPet ${name} must not interpolate workflow_dispatch inputs into shell source.`);
   for (const line of source.split(/\r?\n/).filter((candidate) => candidate.includes("${{ inputs."))) {
@@ -172,14 +177,16 @@ assert.match(physicalIntakeWorkflow, /brainpet-sigstore-provenance\.mjs/);
 assert.match(physicalIntakeWorkflow, /output\/sealed\/provenance/);
 assert.match(publicFinalizeWorkflow, /--physical-provenance output\/physical\/provenance/);
 assert.match(performanceIntakeWorkflow, /environment: brainpet-physical-acceptance/);
-assert.match(performanceIntakeWorkflow, /actions\/checkout@11bd71901bbe5b1630ceea73d27597364c9af683/);
-assert.match(performanceIntakeWorkflow, /actions\/upload-artifact@ea165f8d65b6e470a52e1e3f4d1a8a2b7c0859/);
+assert.match(performanceIntakeWorkflow, /actions\/checkout@11d5960a326750d5838078e36cf38b85af677262/);
+assert.match(performanceIntakeWorkflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
 assert.doesNotMatch(performanceIntakeWorkflow, /actions\/(?:checkout|upload-artifact)@v\d/);
 assert.match(performanceIntakeWorkflow, /BRAINPET_PERFORMANCE_RECEIPTS_GZIP_BASE64: \$\{\{ inputs\.receipts_gzip_base64 \}\}/);
+assert.match(performanceIntakeWorkflow, /--candidate-package output\/candidate\/packages\/brainpet-public-runtime-current-windows-x64 --candidate-provenance output\/candidate\/provenance/, "Protected performance intake must receive the official package and provenance closures.");
 assert.match(performanceIntakeWorkflow, /actions\/runs\/\$\{GITHUB_RUN_ID\}\/approvals/);
 assert.match(performanceIntakeWorkflow, /brainpet-active-30m\.json[\s\S]*brainpet-idle-24h\.json[\s\S]*brainpet-performance-intake\.json/);
 assert.match(performanceIntakeWorkflow, /brainpet-sigstore-provenance\.mjs/);
 assert.match(publicFinalizeWorkflow, /--performance output\/performance\/performance --performance-provenance output\/performance\/provenance/);
+assert.match(publicFinalizeWorkflow, /--candidate-receipt output\/candidate\/candidate-receipt\/brainpet-release-receipt\.json/, "Final public aggregation must bind the exact candidate receipt used by performance evidence.");
 assert.match(publicFinalizeWorkflow, /BRAINPET_CANDIDATE_RUN_ID: \$\{\{ inputs\.candidate_run_id \}\}/);
 assert.match(publicFinalizeWorkflow, /BRAINPET_PHYSICAL_RECEIPT_RUN_ID: \$\{\{ inputs\.physical_receipt_run_id \}\}/);
 assert.match(publicFinalizeWorkflow, /BRAINPET_PERFORMANCE_RECEIPT_RUN_ID: \$\{\{ inputs\.performance_receipt_run_id \}\}/);
@@ -198,6 +205,7 @@ assert.match(performanceReceiptSource, /validateBrainPetRuntimeTree\(runtimeRoot
 assert.match(performanceReceiptSource, /packageReceipt\.releaseMode, "public-release"|packageReceipt\.releaseMode === "public-release"/, "Formal performance receipts must support the public installer candidate.");
 assert.match(performanceReceiptSource, /Prepared Windows package receipt differs from the public aggregate receipt/, "Prepared performance candidates must bind the public aggregate receipt.");
 assert.match(performanceReceiptSource, /validatePreparedProvenance/, "Prepared performance candidates must bind their Sigstore bundle bytes.");
+assert.match(performanceReceiptSource, /verifyBrainPetSigstoreSubject[\s\S]*verification\.verifier\(\{[\s\S]*workflowPath: brainPetPublicReleaseWorkflow\.path[\s\S]*sourceCommit: verification\.sourceCommit/, "Prepared performance candidates must cryptographically verify each Sigstore subject against the public workflow and commit.");
 assert.match(performanceReceiptSource, /validateBrainPetFormalGateResult/);
 assert.match(performanceReceiptSource, /BrainPetPerformanceReceiptRollbackError[\s\S]*receiptPath = resolve\(receiptPath\)/);
 const performanceRunnerSource = readFileSync(join(desktop, "scripts", "brainpet-performance-gate-runner.mjs"), "utf8");
@@ -229,6 +237,13 @@ assert.match(performancePreparationSource, /brainpet-public-runtime-current-wind
 assert.match(performancePreparationSource, /validateBrainPetPackageArtifactClosure/);
 assert.match(performancePreparationSource, /tar\.exe[\s\S]*-tf[\s\S]*-xf/, "Public performance preparation must inspect the NSIS archive before extraction.");
 assert.match(performancePreparationSource, /createProvenanceRecord\("candidate-receipt"[\s\S]*createProvenanceRecord\("package-receipt"[\s\S]*createProvenanceRecord\("installer"/, "Prepared candidate must bind candidate, package, and installer provenance bundles.");
+assert.match(performancePreparationSource, /validateSelectedProvenanceDirectory[\s\S]*closure is incomplete or contains an extra file/, "Prepared candidate must stage an exact selected Sigstore bundle closure.");
+const performanceReleaseContractSource = readFileSync(join(root, "scripts", "brainpet-performance-release-contract.mjs"), "utf8");
+for (const key of ["packageReceiptSha256", "publicCandidateReceiptSha256", "provenanceBundleSha256"]) assert.match(performanceReleaseContractSource, new RegExp(key), `Final performance validation must bind ${key}.`);
+const aggregateReleaseSource = readFileSync(join(root, "scripts", "aggregate-brainpet-release-receipt.mjs"), "utf8");
+assert.match(aggregateReleaseSource, /validatePublicCandidatePerformanceBinding[\s\S]*packageReceiptSha256[\s\S]*publicCandidateReceiptSha256[\s\S]*provenanceBundleSha256/, "Final aggregation must derive exact performance bindings from the official public candidate bytes.");
+const performanceIntakeSource = readFileSync(join(root, "scripts", "intake-brainpet-performance-receipts.mjs"), "utf8");
+assert.match(performanceIntakeSource, /validateBrainPetPackageArtifactClosure[\s\S]*publicCandidateReceiptSha256[\s\S]*packageReceiptSha256[\s\S]*provenanceBundleSha256/, "Protected performance intake must bind every receipt to the official public candidate bytes.");
 for (const scriptName of ["package:brainpet", "package:brainpet:portable", "package:brainpet:unpacked"]) assert.match(desktopPackage.scripts[scriptName], /^node scripts\/brainpet-package\.mjs/, `${scriptName} must use the self-contained fresh package entrypoint.`);
 const packageSource = readFileSync(join(desktop, "scripts", "brainpet-package.mjs"), "utf8");
 assert.match(packageSource, /workspacePackageNames[\s\S]*"apps\/desktop\/src"[\s\S]*packages\/\$\{name\}\/src[\s\S]*\["dist", "\.test-dist", "\.brainpet-package"\][\s\S]*\["dist", "\.test-dist"\][\s\S]*assertCanonicalPackageInputsTracked\(\)[\s\S]*"pnpm\.cmd"[\s\S]*"@open-pets\/desktop", "build"/);

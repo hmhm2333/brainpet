@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -25,6 +25,7 @@ test("public performance preparation binds successful run, aggregate, package, p
   assert.equal(prepared.candidate.sourceRunId, fixture.runId);
   assert.equal(prepared.candidate.installerSha256, fixture.packageReceipt.artifacts[0].sha256);
   assert.equal(prepared.candidate.executableSha256, fixture.packageReceipt.sha256);
+  assert.deepEqual(fixture.provenanceCalls.map((entry) => entry.label).sort(), ["BrainPet prepared candidate-receipt", "BrainPet prepared installer", "BrainPet prepared package-receipt"]);
   assert.ok(existsSync(prepared.manifestPath));
 
   writeFileSync(join(prepared.outputRoot, "runtime", "resources", "app.asar"), "tampered");
@@ -44,6 +45,23 @@ test("preparation rejects an extra file in the downloaded package closure", () =
   const fixture = createFixture({ extraPackageFile: true });
   assert.throws(() => prepareBrainPetPublicPerformanceCandidate(fixture.options), /unreceipted|unexpected/i);
   assert.equal(existsSync(fixture.outputRoot), false);
+});
+
+test("preparation rejects a forged Sigstore bundle and rolls back its new output", () => {
+  const fixture = createFixture();
+  fixture.options.provenanceVerifier = () => {
+    throw new Error("Sigstore provenance failed for forged fixture bundle.");
+  };
+  assert.throws(() => prepareBrainPetPublicPerformanceCandidate(fixture.options), /Sigstore provenance failed/i);
+  assert.equal(existsSync(fixture.outputRoot), false);
+});
+
+test("preparation stages an exact three-bundle provenance allowlist", () => {
+  const fixture = createFixture({ extraProvenanceFile: true });
+  const prepared = prepareBrainPetPublicPerformanceCandidate(fixture.options);
+  const expected = prepared.manifest.provenance.map((entry) => entry.bundle.split("/").at(-1)).sort();
+  assert.deepEqual(readdirSync(join(prepared.outputRoot, "provenance")).sort(), expected);
+  assert.equal(expected.includes(`sha256-${"e".repeat(64)}.sigstore.json`), false);
 });
 
 test("NSIS archive extraction rejects traversal and conflicting duplicate paths before writing", () => {
@@ -76,7 +94,7 @@ test("NSIS archive extraction rejects traversal and conflicting duplicate paths 
   );
 });
 
-function createFixture({ mutateCandidate, extraPackageFile = false } = {}) {
+function createFixture({ mutateCandidate, extraPackageFile = false, extraProvenanceFile = false } = {}) {
   const root = createRoot();
   const repoRoot = join(root, "repo");
   const sourceRuntime = join(root, "source-runtime");
@@ -166,11 +184,21 @@ function createFixture({ mutateCandidate, extraPackageFile = false } = {}) {
         const digest = sha256(subjectPath);
         writeFileSync(join(destination, `sha256-${digest}.sigstore.json`), `${JSON.stringify({ fixture: true, subjectDigest: digest })}\n`);
       }
+      if (extraProvenanceFile) writeFileSync(join(destination, `sha256-${"e".repeat(64)}.sigstore.json`), "{}\n");
     } else {
       assert.fail(`Unexpected fixture artifact: ${name}`);
     }
   };
-  const validationOptions = { repoRoot, gitIdentity: { repository: brainPetDistributionContract.identity.repository, commit: sourceCommit, treeDirty: false }, platform: "win32" };
+  const provenanceCalls = [];
+  const provenanceVerifier = (evidence) => {
+    assert.equal(evidence.repository, brainPetDistributionContract.identity.repository);
+    assert.equal(evidence.workflowPath, ".github/workflows/brainpet-public-release-gate.yml");
+    assert.equal(evidence.workflowName, "BrainPet public release gate");
+    assert.equal(evidence.sourceCommit, sourceCommit);
+    assert.equal(sha256(evidence.subjectPath), basenameWithoutBundle(evidence.bundlePath));
+    provenanceCalls.push(evidence);
+  };
+  const validationOptions = { repoRoot, gitIdentity: { repository: brainPetDistributionContract.identity.repository, commit: sourceCommit, treeDirty: false }, platform: "win32", provenanceVerifier };
   return {
     root,
     repoRoot,
@@ -179,6 +207,7 @@ function createFixture({ mutateCandidate, extraPackageFile = false } = {}) {
     sourceCommit,
     runId,
     packageReceipt,
+    provenanceCalls,
     validationOptions,
     options: {
       repoRoot,
@@ -191,6 +220,7 @@ function createFixture({ mutateCandidate, extraPackageFile = false } = {}) {
       resolveRun: () => ({ id: Number(runId), path: ".github/workflows/brainpet-public-release-gate.yml@refs/heads/main", name: "BrainPet public release gate", head_sha: sourceCommit, conclusion: "success", event: "workflow_dispatch", run_attempt: Number(runAttempt), repository: { full_name: brainPetDistributionContract.identity.repository } }),
       downloadArtifact,
       extractInstaller: ({ runtimeRoot }) => cpSync(sourceRuntime, runtimeRoot, { recursive: true }),
+      provenanceVerifier,
     },
   };
 }
@@ -207,4 +237,10 @@ function sha256(path) {
 
 function sha256Bytes(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function basenameWithoutBundle(path) {
+  const name = path.split(/[\\/]/).at(-1);
+  assert.match(name, /^sha256-([a-f0-9]{64})\.sigstore\.json$/i);
+  return name.slice(7, 71);
 }

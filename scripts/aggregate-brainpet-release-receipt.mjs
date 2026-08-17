@@ -82,16 +82,30 @@ export function aggregateBrainPetReleaseReceipt(options) {
     });
   }
   const physicalChallenges = new Set(physical.map((entry) => entry.candidate.challenge));
+  const candidateChallenge = options.candidateReceiptPath ? readJson(resolve(options.candidateReceiptPath)).physicalChallenge : null;
   const physicalChallenge = releaseMode !== "public-release"
     ? null
     : physicalChallenges.size === 0
-      ? randomBytes(32).toString("hex")
+      ? candidateChallenge ?? randomBytes(32).toString("hex")
       : physicalChallenges.size === 1
         ? [...physicalChallenges][0]
         : assert.fail("Physical receipts must bind one public-candidate challenge.");
   const windowsPackage = packages.find((entry) => entry.target === "windows-x64");
+  const performanceCandidateBinding = performanceReceiptPaths.length > 0
+    ? validatePublicCandidatePerformanceBinding({
+      candidateReceiptPath: options.candidateReceiptPath,
+      packageReceipts,
+      packages,
+      provenanceRoot,
+      provenanceVerifier,
+      sourceCommit,
+      sourceRunId,
+      sourceRunAttempt,
+      physicalChallenge,
+    })
+    : {};
   const performanceReceipts = performanceReceiptPaths.length > 0
-    ? validateBrainPetPerformanceReceiptSet(performanceReceiptPaths.map((path) => readJson(path)), { sourceCommit, packageReceipt: windowsPackage })
+    ? validateBrainPetPerformanceReceiptSet(performanceReceiptPaths.map((path) => readJson(path)), { sourceCommit, packageReceipt: windowsPackage, ...performanceCandidateBinding })
     : [];
   if (releaseMode === "public-release" && performanceReceipts.length > 0) {
     assert.ok(options.performanceProvenanceRoot, "Public performance evidence requires --performance-provenance.");
@@ -104,6 +118,7 @@ export function aggregateBrainPetReleaseReceipt(options) {
       sourceCommit,
       sourceRunId,
       physicalChallenge,
+      candidateBinding: performanceCandidateBinding,
     });
   }
   for (const entry of physical) {
@@ -310,6 +325,35 @@ function validateBridgeProvenance(bridgeRoot, bridge, provenanceRoot, provenance
   provenanceVerifier(createProvenanceEvidence(receiptPath, provenanceRoot, repository, bridge.source.commit, "BrainPet Bridge receipt"));
 }
 
+function validatePublicCandidatePerformanceBinding({ candidateReceiptPath, packageReceipts, packages, provenanceRoot, provenanceVerifier, sourceCommit, sourceRunId, sourceRunAttempt, physicalChallenge }) {
+  assert.ok(candidateReceiptPath, "Public performance evidence requires --candidate-receipt.");
+  const path = resolve(candidateReceiptPath);
+  const receipt = readJson(path);
+  assert.equal(receipt.schemaVersion, 2);
+  assert.equal(receipt.product, "brainpet");
+  assert.equal(receipt.appId, brainPetDistributionContract.identity.appId);
+  assert.equal(receipt.releaseMode, "public-release");
+  assert.equal(receipt.sourceCommit.toLowerCase(), sourceCommit.toLowerCase());
+  assert.equal(String(receipt.sourceRunId), String(sourceRunId));
+  assert.equal(String(receipt.sourceRunAttempt), String(sourceRunAttempt));
+  assert.equal(receipt.physicalChallenge, physicalChallenge);
+  assert.equal(receipt.rc6GatePassed, true);
+  assert.equal(receipt.publicReleaseReady, false);
+  assert.deepEqual(receipt.packages, packages, "Performance evidence candidate receipt differs from the official package set.");
+  const { evidenceDigest, generatedAt: _generatedAt, ...core } = receipt;
+  assert.equal(evidenceDigest, createHash("sha256").update(JSON.stringify(core)).digest("hex"), "Performance evidence candidate receipt digest is invalid.");
+  const publicCandidateReceiptSha256 = sha256(path);
+  const evidence = createProvenanceEvidence(path, provenanceRoot, brainPetDistributionContract.identity.repository, sourceCommit, "BrainPet public candidate receipt");
+  provenanceVerifier(evidence);
+  const windowsPackageReceiptPath = packageReceipts.find((candidate) => basename(candidate) === "brainpet-package-receipt-windows-x64.json");
+  assert.ok(windowsPackageReceiptPath, "Official Windows package receipt is missing.");
+  return {
+    packageReceiptSha256: sha256(windowsPackageReceiptPath),
+    publicCandidateReceiptSha256,
+    provenanceBundleSha256: sha256(evidence.bundlePath),
+  };
+}
+
 function createProvenanceEvidence(subjectPath, provenanceRoot, repository, sourceCommit, label, workflow = brainPetPublicReleaseWorkflow) {
   const digest = sha256(subjectPath);
   return {
@@ -373,7 +417,7 @@ function validatePhysicalEvidenceProvenance({ physicalEvidence, physicalRoot, pr
   assert.deepEqual(actualBundles, expectedBundles, "Physical provenance bundle closure is incomplete or contains an extra file.");
 }
 
-function validatePerformanceEvidenceProvenance({ performanceReceipts, performanceReceiptPaths, performanceRoot, provenanceRoot, provenanceVerifier, sourceCommit, sourceRunId, physicalChallenge }) {
+function validatePerformanceEvidenceProvenance({ performanceReceipts, performanceReceiptPaths, performanceRoot, provenanceRoot, provenanceVerifier, sourceCommit, sourceRunId, physicalChallenge, candidateBinding }) {
   const provenanceStat = existsSync(provenanceRoot) ? lstatSync(provenanceRoot) : null;
   assert.ok(provenanceStat?.isDirectory() && !provenanceStat.isSymbolicLink(), "Public performance evidence requires a regular Sigstore provenance directory.");
   const intakePath = join(performanceRoot, "brainpet-performance-intake.json");
@@ -384,7 +428,9 @@ function validatePerformanceEvidenceProvenance({ performanceReceipts, performanc
   assert.equal(intake.repository, brainPetDistributionContract.identity.repository);
   assert.equal(intake.sourceCommit.toLowerCase(), sourceCommit.toLowerCase());
   assert.equal(String(intake.candidate?.runId), String(sourceRunId));
-  assert.match(intake.candidate?.receiptSha256 ?? "", /^[a-f0-9]{64}$/i);
+  assert.equal(intake.candidate?.receiptSha256?.toLowerCase(), candidateBinding.publicCandidateReceiptSha256.toLowerCase(), "Performance intake candidate receipt differs from the official public candidate.");
+  assert.equal(intake.candidate?.packageReceiptSha256?.toLowerCase(), candidateBinding.packageReceiptSha256.toLowerCase(), "Performance intake package receipt differs from the official public candidate.");
+  assert.equal(intake.candidate?.provenanceBundleSha256?.toLowerCase(), candidateBinding.provenanceBundleSha256.toLowerCase(), "Performance intake provenance bundle differs from the official public candidate.");
   assert.equal(intake.candidate?.challenge, physicalChallenge);
   assert.equal(intake.github?.workflow, brainPetPerformanceReceiptWorkflow.name);
   assert.equal(intake.github?.runnerEnvironment, "github-hosted");
@@ -484,13 +530,14 @@ function parseArgs(argv) {
     else if (arg === "--physical-provenance") options.physicalProvenanceRoot = argv[++index];
     else if (arg === "--performance") options.performanceRoot = argv[++index];
     else if (arg === "--performance-provenance") options.performanceProvenanceRoot = argv[++index];
+    else if (arg === "--candidate-receipt") options.candidateReceiptPath = argv[++index];
     else if (arg === "--provenance") options.provenanceRoot = argv[++index];
     else if (arg === "--output") options.outputPath = argv[++index];
     else if (arg === "--mode") options.releaseMode = argv[++index];
     else if (arg === "--expect-public-ready") options.expectPublicReady = true;
     else throw new Error(`Unknown aggregate receipt argument: ${arg}`);
   }
-  if (!options.packagesRoot || !options.lifecycleRoot || !options.bridgeRoot || !options.outputPath) throw new Error("Usage: aggregate-brainpet-release-receipt.mjs --packages <dir> --lifecycle <dir> --bridge <dir> --output <receipt.json> [--physical <dir> --physical-provenance <bundle-dir>] [--performance <dir> --performance-provenance <bundle-dir>] [--provenance <bundle-dir>] [--mode private-test|public-release]");
+  if (!options.packagesRoot || !options.lifecycleRoot || !options.bridgeRoot || !options.outputPath) throw new Error("Usage: aggregate-brainpet-release-receipt.mjs --packages <dir> --lifecycle <dir> --bridge <dir> --output <receipt.json> [--physical <dir> --physical-provenance <bundle-dir>] [--performance <dir> --performance-provenance <bundle-dir> --candidate-receipt <public-candidate.json>] [--provenance <bundle-dir>] [--mode private-test|public-release]");
   options.receiptRoot = dirname(resolve(options.outputPath));
   return options;
 }

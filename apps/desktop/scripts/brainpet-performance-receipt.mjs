@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract, brainPetReleaseTargets } from "../../../scripts/brainpet-release-contract.mjs";
 import { assertBrainPetPerformanceWallClock } from "../../../scripts/brainpet-performance-metrics-contract.mjs";
+import { brainPetPublicReleaseWorkflow, verifyBrainPetSigstoreSubject } from "../../../scripts/brainpet-sigstore-provenance.mjs";
 import { validateBrainPetPackageArtifactClosure } from "../../../scripts/stage-brainpet-package-artifacts.mjs";
 import { brainPetFormalPerformanceContract, normalizeBrainPetFormalGateResult, validateBrainPetFormalGateResult } from "./brainpet-performance-contract.mjs";
 import { validateBrainPetRuntimeTree, validateBrainPetRuntimeTreeShape } from "./brainpet-runtime-tree.mjs";
@@ -87,7 +88,7 @@ export function validateBrainPetPreparedPerformanceCandidate(manifestPath, optio
   });
 }
 
-export function validateBrainPetPerformanceCandidate({ packageReceiptPath, executablePath, preparedManifestPath, repoRoot = defaultRepoRoot, gitIdentity = resolveTrackedGitIdentity(repoRoot), platform = process.platform }) {
+export function validateBrainPetPerformanceCandidate({ packageReceiptPath, executablePath, preparedManifestPath, repoRoot = defaultRepoRoot, gitIdentity = resolveTrackedGitIdentity(repoRoot), platform = process.platform, provenanceVerifier = verifyBrainPetSigstoreSubject }) {
   assert.equal(platform, "win32", "Formal BrainPet performance evidence currently requires Windows.");
   assert.ok(typeof packageReceiptPath === "string" && packageReceiptPath.length > 0, "BRAINPET_PACKAGE_RECEIPT is required for a formal performance gate.");
   assert.ok(typeof executablePath === "string" && executablePath.length > 0, "A packaged BrainPet executable is required for a formal performance gate.");
@@ -150,6 +151,10 @@ export function validateBrainPetPerformanceCandidate({ packageReceiptPath, execu
       candidateReceipt: prepared.paths.candidateReceipt,
       packageReceipt: resolvedReceiptPath,
       installer,
+    }, {
+      verifier: provenanceVerifier,
+      repository: packageReceipt.source.repository,
+      sourceCommit: packageReceipt.source.commit,
     });
     assertPreparedManifestBindings(prepared, { packageReceiptBytes, packageReceipt, candidateReceipt, installer, receiptExecutable, appAsar });
   } else {
@@ -417,7 +422,8 @@ function validatePreparedPublicCandidateReceipt(prepared, packageReceipt, packag
   return receipt;
 }
 
-function validatePreparedProvenance(prepared, subjects) {
+function validatePreparedProvenance(prepared, subjects, verification) {
+  assert.equal(typeof verification.verifier, "function", "Prepared BrainPet provenance requires a Sigstore verifier.");
   const records = {};
   for (const entry of prepared.manifest.provenance) {
     const subjectPath = subjects[entry.subject === "candidate-receipt" ? "candidateReceipt" : entry.subject === "package-receipt" ? "packageReceipt" : "installer"];
@@ -431,6 +437,15 @@ function validatePreparedProvenance(prepared, subjects) {
     assert.doesNotThrow(() => JSON.parse(readFileSync(bundlePath, "utf8")), `Prepared ${entry.subject} provenance bundle is not JSON.`);
     const bundleSha256 = sha256File(bundlePath);
     assert.equal(entry.bundleSha256, bundleSha256, `Prepared ${entry.subject} provenance bundle hash changed.`);
+    verification.verifier({
+      subjectPath,
+      bundlePath,
+      repository: verification.repository,
+      workflowPath: brainPetPublicReleaseWorkflow.path,
+      workflowName: brainPetPublicReleaseWorkflow.name,
+      sourceCommit: verification.sourceCommit,
+      label: `BrainPet prepared ${entry.subject}`,
+    });
     records[entry.subject === "candidate-receipt" ? "candidateReceipt" : entry.subject === "package-receipt" ? "packageReceipt" : "installer"] = { subjectSha256, bundleSha256 };
   }
   return records;

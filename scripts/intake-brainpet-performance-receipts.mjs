@@ -9,7 +9,9 @@ import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract } from "./brainpet-release-contract.mjs";
 import { validateBrainPetPerformanceReceiptSet } from "./brainpet-performance-release-contract.mjs";
+import { brainPetSigstoreBundlePath } from "./brainpet-sigstore-provenance.mjs";
 import { validateEnvironmentApproval } from "./intake-brainpet-physical-receipts.mjs";
+import { validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
 
 export function intakeBrainPetPerformanceReceipts(options) {
   const sourceCommit = options.sourceCommit ?? process.env.GITHUB_SHA;
@@ -28,11 +30,22 @@ export function intakeBrainPetPerformanceReceipts(options) {
   const publicWindowsPackage = candidateReceipt.packages?.find((entry) => entry.target === "windows-x64");
   assert.ok(publicWindowsPackage, "Performance intake candidate lacks the Windows x64 package.");
   const candidate = { runId: String(candidateReceipt.sourceRunId), receiptSha256: sha256(candidateBytes), challenge: candidateReceipt.physicalChallenge.toLowerCase() };
+  const exactBindings = { publicCandidateReceiptSha256: candidate.receiptSha256 };
+  assert.equal(Boolean(options.candidatePackageRoot), Boolean(options.candidateProvenanceRoot), "Performance intake requires both candidate package and provenance roots together.");
+  if (options.candidatePackageRoot) {
+    const closure = validateBrainPetPackageArtifactClosure(resolve(options.candidatePackageRoot), "windows-x64");
+    assert.deepEqual(publicWindowsPackage, { ...closure.receipt, provenanceValidated: true }, "Performance intake Windows package differs from its official candidate receipt.");
+    const candidateBundlePath = brainPetSigstoreBundlePath(resolve(options.candidateProvenanceRoot), candidate.receiptSha256);
+    exactBindings.packageReceiptSha256 = sha256(readRegularFile(closure.receiptPath, 2 * 1024 * 1024, "candidate package receipt"));
+    exactBindings.provenanceBundleSha256 = sha256(readRegularFile(candidateBundlePath, 2 * 1024 * 1024, "candidate Sigstore bundle"));
+    candidate.packageReceiptSha256 = exactBindings.packageReceiptSha256;
+    candidate.provenanceBundleSha256 = exactBindings.provenanceBundleSha256;
+  }
 
   const payload = options.payload ?? createCompressedPayload(options.receiptPaths.map((path) => JSON.parse(readRegularFile(resolve(path), 16 * 1024 * 1024, "performance receipt").toString("utf8"))));
   assert.ok(typeof payload === "string" && payload.length > 0 && payload.length <= 60_000 && /^[A-Za-z0-9+/=]+$/.test(payload), "Performance receipt compressed payload is invalid or oversized.");
   const receipts = decodeCompressedPayload(payload);
-  const validated = validateBrainPetPerformanceReceiptSet(receipts, { sourceCommit, packageReceipt: publicWindowsPackage });
+  const validated = validateBrainPetPerformanceReceiptSet(receipts, { sourceCommit, packageReceipt: publicWindowsPackage, ...exactBindings });
   const approvalComment = formatBrainPetPerformanceApprovalComment(candidate, sha256Text(payload));
   const actor = options.actor ?? process.env.GITHUB_ACTOR;
   const reviewer = options.approvalHistoryPath ? validateEnvironmentApproval(options.approvalHistoryPath, actor, approvalComment) : options.expectedReviewer;
@@ -104,6 +117,8 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === "--receipt") options.receiptPaths.push(argv[++index]);
     else if (arg === "--candidate-receipt") options.candidateReceiptPath = argv[++index];
+    else if (arg === "--candidate-package") options.candidatePackageRoot = argv[++index];
+    else if (arg === "--candidate-provenance") options.candidateProvenanceRoot = argv[++index];
     else if (arg === "--payload-env") { const name = argv[++index]; assert.match(name ?? "", /^BRAINPET_[A-Z0-9_]+$/); options.payload = process.env[name]; }
     else if (arg === "--approval-history") options.approvalHistoryPath = argv[++index];
     else if (arg === "--expected-reviewer") options.expectedReviewer = argv[++index];
@@ -115,7 +130,7 @@ function parseArgs(argv) {
   }
   assert.ok(options.candidateReceiptPath && (options.payload || options.receiptPaths.length === 2), "Performance intake requires a candidate and exactly two receipt files or one compressed payload.");
   if (options.requireTrustedCi) {
-    assert.ok(options.payload && options.approvalHistoryPath && options.outputRoot);
+    assert.ok(options.payload && options.approvalHistoryPath && options.outputRoot && options.candidatePackageRoot && options.candidateProvenanceRoot);
     assert.equal(process.env.GITHUB_ACTIONS, "true");
     assert.equal(process.env.RUNNER_ENVIRONMENT, "github-hosted");
     assert.equal(process.env.GITHUB_WORKFLOW, "BrainPet performance receipt intake");

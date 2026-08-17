@@ -3,7 +3,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { constants as fsConstants, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,7 +13,7 @@ import {
   validateBrainPetPreparedPerformanceCandidate,
 } from "../apps/desktop/scripts/brainpet-performance-receipt.mjs";
 import { brainPetDistributionContract, brainPetReleaseTargets } from "./brainpet-release-contract.mjs";
-import { brainPetPublicReleaseWorkflow } from "./brainpet-sigstore-provenance.mjs";
+import { brainPetPublicReleaseWorkflow, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
 import { validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -41,6 +42,7 @@ export function prepareBrainPetPublicPerformanceCandidate(options) {
   const downloadArtifact = options.downloadArtifact ?? downloadGitHubArtifact;
   const extractInstaller = options.extractInstaller ?? extractNsisWithWindowsTar;
   let created = false;
+  let downloadedProvenanceRoot = null;
   try {
     const run = resolveRun({ repository, runId });
     validateSourceRun(run, { repository, runId, sourceCommit });
@@ -51,9 +53,10 @@ export function prepareBrainPetPublicPerformanceCandidate(options) {
     const provenanceRoot = join(outputRoot, "provenance");
     const runtimeRoot = join(outputRoot, "runtime");
     for (const path of [packageRoot, candidateReceiptRoot, provenanceRoot]) mkdirSync(path);
+    downloadedProvenanceRoot = mkdtempSync(join(tmpdir(), "brainpet-public-provenance-"));
     downloadArtifact({ repository, runId, name: artifactNames.package, destination: packageRoot });
     downloadArtifact({ repository, runId, name: artifactNames.candidateReceipt, destination: candidateReceiptRoot });
-    downloadArtifact({ repository, runId, name: artifactNames.provenance, destination: provenanceRoot });
+    downloadArtifact({ repository, runId, name: artifactNames.provenance, destination: downloadedProvenanceRoot });
 
     const closure = validateBrainPetPackageArtifactClosure(packageRoot, "windows-x64");
     assert.equal(closure.receipt.releaseMode, "public-release");
@@ -74,7 +77,7 @@ export function prepareBrainPetPublicPerformanceCandidate(options) {
     const candidateReceiptPath = join(candidateReceiptRoot, "brainpet-release-receipt.json");
     const candidateReceipt = readJson(candidateReceiptPath, "BrainPet public-candidate receipt");
     validateAggregateCandidate(candidateReceipt, closure.receipt, { repository, runId, sourceCommit, runAttempt: run.run_attempt });
-    validateProvenanceDirectory(provenanceRoot);
+    validateDownloadedProvenanceDirectory(downloadedProvenanceRoot);
 
     mkdirSync(runtimeRoot);
     extractInstaller({ installer, runtimeRoot });
@@ -85,10 +88,11 @@ export function prepareBrainPetPublicPerformanceCandidate(options) {
     assertRegularFile(appAsar, "Prepared BrainPet app.asar");
 
     const subjectRecords = [
-      createProvenanceRecord("candidate-receipt", candidateReceiptPath, provenanceRoot, outputRoot),
-      createProvenanceRecord("package-receipt", closure.receiptPath, provenanceRoot, outputRoot),
-      createProvenanceRecord("installer", installer, provenanceRoot, outputRoot),
+      createProvenanceRecord("candidate-receipt", candidateReceiptPath, downloadedProvenanceRoot, provenanceRoot, outputRoot),
+      createProvenanceRecord("package-receipt", closure.receiptPath, downloadedProvenanceRoot, provenanceRoot, outputRoot),
+      createProvenanceRecord("installer", installer, downloadedProvenanceRoot, provenanceRoot, outputRoot),
     ];
+    validateSelectedProvenanceDirectory(provenanceRoot, subjectRecords.map((entry) => basename(entry.bundle)));
     const manifestCore = {
       schemaVersion: 1,
       kind: "brainpet-public-performance-candidate",
@@ -119,12 +123,15 @@ export function prepareBrainPetPublicPerformanceCandidate(options) {
       repoRoot,
       gitIdentity: { repository, commit: sourceCommit, treeDirty: false },
       platform,
+      provenanceVerifier: options.provenanceVerifier ?? verifyBrainPetSigstoreSubject,
     });
     assert.equal(candidate.sourceRunId, runId);
     return Object.freeze({ outputRoot, manifestPath, manifest, candidate });
   } catch (error) {
     if (created) rmSync(outputRoot, { recursive: true, force: true });
     throw error;
+  } finally {
+    if (downloadedProvenanceRoot) rmSync(downloadedProvenanceRoot, { recursive: true, force: true });
   }
 }
 
@@ -178,15 +185,19 @@ function validateAggregateCandidate(receipt, packageReceipt, expected) {
   assert.equal(evidenceDigest, sha256Bytes(Buffer.from(JSON.stringify(core))), "Public aggregate candidate digest is invalid.");
 }
 
-function createProvenanceRecord(subject, subjectPath, provenanceRoot, outputRoot) {
+function createProvenanceRecord(subject, subjectPath, downloadedProvenanceRoot, provenanceRoot, outputRoot) {
   const subjectSha256 = sha256(subjectPath);
-  const bundlePath = join(provenanceRoot, `sha256-${subjectSha256}.sigstore.json`);
-  assertRegularFile(bundlePath, `BrainPet ${subject} provenance bundle`, 2 * 1024 * 1024);
-  assert.doesNotThrow(() => JSON.parse(readFileSync(bundlePath, "utf8")), `BrainPet ${subject} provenance bundle is not JSON.`);
+  const bundleName = `sha256-${subjectSha256}.sigstore.json`;
+  const downloadedBundlePath = join(downloadedProvenanceRoot, bundleName);
+  assertRegularFile(downloadedBundlePath, `BrainPet ${subject} provenance bundle`, 2 * 1024 * 1024);
+  assert.doesNotThrow(() => JSON.parse(readFileSync(downloadedBundlePath, "utf8")), `BrainPet ${subject} provenance bundle is not JSON.`);
+  const bundlePath = join(provenanceRoot, bundleName);
+  copyFileSync(downloadedBundlePath, bundlePath, fsConstants.COPYFILE_EXCL);
+  assertRegularFile(bundlePath, `Selected BrainPet ${subject} provenance bundle`, 2 * 1024 * 1024);
   return { subject, subjectSha256, bundle: toPortableRelative(outputRoot, bundlePath), bundleSha256: sha256(bundlePath) };
 }
 
-function validateProvenanceDirectory(provenanceRoot) {
+function validateDownloadedProvenanceDirectory(provenanceRoot) {
   assertDirectory(provenanceRoot, "BrainPet provenance directory");
   const entries = readdirSync(provenanceRoot, { withFileTypes: true });
   assert.ok(entries.length > 0, "BrainPet provenance directory is empty.");
@@ -195,6 +206,15 @@ function validateProvenanceDirectory(provenanceRoot) {
     assert.match(entry.name, /^sha256-[a-f0-9]{64}\.sigstore\.json$/i, `BrainPet provenance contains an unexpected file: ${entry.name}`);
     readJson(join(provenanceRoot, entry.name), `BrainPet provenance ${entry.name}`);
   }
+}
+
+function validateSelectedProvenanceDirectory(provenanceRoot, expectedNames) {
+  assertDirectory(provenanceRoot, "Selected BrainPet provenance directory");
+  const actualNames = readdirSync(provenanceRoot, { withFileTypes: true }).map((entry) => {
+    assert.ok(entry.isFile() && !entry.isSymbolicLink(), `Selected BrainPet provenance contains an unsafe entry: ${entry.name}`);
+    return entry.name;
+  }).sort();
+  assert.deepEqual(actualNames, [...expectedNames].sort(), "Selected BrainPet provenance closure is incomplete or contains an extra file.");
 }
 
 function assertExtractedRuntimeIsSafe(runtimeRoot) {
