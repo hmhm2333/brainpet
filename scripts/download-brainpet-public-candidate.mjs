@@ -78,7 +78,7 @@ export function downloadBrainPetPublicCandidate(options) {
   assert.equal(candidate.operatingSystemPublisherTrust, false);
   assert.equal(candidate.manualUserConsentRequired, true);
   assert.match(candidate.physicalChallenge ?? "", /^[a-f0-9]{64}$/i, "Public candidate lacks a physical acceptance challenge.");
-  assert.deepEqual(candidate.missingEvidence.sort(), ["macos-arm64:physical-acceptance", "windows-x64:physical-acceptance"]);
+  assert.deepEqual(candidate.missingEvidence.sort(), ["macos-arm64:physical-acceptance", "performance:active-30m", "performance:idle-24h", "windows-x64:physical-acceptance"]);
   const provenanceVerifier = options.provenanceVerifier ?? verifyBrainPetSigstoreSubject;
   provenanceVerifier({
     subjectPath: candidatePaths[0],

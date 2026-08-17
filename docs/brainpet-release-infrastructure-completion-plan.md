@@ -12,8 +12,8 @@
 | RC-1～RC-2 | 已通过 | `80dc0a3`、`36083ce`；Audit A 整改与独立复审在 `a23270e`、`6cf53bd` 通过 |
 | RC-3～RC-4 | 已通过 | `6464fe3`、`b8d87fa`；Audit B 整改与独立复审在 `73ffb47`、`9e6a691` 通过 |
 | RC-5 | 已通过 | `f9802a9`；Windows x64 native-only 包、一次点击 Codex、single-instance、冷唤醒恢复与真实 packaged UI smoke 通过 |
-| RC-6 | 进行中 | 默认 package 自动 validator、真实 installer lifecycle、未签名直装合同、可信 provenance、候选→物理 intake→finalize 三段聚合回执已完成本地门；Windows x64 未签名公开包已通过本机结构/Authenticode 缺席验证；远端六目标/四格式/Stable 实机回执未通过前不标完成 |
-| RC-7 | 待实施 | 未满足对应退出门前不得标记完成 |
+| RC-6 | 进行中 | 默认 package 自动 validator、真实 installer lifecycle、未签名直装合同、可信 provenance、候选→physical/performance intake→finalize 聚合回执已完成本地门；Windows x64 未签名公开包已通过本机结构/Authenticode 缺席验证；远端六目标/四格式/Stable 实机回执未通过前不标完成 |
+| RC-7 | 进行中 | 正式性能 runner、原始证据重算、跨会话租约和 release 聚合已实现；30 分钟/24 小时正式证据及最终独立审核未通过前不标完成 |
 
 ## 1. 最终目标
 
@@ -363,7 +363,7 @@ Agent 正常运行且无残留 Hook 错误。
 - 使用包内 client/helper 和默认 discovery 跑 packaged E2E；
 - 真实验证 NSIS、DMG、AppImage、deb 的安装/启动/升级/卸载；
 - 六目标均以 fail-closed 探针验证平台签名按政策缺席，公开 runtime 使用严格 allowlist，Bridge 签名 manifest 覆盖 exact file/directory tree；
-- release receipt 聚合 runtime、installer、helper、Adapter，以及绑定候选 challenge、受保护 reviewer 身份并经 Sigstore OIDC 封存的人工物理回执。
+- release receipt 聚合 runtime、installer、helper、Adapter、正式性能回执，以及绑定候选 challenge、受保护 reviewer 身份并经 Sigstore OIDC 封存的人工物理回执。
 
 退出门：任何缺失项都不能写 `publicReleaseReady=true`；Stable 平台必须有真实
 安装回执，回执须绑定候选 run、回执 hash、一次性 challenge 和实际 artifact hash，证明系统警告出现且用户主动确认；
@@ -380,7 +380,7 @@ intake 必须经过 protected Environment 的非触发者 reviewer，审批评�
 - 安装说明、隐私政策、支持矩阵、诊断导出和回退说明最终校验；
 - 修复所有 P0/P1，P2 必须有明确延期 ADR。
 
-退出门：满足第 11 节 Definition of Done，生成不可变 RC receipt 后才允许发布。
+退出门：满足第 11 节 Definition of Done，生成不可覆盖、由证据摘要与 Sigstore provenance 封存的 RC receipt 后才允许发布。
 
 ## 8. 性能预算
 
@@ -391,8 +391,8 @@ intake 必须经过 protected Environment 的非触发者 reviewer，审批评�
 | 冷启动到宠物可用 | p95 ≤ 1.0s | 当前约 639ms，不允许退化 |
 | 已运行事件反馈 | p95 ≤ 200ms | Adapter 到可见状态 |
 | 冷唤醒到反馈 | p95 ≤ 1.5s | Agent 首次事件启动 runtime |
-| 冷 idle 工作集 | ≤ 400MiB，目标 300MiB | 当前约 581MiB |
-| 游戏中工作集 | ≤ 650MiB | 当前约 826MiB |
+| 冷 idle 总工作集 | ≤ 400MiB，目标 300MiB | 最近短测约 422MiB，仍未通过正式门 |
+| 游戏中总工作集 | ≤ 650MiB | 最近短测约 706MiB，仍未通过正式门 |
 | 热 idle 相对冷 idle | +100MiB 内 | 当前约 +126MiB |
 | idle CPU | 5 分钟均值 < 1% | 无窗口移动/动画风暴 |
 | 交互帧率 | p95 ≥ 50fps，最低 30fps | 暂停/拖动单独计 |
@@ -401,6 +401,11 @@ intake 必须经过 protected Environment 的非触发者 reviewer，审批评�
 
 如果 ≤400MiB 暂时无法达到，必须给出按进程角色拆分的证据和明确降级声明，
 不能只提高阈值使测试通过。
+
+Windows 参考机的整改保持 400/650MiB 阈值不变：BrainPet 仅加载打包内本地 surface，
+保留 renderer sandbox 与硬件加速，但将 GPU service 作为 browser-process thread 运行，避免独立 GPU
+进程重复计入共享 Chromium 工作集。代价是 GPU service 故障会扩大到 BrainPet 主进程；OpenPets 不采用该策略，
+仍使用 Electron 默认的独立 GPU process。该取舍必须由真实 renderer crash、全流程 smoke 与长时门共同复核。
 
 ## 9. 测试体系
 
@@ -522,7 +527,7 @@ discovery、支持等级和文档真实性。
 - [ ] rollback smoke、双宿主、packaged discovery 进入默认发行门；
 - [ ] 三次独立 SubAgent 审核无未解决 P0/P1；
 - [ ] 文档、支持矩阵、隐私声明与真实 runtime 一致；
-- [ ] Git 工作树干净、commit 可追溯、release receipt 不可变。
+- [ ] Git 工作树干净、commit 可追溯、release receipt 非覆盖写入且由摘要/provenance 封存。
 
 ## 12. 实施与提交策略
 

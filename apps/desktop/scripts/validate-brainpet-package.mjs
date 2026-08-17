@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract, brainPetReleaseTargets } from "../../../scripts/brainpet-release-contract.mjs";
 import { assertBrainPetBinary, inspectExecutableBinary } from "../../../scripts/brainpet-binary-format.mjs";
+import { createBrainPetRuntimeTree } from "./brainpet-runtime-tree.mjs";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -45,6 +46,7 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
   const appAsar = join(resources, "app.asar");
   assert.ok(existsSync(appAsar), "BrainPet app.asar is missing.");
   const appPackage = readAsarPackageJson(appAsar);
+  const runtimeTree = createBrainPetRuntimeTree(unpackedRoot);
   for (const preload of ["pet-preload.cjs", "brainpet-preload.cjs", "brainpet-setup-preload.cjs"]) {
     assertAsarFile(appAsar, preload, `BrainPet package is missing required host preload ${preload}.`);
   }
@@ -102,6 +104,7 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
     sha256: createHash("sha256").update(readFileSync(executable)).digest("hex"),
     appAsar: relative(resolvedOutput, appAsar).replaceAll("\\", "/"),
     appAsarSha256: createHash("sha256").update(readFileSync(appAsar)).digest("hex"),
+    runtimeTree,
     bridgeSourceBundled: true,
     bridgeMarketplaceBundled: true,
     nativeBridgeHelpersBundled: true,

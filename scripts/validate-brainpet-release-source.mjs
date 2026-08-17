@@ -89,6 +89,7 @@ assert.doesNotMatch(
   /disableHardwareAcceleration|appendSwitch\("(?:use-angle|use-gl|disable-gpu|disable-gpu-rasterization|enable-gpu-rasterization|use-vulkan)"|swiftshader/i,
   "BrainPet must retain Electron's default hardware acceleration and must not force a software, WARP, SwiftShader, or custom GPU backend.",
 );
+assert.match(mainSource, /distribution\.profile === "brainpet" && process\.platform === "win32"[\s\S]*appendSwitch\("in-process-gpu"\)/, "Windows BrainPet must avoid a duplicated GPU-process working set without disabling hardware acceleration or changing OpenPets.");
 assert.doesNotMatch(lifecycleSource, /plugin-service|brainpet\/host|remote-control-service|lan-controller|local-ipc|windows\.js/, "App lifecycle must only call the composition disposer.");
 assert.match(managedServiceSource, /#disposeRequested/, "Composition lifecycle must stop factory creation once disposal begins.");
 assert.match(optionalServicesSource, /AsyncOperationGate/, "Optional OpenPets services must drain lazy work before disposal completes.");
@@ -117,6 +118,7 @@ assert.match(sigstoreSource, /--certificate-github-workflow-repository/);
 assert.match(sigstoreSource, /--certificate-github-workflow-sha/);
 assert.match(sigstoreSource, /RUNNER_ENVIRONMENT/);
 assert.match(sigstoreSource, /brainpet-physical-receipt-intake\.yml/);
+assert.match(sigstoreSource, /brainpet-performance-receipt-intake\.yml/);
 const publicReleaseWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-public-release-gate.yml"), "utf8");
 assert.match(publicReleaseWorkflow, /sigstore\/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6/);
 assert.match(publicReleaseWorkflow, /brainpet-public-provenance/);
@@ -142,10 +144,12 @@ for (const [name, source] of [["portability", portabilityWorkflow], ["public rel
   assert.doesNotMatch(source, /node-version:\s*20\b/, `BrainPet ${name} workflow must not pair pnpm 11 with incompatible Node 20.`);
 }
 assert.ok(existsSync(join(root, ".github", "workflows", "brainpet-physical-receipt-intake.yml")));
+assert.ok(existsSync(join(root, ".github", "workflows", "brainpet-performance-receipt-intake.yml")));
 assert.ok(existsSync(join(root, ".github", "workflows", "brainpet-public-release-finalize.yml")));
 const physicalIntakeWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-physical-receipt-intake.yml"), "utf8");
+const performanceIntakeWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-performance-receipt-intake.yml"), "utf8");
 const publicFinalizeWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-public-release-finalize.yml"), "utf8");
-for (const [name, source] of [["physical intake", physicalIntakeWorkflow], ["public finalize", publicFinalizeWorkflow]]) {
+for (const [name, source] of [["physical intake", physicalIntakeWorkflow], ["performance intake", performanceIntakeWorkflow], ["public finalize", publicFinalizeWorkflow]]) {
   assert.doesNotMatch(source, /^\s*run:.*\$\{\{\s*inputs\./m, `BrainPet ${name} must not interpolate workflow_dispatch inputs into shell source.`);
   for (const line of source.split(/\r?\n/).filter((candidate) => candidate.includes("${{ inputs."))) {
     assert.match(line, /^\s+BRAINPET_[A-Z0-9_]+:\s*\$\{\{\s*inputs\.[a-z0-9_]+\s*\}\}\s*$/, `BrainPet ${name} workflow_dispatch inputs must only enter fixed BRAINPET_* environment variables.`);
@@ -168,22 +172,40 @@ assert.match(readFileSync(join(root, "scripts", "aggregate-brainpet-release-rece
 assert.match(physicalIntakeWorkflow, /brainpet-sigstore-provenance\.mjs/);
 assert.match(physicalIntakeWorkflow, /output\/sealed\/provenance/);
 assert.match(publicFinalizeWorkflow, /--physical-provenance output\/physical\/provenance/);
+assert.match(performanceIntakeWorkflow, /environment: brainpet-physical-acceptance/);
+assert.match(performanceIntakeWorkflow, /BRAINPET_PERFORMANCE_RECEIPTS_GZIP_BASE64: \$\{\{ inputs\.receipts_gzip_base64 \}\}/);
+assert.match(performanceIntakeWorkflow, /actions\/runs\/\$\{GITHUB_RUN_ID\}\/approvals/);
+assert.match(performanceIntakeWorkflow, /brainpet-active-30m\.json[\s\S]*brainpet-idle-24h\.json[\s\S]*brainpet-performance-intake\.json/);
+assert.match(performanceIntakeWorkflow, /brainpet-sigstore-provenance\.mjs/);
+assert.match(publicFinalizeWorkflow, /--performance output\/performance\/performance --performance-provenance output\/performance\/provenance/);
 assert.match(publicFinalizeWorkflow, /BRAINPET_CANDIDATE_RUN_ID: \$\{\{ inputs\.candidate_run_id \}\}/);
 assert.match(publicFinalizeWorkflow, /BRAINPET_PHYSICAL_RECEIPT_RUN_ID: \$\{\{ inputs\.physical_receipt_run_id \}\}/);
+assert.match(publicFinalizeWorkflow, /BRAINPET_PERFORMANCE_RECEIPT_RUN_ID: \$\{\{ inputs\.performance_receipt_run_id \}\}/);
 const packageValidatorSource = readFileSync(join(desktop, "scripts", "validate-brainpet-package.mjs"), "utf8");
 assert.match(packageValidatorSource, /assertMacosCodeObjectIsUnsigned/);
 assert.match(packageValidatorSource, /--appimage-signature/);
 assert.match(packageValidatorSource, /deb unexpectedly contains an embedded signature or non-standard archive member/);
 assert.match(packageValidatorSource, /appAsarSha256:/, "Package receipts must bind the packaged application bytes.");
+assert.match(packageValidatorSource, /const runtimeTree = createBrainPetRuntimeTree\(unpackedRoot\)[\s\S]*runtimeTree,/, "Package receipts must bind the complete unpacked runtime tree.");
 const performanceReceiptSource = readFileSync(join(desktop, "scripts", "brainpet-performance-receipt.mjs"), "utf8");
 assert.match(performanceReceiptSource, /--untracked-files=no/);
 assert.match(performanceReceiptSource, /packageReceipt\.source\.treeDirty, false/);
 assert.match(performanceReceiptSource, /await link\(temporary, target\)/, "Successful performance receipts must use non-overwriting atomic publication.");
+assert.match(performanceReceiptSource, /validateBrainPetRuntimeTree\(runtimeRoot, packageReceipt\.runtimeTree\)/);
+assert.match(performanceReceiptSource, /validateBrainPetFormalGateResult/);
 const performanceRunnerSource = readFileSync(join(desktop, "scripts", "brainpet-performance-gate-runner.mjs"), "utf8");
 assert.match(performanceRunnerSource, /detached: true/);
-assert.match(performanceRunnerSource, /creationDate === manifest\.runner\?\.creationDate/);
+assert.match(performanceRunnerSource, /identity\.creationDate === expected\.creationDate/);
 assert.match(performanceRunnerSource, /identity\.executablePath/);
 assert.match(performanceRunnerSource, /commandNeedles\.every/);
+assert.match(performanceRunnerSource, /createCleanPerformanceEnvironment\([\s\S]*BRAINPET_ENFORCE_RESOURCE_BUDGET: "1"/);
+assert.match(performanceRunnerSource, /package:brainpet:unpacked/);
+assert.match(performanceRunnerSource, /status\.state === "interrupted" && status\.receiptPath[\s\S]*rmSyncExact/);
+assert.match(performanceRunnerSource, /maximumTotalWorkingSetBytes|validateBrainPetFormalGateResult/);
+const desktopPackage = JSON.parse(readFileSync(join(desktop, "package.json"), "utf8"));
+assert.equal(desktopPackage.scripts["test:brainpet-soak"], "pnpm brainpet:active-gate:start");
+assert.equal(desktopPackage.scripts["test:brainpet-idle-soak"], "pnpm brainpet:idle-gate:start");
+for (const scriptName of ["package:brainpet", "package:brainpet:portable", "package:brainpet:unpacked"]) assert.match(desktopPackage.scripts[scriptName], /^node scripts\/clean-brainpet-build-output\.cjs/, `${scriptName} must begin from clean BrainPet build output.`);
 assert.deepEqual(Object.fromEntries(brainPetDistributionContract.releaseTargets.map((target) => [target.id, target.supportLevel])), {
   "windows-x64": "stable",
   "windows-arm64": "preview",

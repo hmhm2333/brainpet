@@ -94,8 +94,11 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
 
 - `brainpet-package.mjs` 是默认打包入口；builder 成功后会直接调用
   `validate-brainpet-package.mjs`。不能再通过只运行 builder 绕过产物校验。
-- package receipt 记录支持等级、app 版本、精确 source commit、CI 身份、runtime、
-  包内 native helper 和每个 installer 的 SHA-256。单目标回执固定写
+- Windows BrainPet 保留硬件加速和 renderer sandbox，但因其只加载打包内本地 surface，GPU service
+  采用 browser-process thread 以满足冻结的总工作集预算；这会让 GPU service 故障影响主进程。OpenPets
+  继续使用 Electron 默认的独立 GPU process，二者的差异由 composition/source contract 与真实 smoke 固定。
+- package receipt 记录支持等级、app 版本、精确 source commit、CI 身份、完整 unpacked runtime
+  file/directory tree（含每个文件大小与 SHA-256）、包内 native helper 和每个 installer 的 SHA-256。单目标回执固定写
   `publicReleaseReady=false`，不能越权代替聚合门。
 - 私测 portability workflow 在 GitHub 托管的干净 runner 上，对 Windows x64 NSIS、
   macOS arm64 DMG、Linux x64 AppImage/deb 运行真实安装、默认 discovery、包内 helper、
@@ -113,12 +116,12 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
 - Sigstore public-good 服务会把证书身份与 artifact digest 写入公开透明日志；该身份包含
   repository、workflow/ref 和 commit 元数据，但不会上传安装包、源码、用户配置或人工回执正文。
 - `aggregate-brainpet-release-receipt.mjs` 聚合六目标 runtime、四种真实 installer
-  lifecycle、六 helper Bridge、Adapter 和人工物理回执。Stable 目标仍缺任何未签名策略、
+  lifecycle、六 helper Bridge、Adapter、正式 active-30m/idle-24h 性能回执和人工物理回执。Stable 目标仍缺任何未签名策略、
   provenance、安装或物理用户确认时，只列出 `missingEvidence`，绝不写公开就绪。
 
-### 不可循环的候选与物理回执流程
+### 不可循环的候选、性能与物理回执流程
 
-公开发行严格分成三次、同 commit 的可信运行，不能在验收后重新构建安装包：
+公开发行严格分成候选、两类独立 intake 与 finalize，全部绑定同一 commit；不能在验收后重新构建安装包：
 
 1. 手动运行 `BrainPet public release gate`。它构建并验证六目标未签名候选、四条
    installer lifecycle、Bridge 和 provenance，生成 `brainpet-public-candidate-receipt`
@@ -130,19 +133,24 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
    intake 后的公开回执只保存这些候选绑定、平台、显示器摘要、安装包
    文件名/大小/hash、平台签名缺席、系统警告与人工确认结果和 reviewer；本地 note 会被清空，不保存
    本机绝对路径、Agent 内容或配置正文。
-3. 两份回执中的 reviewer 必须填写将批准 intake 环境的 GitHub 用户名。在仓库中一次性创建
+3. 在同一干净 commit 上分别通过 `brainpet:active-gate:start` 与 `brainpet:idle-gate:start`。
+   runner 会排除外部 `BRAINPET_*`/`OPENPETS_*` 覆盖、获取跨会话全局租约、从清空后的输出重新打包，
+   并绑定 manifest、完整 runtime tree、原始 process/heap/latency timeline、总工作集预算、execution log 前缀和 completion。
+   30 分钟 active 必须运行 `cargo-signal`；24 小时 idle 必须连续完成。随后用候选回执生成 performance dispatch envelope；
+   intake 会再次计算所有预算，并要求两份回执的 executable、app.asar 与 runtime-tree digest 和公开 Windows 候选完全一致。
+4. 物理与性能回执中的 reviewer 必须填写将批准 intake 环境的 GitHub 用户名。在仓库中一次性创建
    `brainpet-physical-acceptance` GitHub Environment，把允许确认实机结果的维护者设为 required reviewer，
    启用 Prevent self-review，并关闭管理员绕过；批准者必须与 workflow dispatcher 不同。
-   这不需要发布者证书、商店账号或 Secret。先用下方本地命令生成 dispatch envelope；把其中
-   `candidateRunId` 和 `receiptsJson` 原样填入同 commit 的 `BrainPet physical receipt intake`。
-   required reviewer 必须把 envelope 的 `approvalComment` 原样粘贴为 Environment 审批评论。
-   该评论绑定候选 run、候选回执 SHA-256、一次性 challenge 和精确 receipts payload SHA-256。
+   这不需要发布者证书、商店账号或 Secret。分别用下方本地命令生成 physical/performance dispatch envelope；把 payload
+   原样填入对应的 `BrainPet physical receipt intake` 或 `BrainPet performance receipt intake`。
+   required reviewer 必须把各 envelope 的 `approvalComment` 原样粘贴为 Environment 审批评论；评论绑定候选 run、
+   候选回执 SHA-256、一次性 challenge 和精确 payload SHA-256。
    workflow 会从 GitHub 当前 run 的 approval history 读取真实批准者和评论，拒绝无批准记录、自审或
    digest 不匹配，再将 dispatcher、
    environment reviewer、候选绑定和回执内容封入 Sigstore OIDC provenance。最后运行
-   `BrainPet public release finalize`，传入候选 run id 与 intake run id。finalize 会
-   核对两个来源 workflow、成功状态、精确 commit、候选 run/receipt/challenge、reviewer、artifact
-   hash 和 physical provenance 闭包，再写唯一可为 `publicReleaseReady=true` 的聚合回执及已自验签的 Sigstore bundle。
+   `BrainPet public release finalize`，传入候选、physical intake 与 performance intake 三个 run id。finalize 会
+   核对来源 workflow、成功状态、精确 commit、候选 run/receipt/challenge、reviewer、artifact/runtime
+   hash、预算原始证据和两类 provenance 闭包，再写唯一可为 `publicReleaseReady=true` 的聚合回执及已自验签的 Sigstore bundle。
 
 Windows x64：
 
@@ -163,8 +171,14 @@ node apps/desktop/scripts/brainpet-macos-physical-acceptance.mjs --artifact <Bra
 node scripts/intake-brainpet-physical-receipts.mjs --receipt <windows-receipt.json> --receipt <macos-receipt.json> --candidate-receipt <candidate-receipt.json> --source-commit <40-char-sha> --expected-reviewer <github-username> --emit-dispatch-envelope
 ```
 
-physical intake 不允许 rerun：任何失败都必须新建一次 workflow dispatch，再使用新 run 的审批评论；
-finalize 会拒绝 `run_attempt != 1` 的 physical intake artifact。
+正式性能回执 envelope：
+
+```bash
+node scripts/intake-brainpet-performance-receipts.mjs --receipt <brainpet-active-30m.json> --receipt <brainpet-idle-24h.json> --candidate-receipt <candidate-receipt.json> --source-commit <40-char-sha> --expected-reviewer <github-username> --emit-dispatch-envelope
+```
+
+physical/performance intake 都不允许 rerun：任何失败都必须新建一次 workflow dispatch，再使用新 run 的审批评论；
+finalize 会拒绝任一 `run_attempt != 1` 的 intake artifact。
 
 当前发行策略不需要七个 Windows/macOS 签名 Secret，也不需要 Apple Developer 或商店注册。
 这些值不得随机生成或写入仓库。workflow 只使用 GitHub 自带 OIDC 获取短期 Sigstore 身份；

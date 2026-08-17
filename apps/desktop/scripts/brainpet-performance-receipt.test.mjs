@@ -7,6 +7,8 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { brainPetDistributionContract } from "../../../scripts/brainpet-release-contract.mjs";
+import { summarizeBrainPetProcessSoak } from "../dist/brainpet/performance-budget.js";
+import { createBrainPetRuntimeTree } from "./brainpet-runtime-tree.mjs";
 import {
   assertBrainPetPerformanceReceiptAvailable,
   resolveBrainPetPerformanceReceiptPath,
@@ -29,10 +31,16 @@ test("formal performance candidate binds clean source, package receipt, executab
   assert.equal(candidate.executableSha256, sha256Bytes(fixture.executableBytes));
   assert.equal(candidate.appAsarSha256, sha256Bytes(fixture.appAsarBytes));
   assert.match(candidate.packageReceiptSha256, /^[a-f0-9]{64}$/);
+  assert.match(candidate.runtimeTreeDigest, /^[a-f0-9]{64}$/);
 
   writeFileSync(fixture.appAsarPath, Buffer.from("tampered-app-asar"));
   assert.throws(() => validateBrainPetPerformanceCandidate(fixture.options), /app\.asar bytes do not match/i);
   writeFileSync(fixture.appAsarPath, fixture.appAsarBytes);
+  const unpackedJs = join(dirname(fixture.appAsarPath), "app.asar.unpacked", "fixture.js");
+  mkdirSync(dirname(unpackedJs), { recursive: true });
+  writeFileSync(unpackedJs, "tampered-unpacked-code");
+  assert.throws(() => validateBrainPetPerformanceCandidate(fixture.options), /runtime tree differs/i);
+  rmSync(dirname(unpackedJs), { recursive: true, force: true });
   assert.throws(() => validateBrainPetPerformanceCandidate({ ...fixture.options, gitIdentity: { ...fixture.options.gitIdentity, treeDirty: true } }), /clean tracked worktree/i);
   assert.throws(() => validateBrainPetPerformanceCandidate({ ...fixture.options, executablePath: fixture.appAsarPath }), /does not match the package receipt/i);
 
@@ -48,13 +56,14 @@ test("performance receipt is digest-checked and cannot overwrite an existing suc
   const outputRoot = join(fixture.root, "output", "performance");
   const receiptPath = resolveBrainPetPerformanceReceiptPath(candidate, "idle-24h", outputRoot);
   assertBrainPetPerformanceReceiptAvailable(receiptPath);
-  const gateResult = { ok: true, gateProfile: "idle-24h", gatePassed: true, idleSoak: { samples: 289, durationMs: 86_400_001 } };
-  const written = await writeBrainPetPerformanceReceipt({ receiptPath, candidate, gateProfile: "idle-24h", startedAt: "2026-08-17T00:00:00.000Z", gateResult });
+  const gateResult = createIdleGateResult();
+  const runEvidence = createRunEvidence(candidate.commit, "idle-24h");
+  const written = await writeBrainPetPerformanceReceipt({ receiptPath, candidate, gateProfile: "idle-24h", startedAt: "2026-08-17T00:00:00.000Z", gateResult, runEvidence });
   assert.equal(written.receipt.candidate.packageReceiptSha256, candidate.packageReceiptSha256);
   assert.equal(validateBrainPetPerformanceReceipt(receiptPath, { candidate, gateProfile: "idle-24h" }).gatePassed, true);
   assert.throws(() => assertBrainPetPerformanceReceiptAvailable(receiptPath), /already exists/i);
   await assert.rejects(
-    writeBrainPetPerformanceReceipt({ receiptPath, candidate, gateProfile: "idle-24h", startedAt: "2026-08-17T00:00:00.000Z", gateResult }),
+    writeBrainPetPerformanceReceipt({ receiptPath, candidate, gateProfile: "idle-24h", startedAt: "2026-08-17T00:00:00.000Z", gateResult, runEvidence }),
     /EEXIST|exists/i,
   );
 
@@ -62,6 +71,10 @@ test("performance receipt is digest-checked and cannot overwrite an existing suc
   tampered.gateResult.idleSoak.samples = 1;
   writeFileSync(receiptPath, `${JSON.stringify(tampered, null, 2)}\n`);
   assert.throws(() => validateBrainPetPerformanceReceipt(receiptPath), /evidence digest is invalid/i);
+  const { evidenceDigest: _oldDigest, ...tamperedCore } = tampered;
+  tampered.evidenceDigest = sha256Bytes(Buffer.from(JSON.stringify(tamperedCore)));
+  writeFileSync(receiptPath, `${JSON.stringify(tampered, null, 2)}\n`);
+  assert.throws(() => validateBrainPetPerformanceReceipt(receiptPath), /sample count does not match|raw heap samples/i);
 });
 
 function createCandidateFixture() {
@@ -76,6 +89,7 @@ function createCandidateFixture() {
   const appAsarBytes = Buffer.from("fixture-brainpet-app-asar");
   writeFileSync(executablePath, executableBytes);
   writeFileSync(appAsarPath, appAsarBytes);
+  const runtimeTree = createBrainPetRuntimeTree(join(packageRoot, "win-unpacked"));
   const commit = "a".repeat(40);
   const packageReceiptPath = join(packageRoot, "brainpet-package-receipt-windows-x64.json");
   writeFileSync(packageReceiptPath, `${JSON.stringify({
@@ -91,6 +105,7 @@ function createCandidateFixture() {
     sha256: sha256Bytes(executableBytes),
     appAsar: "win-unpacked/resources/app.asar",
     appAsarSha256: sha256Bytes(appAsarBytes),
+    runtimeTree,
     artifacts: [],
     runtimeReleaseReady: false,
     publicReleaseReady: false,
@@ -111,4 +126,25 @@ function createCandidateFixture() {
       platform: "win32",
     },
   };
+}
+
+function createRunEvidence(commit, profile) {
+  return { runId: `${profile}-${commit}-1786900000000-00000000-0000-4000-8000-000000000000`, manifestSha256: "1".repeat(64), resultSha256: "2".repeat(64), executionLogSha256: "3".repeat(64), executionLogBytes: 128, completionCoreDigest: "4".repeat(64) };
+}
+
+function createIdleGateResult() {
+  const MiB = 1024 * 1024;
+  const timeline = Array.from({ length: 289 }, (_, index) => {
+    const elapsedMs = index * 300_000;
+    const cpuTime100ns = index * 10_000_000;
+    const processes = [
+      { pid: 100, parentPid: 1, role: "browser", creationTime: "2026-08-17T00:00:00.000Z", totalWorkingSetBytes: 120 * MiB, workingSetBytes: 90 * MiB, privateBytes: 90 * MiB, handleCount: 700, cpuTime100ns },
+      { pid: 101, parentPid: 100, role: "renderer", creationTime: "2026-08-17T00:00:00.000Z", totalWorkingSetBytes: 80 * MiB, workingSetBytes: 60 * MiB, privateBytes: 60 * MiB, handleCount: 300, cpuTime100ns: 0 },
+    ];
+    return { elapsedMs, rootPid: 100, processCount: 2, totalWorkingSetBytes: 200 * MiB, workingSetBytes: 150 * MiB, privateBytes: 150 * MiB, handleCount: 1_000, cpuTime100ns, processes };
+  });
+  const process = summarizeBrainPetProcessSoak(timeline, 8);
+  const heapTimeline = Array.from({ length: 289 }, () => 16 * MiB);
+  const idleProcessMetrics = { ...timeline[0], names: ["brainpet.exe:2"] };
+  return { ok: true, gateProfile: "idle-24h", gatePassed: true, resourceBudgetEnforced: true, petReadyMs: 500, rendererTargetTitles: ["BrainPet Default Pet"], idleProcessMetrics, idleSoak: { durationMs: 86_400_001, samples: heapTimeline.length, heapGrowthBytes: 0, maxHeapBytes: 16 * MiB, heapTimeline, process } };
 }

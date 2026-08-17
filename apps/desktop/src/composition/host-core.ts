@@ -6,10 +6,11 @@ import type { DesktopDistributionSettings } from "../distribution-profile.js";
 import { setLocaleFromPreference } from "../i18n/index.js";
 import { configureLocalIpcCapabilities, startLocalIpcServer, stopLocalIpcServer } from "../local-ipc.js";
 import { configureLocalIpcDistributionProfile } from "../local-ipc-paths.js";
-import { info } from "../logger.js";
+import { error, info, warn } from "../logger.js";
 import { configurePetWindowCapabilities } from "../pet-window.js";
 import { configureAppTray, createAppTray, refreshTrayMenu } from "../tray.js";
 import type { DesktopCompositionCapabilities } from "./desktop-composition.js";
+import { runDeferredHostSurface } from "./deferred-host-surface.js";
 import type { DesktopManagedService, DesktopServiceState } from "./managed-service.js";
 
 export function createHostCore(
@@ -22,6 +23,8 @@ export function createHostCore(
   let updateCheckTimer: NodeJS.Timeout | null = null;
   let trayReadyWindow: Electron.BrowserWindow | null = null;
   let trayStarted = false;
+  let trayAttempts = 0;
+  const degradedSurfaces = new Set<string>();
 
   const clearTrayWait = () => {
     if (trayFallbackTimer) clearTimeout(trayFallbackTimer);
@@ -32,10 +35,24 @@ export function createHostCore(
 
   const startTrayAndUpdate = () => {
     if (trayStarted || state !== "started") return;
-    trayStarted = true;
     clearTrayWait();
-    createAppTray();
-    refreshTrayMenu();
+    trayAttempts += 1;
+    const attempt = runDeferredHostSurface(() => {
+      createAppTray();
+      refreshTrayMenu();
+    }, (cause) => {
+      error("app", "HostCore tray startup failed", cause, { attempt: trayAttempts });
+    });
+    if (!attempt.ok) {
+      degradedSurfaces.add("tray");
+      if (trayAttempts < 2 && state === "started") {
+        trayFallbackTimer = setTimeout(startTrayAndUpdate, 1_000);
+        trayFallbackTimer.unref?.();
+      }
+      return;
+    }
+    trayStarted = true;
+    degradedSurfaces.delete("tray");
     // Update discovery is not startup-critical and may wake Chromium's network
     // service while the pet is still reaching its cold-idle baseline.
     updateCheckTimer = setTimeout(() => {
@@ -43,7 +60,8 @@ export function createHostCore(
       if (state !== "started") return;
       void import("../update-checker.js")
         .then(({ checkForGitHubReleaseUpdate }) => checkForGitHubReleaseUpdate())
-        .then(() => refreshTrayMenu());
+        .then(() => refreshTrayMenu())
+        .catch((cause: unknown) => warn("app", "HostCore deferred update check failed", { reason: cause instanceof Error ? cause.message : String(cause) }));
     }, 60_000);
     updateCheckTimer.unref?.();
   };
@@ -62,19 +80,29 @@ export function createHostCore(
   const startVisibleUi = () => {
     startupUiImmediate = null;
     if (state !== "started") return;
-    if (!shouldOpenDefaultPetOnLaunch()) {
+    const attempt = runDeferredHostSurface(() => {
+      if (!shouldOpenDefaultPetOnLaunch()) {
+        startTrayAndUpdate();
+        return;
+      }
+      showDefaultPet();
+      trayReadyWindow = getDefaultPetWindowForPlugins();
+      if (!trayReadyWindow || trayReadyWindow.isDestroyed()) {
+        degradedSurfaces.add("pet");
+        startTrayAndUpdate();
+        return;
+      }
+      degradedSurfaces.delete("pet");
+      trayReadyWindow.webContents.once("did-finish-load", scheduleTrayAfterPetReady);
+      trayFallbackTimer = setTimeout(startTrayAndUpdate, 5_000);
+      trayFallbackTimer.unref?.();
+    }, (cause) => {
+      error("app", "HostCore deferred pet startup failed", cause);
+    });
+    if (!attempt.ok) {
+      degradedSurfaces.add("pet");
       startTrayAndUpdate();
-      return;
     }
-    showDefaultPet();
-    trayReadyWindow = getDefaultPetWindowForPlugins();
-    if (!trayReadyWindow || trayReadyWindow.isDestroyed()) {
-      startTrayAndUpdate();
-      return;
-    }
-    trayReadyWindow.webContents.once("did-finish-load", scheduleTrayAfterPetReady);
-    trayFallbackTimer = setTimeout(startTrayAndUpdate, 5_000);
-    trayFallbackTimer.unref?.();
   };
 
   return {
@@ -119,6 +147,6 @@ export function createHostCore(
       state = "disposed";
       info("app", "HostCore disposed", { product: distribution.profile });
     },
-    diagnostics: () => ({ id: "hostCore", state, details: { product: distribution.profile, localIpc: capabilities.localIpc, agentLifecycle: capabilities.agentLifecycle } }),
+    diagnostics: () => ({ id: "hostCore", state, details: { product: distribution.profile, localIpc: capabilities.localIpc, agentLifecycle: capabilities.agentLifecycle, degradedSurfaces: [...degradedSurfaces].sort() } }),
   };
 }

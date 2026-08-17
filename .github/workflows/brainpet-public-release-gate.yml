@@ -164,7 +164,7 @@ jobs:
       - run: mkdir -p output/aggregate
       - run: node scripts/brainpet-sigstore-provenance.mjs --packages output/packages --lifecycle output/lifecycle --bridge output/bridge --output output/provenance
       - run: node scripts/aggregate-brainpet-release-receipt.mjs --packages output/packages --lifecycle output/lifecycle --bridge output/bridge --provenance output/provenance --output output/aggregate/brainpet-release-receipt.json --mode public-release
-      - run: node -e "const r=require('./output/aggregate/brainpet-release-receipt.json'); if(!r.rc6GatePassed||r.publicReleaseReady||!r.missingEvidence.every(value=>value.endsWith(':physical-acceptance'))) process.exit(1)"
+      - run: node -e "const r=require('./output/aggregate/brainpet-release-receipt.json'); const expected=['macos-arm64:physical-acceptance','performance:active-30m','performance:idle-24h','windows-x64:physical-acceptance'].sort(); if(!r.rc6GatePassed||r.publicReleaseReady||JSON.stringify([...r.missingEvidence].sort())!==JSON.stringify(expected)) process.exit(1)"
       - run: node scripts/brainpet-sigstore-provenance.mjs --subject output/aggregate/brainpet-release-receipt.json --output output/provenance
       - uses: actions/upload-artifact@v4
         with:

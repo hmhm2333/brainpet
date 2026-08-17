@@ -10,9 +10,12 @@ import { validateBridgeArtifactClosure } from "../integrations/codex/scripts/val
 import { brainPetDistributionContract, brainPetReleaseTargets } from "./brainpet-release-contract.mjs";
 import { assertBrainPetBinary, inspectExecutableBinary } from "./brainpet-binary-format.mjs";
 import { validateBrainPetPhysicalReceipt, validateBrainPetPhysicalReceiptSet } from "./brainpet-physical-receipt-contract.mjs";
-import { brainPetPhysicalReceiptWorkflow, brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
+import { brainPetPerformanceReceiptWorkflow, brainPetPhysicalReceiptWorkflow, brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
 import { formatBrainPetPhysicalApprovalComment } from "./intake-brainpet-physical-receipts.mjs";
+import { formatBrainPetPerformanceApprovalComment } from "./intake-brainpet-performance-receipts.mjs";
+import { validateBrainPetPerformanceReceiptSet } from "./brainpet-performance-release-contract.mjs";
 import { validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
+import { validateBrainPetRuntimeTree, validateBrainPetRuntimeTreeShape } from "../apps/desktop/scripts/brainpet-runtime-tree.mjs";
 
 const lifecycleRequirements = Object.freeze([
   { target: "windows-x64", kind: "nsis" },
@@ -37,6 +40,9 @@ export function aggregateBrainPetReleaseReceipt(options) {
   const lifecycleReceipts = findFiles(lifecycleRoot, /^brainpet-install-lifecycle-receipt-[a-z0-9-]+-[a-z0-9-]+\.json$/);
   const physicalReceipts = options.physicalRoot && existsSync(resolve(options.physicalRoot))
     ? findFiles(resolve(options.physicalRoot), /^brainpet-physical-receipt\.json$/)
+    : [];
+  const performanceReceiptPaths = options.performanceRoot && existsSync(resolve(options.performanceRoot))
+    ? findFiles(resolve(options.performanceRoot), /^brainpet-(?:active-30m|idle-24h)\.json$/)
     : [];
 
   const packages = brainPetReleaseTargets.map((target) => validatePackageReceipt(packageReceipts, packagesRoot, target, releaseMode, provenanceRoot, provenanceVerifier));
@@ -83,6 +89,23 @@ export function aggregateBrainPetReleaseReceipt(options) {
       : physicalChallenges.size === 1
         ? [...physicalChallenges][0]
         : assert.fail("Physical receipts must bind one public-candidate challenge.");
+  const windowsPackage = packages.find((entry) => entry.target === "windows-x64");
+  const performanceReceipts = performanceReceiptPaths.length > 0
+    ? validateBrainPetPerformanceReceiptSet(performanceReceiptPaths.map((path) => readJson(path)), { sourceCommit, packageReceipt: windowsPackage })
+    : [];
+  if (releaseMode === "public-release" && performanceReceipts.length > 0) {
+    assert.ok(options.performanceProvenanceRoot, "Public performance evidence requires --performance-provenance.");
+    validatePerformanceEvidenceProvenance({
+      performanceReceipts,
+      performanceReceiptPaths,
+      performanceRoot: resolve(options.performanceRoot),
+      provenanceRoot: resolve(options.performanceProvenanceRoot),
+      provenanceVerifier,
+      sourceCommit,
+      sourceRunId,
+      physicalChallenge,
+    });
+  }
   for (const entry of physical) {
     assert.equal(entry.sourceCommit, sourceCommit, `Physical receipt ${entry.target} is not bound to release commit ${sourceCommit}.`);
     const packageReceipt = packages.find((candidate) => candidate.target === entry.target);
@@ -100,6 +123,7 @@ export function aggregateBrainPetReleaseReceipt(options) {
   }
   if (!bridge.releaseReady) missingEvidence.push("bridge:six-target-release");
   if (!lifecycle.every((entry) => entry.defaultDiscovery && entry.packagedHelper && entry.adapter.install && entry.adapter.upgrade && entry.adapter.uninstall)) missingEvidence.push("packaged-e2e:adapter-or-discovery");
+  for (const profile of ["active-30m", "idle-24h"]) if (!performanceReceipts.some((receipt) => receipt.gateProfile === profile)) missingEvidence.push(`performance:${profile}`);
 
   const rc6GatePassed = packages.length === brainPetReleaseTargets.length
     && lifecycle.length === lifecycleRequirements.length
@@ -123,6 +147,7 @@ export function aggregateBrainPetReleaseReceipt(options) {
     lifecycle,
     bridge,
     physical,
+    performance: performanceReceipts.map((receipt) => ({ gateProfile: receipt.gateProfile, completedAt: receipt.completedAt, receiptSha256: sha256(performanceReceiptPaths.find((path) => basename(path) === `brainpet-${receipt.gateProfile}.json`)), candidate: receipt.candidate, runEvidence: receipt.runEvidence })),
     rc6GatePassed,
     missingEvidence,
     publicReleaseReady,
@@ -158,6 +183,7 @@ function validatePackageReceipt(paths, packagesRoot, target, releaseMode, proven
   assert.equal(typeof receipt.runtimeReleaseReady, "boolean", `Package receipt ${target.id} lacks a runtime trust result.`);
   assert.ok(typeof receipt.appAsar === "string" && receipt.appAsar.endsWith("app.asar"), `Package receipt ${target.id} lacks its packaged application path.`);
   assert.match(receipt.appAsarSha256 ?? "", /^[a-f0-9]{64}$/i, `Package receipt ${target.id} lacks its packaged application hash.`);
+  validateBrainPetRuntimeTreeShape(receipt.runtimeTree);
   assert.ok(Array.isArray(receipt.artifacts) && receipt.artifacts.length > 0);
   const receiptRoot = dirname(path);
   if (releaseMode === "public-release") validateBrainPetPackageArtifactClosure(receiptRoot, target.id);
@@ -170,6 +196,8 @@ function validatePackageReceipt(paths, packagesRoot, target, releaseMode, proven
     assertBrainPetBinary(readFileSync(executablePath), target, `Aggregate runtime ${target.id}`);
     const appAsarPath = resolveSafeRelative(receiptRoot, receipt.appAsar);
     assert.equal(sha256(appAsarPath), receipt.appAsarSha256, `Packaged application hash mismatch for ${target.id}.`);
+    const runtimeRootName = receipt.executable.split(/[\\/]/)[0];
+    validateBrainPetRuntimeTree(resolveSafeRelative(receiptRoot, runtimeRootName), receipt.runtimeTree);
   }
   assert.ok(isRecord(receipt.source) && /^[a-f0-9]{40}$/i.test(receipt.source.commit), `Package receipt ${target.id} lacks an exact source commit.`);
   if (releaseMode === "public-release") {
@@ -345,6 +373,49 @@ function validatePhysicalEvidenceProvenance({ physicalEvidence, physicalRoot, pr
   assert.deepEqual(actualBundles, expectedBundles, "Physical provenance bundle closure is incomplete or contains an extra file.");
 }
 
+function validatePerformanceEvidenceProvenance({ performanceReceipts, performanceReceiptPaths, performanceRoot, provenanceRoot, provenanceVerifier, sourceCommit, sourceRunId, physicalChallenge }) {
+  const provenanceStat = existsSync(provenanceRoot) ? lstatSync(provenanceRoot) : null;
+  assert.ok(provenanceStat?.isDirectory() && !provenanceStat.isSymbolicLink(), "Public performance evidence requires a regular Sigstore provenance directory.");
+  const intakePath = join(performanceRoot, "brainpet-performance-intake.json");
+  const intake = readJson(intakePath);
+  assert.equal(intake.schemaVersion, 1);
+  assert.equal(intake.kind, "brainpet-performance-intake");
+  assert.equal(intake.product, "brainpet");
+  assert.equal(intake.repository, brainPetDistributionContract.identity.repository);
+  assert.equal(intake.sourceCommit.toLowerCase(), sourceCommit.toLowerCase());
+  assert.equal(String(intake.candidate?.runId), String(sourceRunId));
+  assert.match(intake.candidate?.receiptSha256 ?? "", /^[a-f0-9]{64}$/i);
+  assert.equal(intake.candidate?.challenge, physicalChallenge);
+  assert.equal(intake.github?.workflow, brainPetPerformanceReceiptWorkflow.name);
+  assert.equal(intake.github?.runnerEnvironment, "github-hosted");
+  assert.equal(String(intake.github?.runAttempt), "1");
+  assert.equal(intake.github?.environment, "brainpet-physical-acceptance");
+  assert.ok(typeof intake.github?.actor === "string" && intake.github.actor.length > 0);
+  assert.ok(typeof intake.github?.environmentReviewer === "string" && intake.github.environmentReviewer.length > 0);
+  assert.notEqual(intake.github.environmentReviewer.toLowerCase(), intake.github.actor.toLowerCase());
+  assert.match(intake.github?.payloadSha256 ?? "", /^[a-f0-9]{64}$/i);
+  assert.equal(intake.github?.environmentApprovalComment, formatBrainPetPerformanceApprovalComment(intake.candidate, intake.github.payloadSha256));
+  for (const receipt of performanceReceipts) {
+    const path = performanceReceiptPaths.find((candidate) => basename(candidate) === `brainpet-${receipt.gateProfile}.json`);
+    assert.ok(path, `Performance receipt path is missing for ${receipt.gateProfile}.`);
+    assert.equal(intake.profiles?.find((entry) => entry.gateProfile === receipt.gateProfile)?.receiptSha256, sha256(path));
+    provenanceVerifier(createProvenanceEvidence(path, provenanceRoot, brainPetDistributionContract.identity.repository, sourceCommit, `performance ${receipt.gateProfile}`, brainPetPerformanceReceiptWorkflow));
+  }
+  provenanceVerifier(createProvenanceEvidence(intakePath, provenanceRoot, brainPetDistributionContract.identity.repository, sourceCommit, "performance intake", brainPetPerformanceReceiptWorkflow));
+  const expectedFiles = ["brainpet-active-30m.json", "brainpet-idle-24h.json", "brainpet-performance-intake.json"].sort();
+  const actualFiles = readdirSync(performanceRoot, { withFileTypes: true }).map((entry) => {
+    assert.ok(entry.isFile() && !entry.isSymbolicLink(), `Performance evidence contains an unexpected entry: ${entry.name}`);
+    return entry.name;
+  }).sort();
+  assert.deepEqual(actualFiles, expectedFiles, "Performance evidence closure is incomplete or contains an extra file.");
+  const expectedBundles = [...performanceReceiptPaths, intakePath].map((path) => basename(brainPetSigstoreBundlePath(provenanceRoot, sha256(path)))).sort();
+  const actualBundles = readdirSync(provenanceRoot, { withFileTypes: true }).map((entry) => {
+    assert.ok(entry.isFile() && !entry.isSymbolicLink(), `Performance provenance contains an unexpected entry: ${entry.name}`);
+    return entry.name;
+  }).sort();
+  assert.deepEqual(actualBundles, expectedBundles, "Performance provenance bundle closure is incomplete or contains an extra file.");
+}
+
 function validateArtifactRecord(receiptRoot, artifact, target) {
   assert.ok(isRecord(artifact) && typeof artifact.path === "string" && typeof artifact.kind === "string");
   const path = resolveSafeRelative(receiptRoot, artifact.path);
@@ -411,13 +482,15 @@ function parseArgs(argv) {
     else if (arg === "--bridge") options.bridgeRoot = argv[++index];
     else if (arg === "--physical") options.physicalRoot = argv[++index];
     else if (arg === "--physical-provenance") options.physicalProvenanceRoot = argv[++index];
+    else if (arg === "--performance") options.performanceRoot = argv[++index];
+    else if (arg === "--performance-provenance") options.performanceProvenanceRoot = argv[++index];
     else if (arg === "--provenance") options.provenanceRoot = argv[++index];
     else if (arg === "--output") options.outputPath = argv[++index];
     else if (arg === "--mode") options.releaseMode = argv[++index];
     else if (arg === "--expect-public-ready") options.expectPublicReady = true;
     else throw new Error(`Unknown aggregate receipt argument: ${arg}`);
   }
-  if (!options.packagesRoot || !options.lifecycleRoot || !options.bridgeRoot || !options.outputPath) throw new Error("Usage: aggregate-brainpet-release-receipt.mjs --packages <dir> --lifecycle <dir> --bridge <dir> --output <receipt.json> [--physical <dir> --physical-provenance <bundle-dir>] [--provenance <bundle-dir>] [--mode private-test|public-release]");
+  if (!options.packagesRoot || !options.lifecycleRoot || !options.bridgeRoot || !options.outputPath) throw new Error("Usage: aggregate-brainpet-release-receipt.mjs --packages <dir> --lifecycle <dir> --bridge <dir> --output <receipt.json> [--physical <dir> --physical-provenance <bundle-dir>] [--performance <dir> --performance-provenance <bundle-dir>] [--provenance <bundle-dir>] [--mode private-test|public-release]");
   options.receiptRoot = dirname(resolve(options.outputPath));
   return options;
 }

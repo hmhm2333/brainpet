@@ -9,6 +9,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract } from "../../../scripts/brainpet-release-contract.mjs";
+import { normalizeBrainPetFormalGateResult, validateBrainPetFormalGateResult } from "./brainpet-performance-contract.mjs";
+import { validateBrainPetRuntimeTree, validateBrainPetRuntimeTreeShape } from "./brainpet-runtime-tree.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(scriptDir, "..");
@@ -61,6 +63,7 @@ export function validateBrainPetPerformanceCandidate({ packageReceiptPath, execu
   assert.match(packageReceipt.appVersion ?? "", /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/, "BrainPet package receipt has an invalid app version.");
   assert.match(packageReceipt.sha256 ?? "", /^[a-f0-9]{64}$/i, "BrainPet package receipt lacks an executable hash.");
   assert.match(packageReceipt.appAsarSha256 ?? "", /^[a-f0-9]{64}$/i, "BrainPet package receipt lacks an app.asar hash.");
+  validateBrainPetRuntimeTreeShape(packageReceipt.runtimeTree);
 
   const receiptRoot = dirname(resolvedReceiptPath);
   const receiptExecutable = resolveSafeRelative(receiptRoot, packageReceipt.executable, "packaged executable");
@@ -76,6 +79,8 @@ export function validateBrainPetPerformanceCandidate({ packageReceiptPath, execu
   const realAppAsar = realpathSync.native(appAsar);
   assertUnderRoot(realAppAsar, receiptRoot, "BrainPet packaged app.asar");
   assert.equal(sha256File(realAppAsar), packageReceipt.appAsarSha256, "BrainPet packaged app.asar bytes do not match the package receipt.");
+  const runtimeRoot = dirname(realReceiptExecutable);
+  validateBrainPetRuntimeTree(runtimeRoot, packageReceipt.runtimeTree);
 
   return Object.freeze({
     repository: gitIdentity.repository,
@@ -88,7 +93,17 @@ export function validateBrainPetPerformanceCandidate({ packageReceiptPath, execu
     executableSha256: packageReceipt.sha256,
     appAsar: packageReceipt.appAsar,
     appAsarSha256: packageReceipt.appAsarSha256,
+    runtimeTreeDigest: packageReceipt.runtimeTree.digest,
   });
+}
+
+export function revalidateBrainPetPerformanceCandidate(candidate, { repoRoot = defaultRepoRoot, gitIdentity = resolveTrackedGitIdentity(repoRoot), platform = process.platform } = {}) {
+  assertBrainPetPerformanceCandidateShape(candidate);
+  const packageReceiptPath = resolve(repoRoot, candidate.packageReceipt);
+  const executablePath = resolve(dirname(packageReceiptPath), candidate.executable);
+  const current = validateBrainPetPerformanceCandidate({ packageReceiptPath, executablePath, repoRoot, gitIdentity, platform });
+  assert.deepEqual(current, candidate, "BrainPet performance candidate changed during the gate.");
+  return current;
 }
 
 export function resolveBrainPetPerformanceReceiptPath(candidate, gateProfile, outputRoot = join(defaultRepoRoot, "output", "performance")) {
@@ -98,20 +113,19 @@ export function resolveBrainPetPerformanceReceiptPath(candidate, gateProfile, ou
 }
 
 export function assertBrainPetPerformanceReceiptAvailable(receiptPath) {
-  assert.equal(existsSync(receiptPath), false, `Immutable BrainPet performance receipt already exists: ${receiptPath}`);
+  assert.equal(existsSync(receiptPath), false, `BrainPet performance receipt already exists and cannot be overwritten: ${receiptPath}`);
 }
 
-export async function writeBrainPetPerformanceReceipt({ receiptPath, candidate, gateProfile, startedAt, gateResult }) {
+export async function writeBrainPetPerformanceReceipt({ receiptPath, candidate, gateProfile, startedAt, gateResult, runEvidence }) {
   assertFormalGateProfile(gateProfile);
-  assert.equal(gateResult?.ok, true, "A performance receipt requires a successful gate result.");
-  assert.equal(gateResult?.gateProfile, gateProfile, "Performance result profile does not match its receipt.");
-  assert.equal(gateResult?.gatePassed, true, "A formal performance receipt cannot record a probe or failed gate.");
+  const normalizedGateResult = normalizeBrainPetFormalGateResult(gateResult, gateProfile);
   assertBrainPetPerformanceCandidateShape(candidate);
+  assertRunEvidence(runEvidence);
   assert.equal(basename(receiptPath), `brainpet-${gateProfile}-${candidate.commit}.json`, "Performance receipt path does not match its candidate and profile.");
   const started = new Date(startedAt);
   assert.equal(Number.isNaN(started.getTime()), false, "Performance receipt start time is invalid.");
   const core = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "brainpet-performance-gate",
     product: "brainpet",
     gateProfile,
@@ -119,7 +133,8 @@ export async function writeBrainPetPerformanceReceipt({ receiptPath, candidate, 
     startedAt: started.toISOString(),
     completedAt: new Date().toISOString(),
     candidate,
-    gateResult,
+    runEvidence,
+    gateResult: normalizedGateResult,
   };
   const receipt = { ...core, evidenceDigest: sha256Bytes(Buffer.from(JSON.stringify(core))) };
   await writeJsonExclusiveAtomic(receiptPath, receipt);
@@ -130,7 +145,7 @@ export async function writeBrainPetPerformanceReceipt({ receiptPath, candidate, 
 export function validateBrainPetPerformanceReceipt(receiptPath, { candidate, gateProfile } = {}) {
   assertRegularFile(receiptPath, "BrainPet performance receipt", 16 * 1024 * 1024);
   const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
-  assert.equal(receipt.schemaVersion, 1);
+  assert.equal(receipt.schemaVersion, 2);
   assert.equal(receipt.kind, "brainpet-performance-gate");
   assert.equal(receipt.product, "brainpet");
   assertFormalGateProfile(receipt.gateProfile);
@@ -139,13 +154,15 @@ export function validateBrainPetPerformanceReceipt(receiptPath, { candidate, gat
   assert.equal(receipt.gateResult?.gateProfile, receipt.gateProfile);
   assert.equal(receipt.gateResult?.gatePassed, true);
   assertBrainPetPerformanceCandidateShape(receipt.candidate);
+  assertRunEvidence(receipt.runEvidence);
+  assert.match(receipt.evidenceDigest ?? "", /^[a-f0-9]{64}$/i);
+  const { evidenceDigest, ...core } = receipt;
+  assert.equal(evidenceDigest, sha256Bytes(Buffer.from(JSON.stringify(core))), "BrainPet performance receipt evidence digest is invalid.");
+  validateBrainPetFormalGateResult(receipt.gateResult, receipt.gateProfile);
   assert.equal(basename(receiptPath), `brainpet-${receipt.gateProfile}-${receipt.candidate.commit}.json`, "BrainPet performance receipt filename does not match its evidence.");
   const startedAt = Date.parse(receipt.startedAt);
   const completedAt = Date.parse(receipt.completedAt);
   assert.equal(Number.isFinite(startedAt) && Number.isFinite(completedAt) && completedAt >= startedAt, true, "BrainPet performance receipt timestamps are invalid.");
-  assert.match(receipt.evidenceDigest ?? "", /^[a-f0-9]{64}$/i);
-  const { evidenceDigest, ...core } = receipt;
-  assert.equal(evidenceDigest, sha256Bytes(Buffer.from(JSON.stringify(core))), "BrainPet performance receipt evidence digest is invalid.");
   if (gateProfile !== undefined) assert.equal(receipt.gateProfile, gateProfile, "BrainPet performance receipt profile mismatch.");
   if (candidate !== undefined) assert.deepEqual(receipt.candidate, candidate, "BrainPet performance receipt candidate mismatch.");
   return receipt;
@@ -193,6 +210,14 @@ function assertBrainPetPerformanceCandidateShape(candidate) {
   assert.match(candidate.packageReceiptSha256 ?? "", /^[a-f0-9]{64}$/i);
   assert.match(candidate.executableSha256 ?? "", /^[a-f0-9]{64}$/i);
   assert.match(candidate.appAsarSha256 ?? "", /^[a-f0-9]{64}$/i);
+  assert.match(candidate.runtimeTreeDigest ?? "", /^[a-f0-9]{64}$/i);
+}
+
+function assertRunEvidence(evidence) {
+  assert.ok(evidence && typeof evidence === "object" && !Array.isArray(evidence), "BrainPet performance receipt lacks runner evidence.");
+  assert.match(evidence.runId ?? "", /^(?:active-30m|idle-24h)-[a-f0-9]{40}-\d{13}-[a-f0-9-]{36}$/i, "BrainPet performance runner id is invalid.");
+  for (const key of ["manifestSha256", "resultSha256", "executionLogSha256", "completionCoreDigest"]) assert.match(evidence[key] ?? "", /^[a-f0-9]{64}$/i, `BrainPet performance runner ${key} is invalid.`);
+  assert.ok(Number.isInteger(evidence.executionLogBytes) && evidence.executionLogBytes > 0, "BrainPet performance execution-log length is invalid.");
 }
 
 function assertPortableRelativePath(value, label) {

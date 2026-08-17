@@ -27,7 +27,13 @@ export const brainPetPhysicalReceiptWorkflow = Object.freeze({
   trigger: "workflow_dispatch",
   oidcIssuer: "https://token.actions.githubusercontent.com",
 });
-const trustedWorkflows = Object.freeze([brainPetPublicReleaseWorkflow, brainPetPublicReleaseFinalizeWorkflow, brainPetPhysicalReceiptWorkflow]);
+export const brainPetPerformanceReceiptWorkflow = Object.freeze({
+  name: "BrainPet performance receipt intake",
+  path: ".github/workflows/brainpet-performance-receipt-intake.yml",
+  trigger: "workflow_dispatch",
+  oidcIssuer: "https://token.actions.githubusercontent.com",
+});
+const trustedWorkflows = Object.freeze([brainPetPublicReleaseWorkflow, brainPetPublicReleaseFinalizeWorkflow, brainPetPhysicalReceiptWorkflow, brainPetPerformanceReceiptWorkflow]);
 
 export function signBrainPetReleaseEvidence(options) {
   const subjects = [];

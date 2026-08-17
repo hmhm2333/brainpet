@@ -14,10 +14,13 @@ import { brainPetDistributionContract, brainPetReleaseTargets, getBrainPetReleas
 import { assertBrainPetBinary } from "./brainpet-binary-format.mjs";
 import { brainPetPhysicalCheckIds, validateBrainPetPhysicalReceiptSet } from "./brainpet-physical-receipt-contract.mjs";
 import { createBrainPetPhysicalApprovalComment, intakeBrainPetPhysicalReceipts, validateEnvironmentApproval } from "./intake-brainpet-physical-receipts.mjs";
-import { brainPetPhysicalReceiptWorkflow, brainPetPublicReleaseFinalizeWorkflow, brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, signBrainPetReleaseEvidence, signBrainPetSubjects, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
+import { createCompressedPayload, formatBrainPetPerformanceApprovalComment, intakeBrainPetPerformanceReceipts } from "./intake-brainpet-performance-receipts.mjs";
+import { validateBrainPetPerformanceReceiptSet } from "./brainpet-performance-release-contract.mjs";
+import { brainPetPerformanceReceiptWorkflow, brainPetPhysicalReceiptWorkflow, brainPetPublicReleaseFinalizeWorkflow, brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, signBrainPetReleaseEvidence, signBrainPetSubjects, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
 import { stageBrainPetPackageArtifacts, validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
 import { createBrainPetBuilderInvocation, parseBrainPetPackageArgs, prepareBrainPetBundledMarketplace, resolveBrainPetElectronDist, validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
 import { assertMacosCodeObjectIsUnsigned, resolveBrainPetResourcesRoot, validateUnsignedLinuxArtifacts } from "../apps/desktop/scripts/validate-brainpet-package.mjs";
+import { createBrainPetRuntimeTree } from "../apps/desktop/scripts/brainpet-runtime-tree.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const testRoot = join(root, "output", "brainpet-m5-release-test", String(process.pid));
@@ -126,6 +129,8 @@ try {
   assert.deepEqual(aggregateReceipt.missingEvidence.sort(), [
     "macos-arm64:direct-runtime-package",
     "macos-arm64:physical-acceptance",
+    "performance:active-30m",
+    "performance:idle-24h",
     "windows-x64:direct-runtime-package",
     "windows-x64:physical-acceptance",
   ]);
@@ -267,7 +272,11 @@ try {
     assert.ok(existsSync(evidence.subjectPath));
     assert.ok(existsSync(evidence.bundlePath));
     assert.equal(evidence.repository, brainPetDistributionContract.identity.repository);
-    const expectedWorkflow = evidence.label.startsWith("physical") ? brainPetPhysicalReceiptWorkflow : brainPetPublicReleaseWorkflow;
+    const expectedWorkflow = evidence.label.startsWith("physical")
+      ? brainPetPhysicalReceiptWorkflow
+      : evidence.label.startsWith("performance")
+        ? brainPetPerformanceReceiptWorkflow
+        : brainPetPublicReleaseWorkflow;
     assert.equal(evidence.workflowPath, expectedWorkflow.path);
     assert.equal(evidence.workflowName, expectedWorkflow.name);
     assert.equal(evidence.sourceCommit, receipt.source.commit);
@@ -307,10 +316,53 @@ try {
   assert.equal(publicCandidate.packages.find((entry) => entry.target === "linux-x64").provenanceValidated, true);
   assert.equal(publicCandidate.publicReleaseReady, false);
   assert.match(publicCandidate.physicalChallenge, /^[a-f0-9]{64}$/);
-  assert.deepEqual(publicCandidate.missingEvidence.sort(), ["macos-arm64:physical-acceptance", "windows-x64:physical-acceptance"]);
+  assert.deepEqual(publicCandidate.missingEvidence.sort(), ["macos-arm64:physical-acceptance", "performance:active-30m", "performance:idle-24h", "windows-x64:physical-acceptance"]);
   assert.equal(verifiedProvenance.length, 19);
+  const publicPerformanceRoot = join(testRoot, "public-performance");
   const publicPhysicalRoot = join(testRoot, "public-physical");
   const publicCandidatePath = join(receiptsRoot, "brainpet-public-candidate-receipt.json");
+  const performanceReceipts = createPerformanceReceiptFixtures(publicCandidate);
+  assert.equal(validateBrainPetPerformanceReceiptSet(performanceReceipts, {
+    sourceCommit: receipt.source.commit,
+    packageReceipt: publicCandidate.packages.find((entry) => entry.target === "windows-x64"),
+  }).length, 2);
+  const tamperedPerformanceReceipts = structuredClone(performanceReceipts);
+  tamperedPerformanceReceipts[0].gateResult.soak.process.timeline[1].totalWorkingSetBytes += 1;
+  const tamperedPerformanceCore = { ...tamperedPerformanceReceipts[0] };
+  delete tamperedPerformanceCore.evidenceDigest;
+  tamperedPerformanceReceipts[0].evidenceDigest = sha256(Buffer.from(JSON.stringify(tamperedPerformanceCore)));
+  assert.throws(() => validateBrainPetPerformanceReceiptSet(tamperedPerformanceReceipts, { sourceCommit: receipt.source.commit }), /strictly equal|summary does not match|raw timeline/i);
+  const performancePayload = createCompressedPayload(performanceReceipts);
+  const performanceCandidate = { runId: "123", receiptSha256: sha256(readFileSync(publicCandidatePath)), challenge: publicCandidate.physicalChallenge };
+  const performanceApprovalHistoryPath = join(testRoot, "performance-approval-history.json");
+  const performanceApprovalComment = formatBrainPetPerformanceApprovalComment(performanceCandidate, sha256(Buffer.from(performancePayload)));
+  writeFileSync(performanceApprovalHistoryPath, `${JSON.stringify([{ state: "approved", comment: performanceApprovalComment, environments: [{ name: "brainpet-physical-acceptance" }], user: { login: "release-fixture" } }], null, 2)}\n`, "utf8");
+  intakeBrainPetPerformanceReceipts({
+    receiptPaths: [],
+    payload: performancePayload,
+    candidateReceiptPath: publicCandidatePath,
+    sourceCommit: receipt.source.commit,
+    outputRoot: publicPerformanceRoot,
+    approvalHistoryPath: performanceApprovalHistoryPath,
+    actor: "release-dispatcher",
+    identity: { workflow: brainPetPerformanceReceiptWorkflow.name, runId: "789", runAttempt: "1", actor: "release-dispatcher", runnerEnvironment: "github-hosted" },
+  });
+  assert.throws(() => aggregateBrainPetReleaseReceipt({
+    packagesRoot: publicPackagesRoot,
+    lifecycleRoot,
+    bridgeRoot: pluginRoot,
+    performanceRoot: publicPerformanceRoot,
+    provenanceRoot,
+    outputPath: join(receiptsRoot, "unsigned-performance-release-receipt.json"),
+    receiptRoot: receiptsRoot,
+    releaseMode: "public-release",
+    provenanceVerifier,
+  }), /performance-provenance/i);
+  const performanceProvenanceRoot = join(testRoot, "performance-provenance");
+  mkdirSync(performanceProvenanceRoot, { recursive: true });
+  for (const subjectPath of [join(publicPerformanceRoot, "brainpet-active-30m.json"), join(publicPerformanceRoot, "brainpet-idle-24h.json"), join(publicPerformanceRoot, "brainpet-performance-intake.json")]) {
+    writeFileSync(brainPetSigstoreBundlePath(performanceProvenanceRoot, sha256(readFileSync(subjectPath))), "{}\n", "utf8");
+  }
   const physicalCandidate = { runId: "123", receiptSha256: sha256(readFileSync(publicCandidatePath)), challenge: publicCandidate.physicalChallenge };
   const publicPhysicalReceipts = [];
   for (const [targetId, artifactKind] of [["windows-x64", "nsis"], ["macos-arm64", "dmg"]]) {
@@ -359,6 +411,8 @@ try {
     bridgeRoot: pluginRoot,
     physicalRoot: publicPhysicalRoot,
     physicalProvenanceRoot,
+    performanceRoot: publicPerformanceRoot,
+    performanceProvenanceRoot,
     provenanceRoot,
     outputPath: join(receiptsRoot, "rerun-physical-release-receipt.json"),
     receiptRoot: receiptsRoot,
@@ -373,6 +427,8 @@ try {
     bridgeRoot: pluginRoot,
     physicalRoot: publicPhysicalRoot,
     physicalProvenanceRoot,
+    performanceRoot: publicPerformanceRoot,
+    performanceProvenanceRoot,
     provenanceRoot,
     outputPath: join(receiptsRoot, "brainpet-public-release-receipt.json"),
     receiptRoot: receiptsRoot,
@@ -382,7 +438,7 @@ try {
   });
   assert.equal(publicFinal.publicReleaseReady, true);
   assert.deepEqual(publicFinal.missingEvidence, []);
-  assert.equal(verifiedProvenance.length, 22);
+  assert.equal(verifiedProvenance.length, 25);
   console.log("BrainPet release assembly test passed.");
 } finally {
   rmSync(testRoot, { recursive: true, force: true });
@@ -430,9 +486,11 @@ function createAggregateFixture(sourceCommit) {
   for (const [targetIndex, target] of brainPetReleaseTargets.entries()) {
     const packageRoot = join(packagesRoot, target.id);
     mkdirSync(packageRoot, { recursive: true });
-    const executable = join(packageRoot, target.platform === "windows" ? "brainpet.exe" : "brainpet");
+    const runtimeRoot = join(packageRoot, "unpacked");
+    const executable = join(runtimeRoot, target.platform === "windows" ? "brainpet.exe" : "brainpet");
+    mkdirSync(dirname(executable), { recursive: true });
     writeFileSync(executable, createExecutableFixture(target, 24 * 1024 + targetIndex));
-    const appAsar = join(packageRoot, "resources", "app.asar");
+    const appAsar = join(runtimeRoot, "resources", "app.asar");
     mkdirSync(dirname(appAsar), { recursive: true });
     writeFileSync(appAsar, Buffer.from(`brainpet-app-asar-${target.id}`));
     const artifactRecords = artifactKinds[target.platform].map((kind, kindIndex) => {
@@ -456,6 +514,7 @@ function createAggregateFixture(sourceCommit) {
       sha256: sha256(readFileSync(executable)),
       appAsar: appAsar.slice(packageRoot.length + 1).replaceAll("\\", "/"),
       appAsarSha256: sha256(readFileSync(appAsar)),
+      runtimeTree: createBrainPetRuntimeTree(runtimeRoot),
       bridgeMarketplaceBundled: true,
       nativeBridgeHelpersBundled: true,
       artifacts: artifactRecords,
@@ -563,6 +622,176 @@ function createPhysicalReceipt(targetId, sourceCommit, artifactHash, candidate =
     artifactSha256,
     checks: brainPetPhysicalCheckIds.map((id) => ({ id, status: "pass", note: "" })),
   };
+}
+
+function createPerformanceReceiptFixtures(publicCandidate) {
+  const windowsPackage = publicCandidate.packages.find((entry) => entry.target === "windows-x64");
+  assert.ok(windowsPackage?.runtimeTree?.digest, "Public candidate lacks the Windows runtime tree binding.");
+  const candidate = {
+    repository: brainPetDistributionContract.identity.repository,
+    commit: publicCandidate.sourceCommit,
+    appVersion: windowsPackage.appVersion,
+    target: "windows-x64",
+    packageReceipt: "candidate/windows-x64/brainpet-package-receipt-windows-x64.json",
+    packageReceiptSha256: "f".repeat(64),
+    executable: windowsPackage.executable,
+    executableSha256: windowsPackage.sha256,
+    appAsar: windowsPackage.appAsar,
+    appAsarSha256: windowsPackage.appAsarSha256,
+    runtimeTreeDigest: windowsPackage.runtimeTree.digest,
+  };
+  return [
+    createPerformanceReceiptFixture("active-30m", candidate),
+    createPerformanceReceiptFixture("idle-24h", candidate),
+  ];
+}
+
+function createPerformanceReceiptFixture(profile, candidate) {
+  const active = profile === "active-30m";
+  const intervalMs = active ? 60_000 : 300_000;
+  const processSamples = active ? 31 : 289;
+  const totalWorkingSetBytes = (active ? 300 : 200) * 1024 * 1024;
+  const workingSetBytes = totalWorkingSetBytes - 32 * 1024 * 1024;
+  const privateBytes = totalWorkingSetBytes - 64 * 1024 * 1024;
+  const processTimeline = Array.from({ length: processSamples }, (_, index) => createProcessSample({
+    elapsedMs: index * intervalMs,
+    totalWorkingSetBytes,
+    workingSetBytes,
+    privateBytes,
+    handleCount: 600,
+    cpuTime100ns: index * 1_000_000,
+  }));
+  const process = summarizeFixtureProcessTimeline(processTimeline, 8);
+  const heapTimeline = Array.from({ length: active ? 900 : 289 }, () => 16 * 1024 * 1024);
+  const soak = {
+    durationMs: active ? 1_800_000 : 86_400_000,
+    samples: heapTimeline.length,
+    ...(active ? { sessions: 1 } : {}),
+    heapGrowthBytes: 0,
+    maxHeapBytes: 16 * 1024 * 1024,
+    heapTimeline,
+    process,
+  };
+  const idleProcessMetrics = processTimeline[0];
+  const gateResult = active
+    ? {
+        ok: true,
+        gateProfile: profile,
+        gatePassed: true,
+        taskId: "cargo-signal",
+        resourceBudgetEnforced: true,
+        petReadyMs: 500,
+        responsiveness: {
+          coldStartup: summarizeFixtureMetric(500),
+          hotFeedback: summarizeFixtureMetric(50),
+          coldWake: summarizeFixtureMetric(800),
+          warmStageOpening: summarizeFixtureMetric(200),
+          rendererClose: summarizeFixtureMetric(200),
+          interactionFrameRate: summarizeFixtureMetric(60),
+        },
+        idleProcessMetrics,
+        activeProcessMetrics: createProcessSample({ elapsedMs: 0, totalWorkingSetBytes, workingSetBytes, privateBytes, handleCount: 650, cpuTime100ns: 1_000_000 }),
+        hotIdleProcessMetrics: createProcessSample({ elapsedMs: 0, totalWorkingSetBytes: 250 * 1024 * 1024, workingSetBytes: 220 * 1024 * 1024, privateBytes: 190 * 1024 * 1024, handleCount: 620, cpuTime100ns: 2_000_000 }),
+        recoveredIdleProcessMetrics: createProcessSample({ elapsedMs: 0, totalWorkingSetBytes: 210 * 1024 * 1024, workingSetBytes: 180 * 1024 * 1024, privateBytes: 150 * 1024 * 1024, handleCount: 610, cpuTime100ns: 3_000_000 }),
+        companionVerified: true,
+        petToggleCloseVerified: true,
+        soak,
+        crashIsolated: true,
+        crashRecovered: true,
+      }
+    : {
+        ok: true,
+        gateProfile: profile,
+        gatePassed: true,
+        resourceBudgetEnforced: true,
+        petReadyMs: 500,
+        rendererTargetTitles: ["BrainPet Default Pet"],
+        idleProcessMetrics,
+        idleSoak: soak,
+      };
+  const core = {
+    schemaVersion: 2,
+    kind: "brainpet-performance-gate",
+    product: "brainpet",
+    gateProfile: profile,
+    gatePassed: true,
+    startedAt: "2026-08-17T00:00:00.000Z",
+    completedAt: active ? "2026-08-17T00:30:00.000Z" : "2026-08-18T00:00:00.000Z",
+    candidate,
+    runEvidence: {
+      runId: `${profile}-${candidate.commit}-1786900000000-${active ? "11111111-1111-4111-8111-111111111111" : "22222222-2222-4222-8222-222222222222"}`,
+      manifestSha256: "1".repeat(64),
+      resultSha256: "2".repeat(64),
+      executionLogSha256: "3".repeat(64),
+      executionLogBytes: 1024,
+      completionCoreDigest: "4".repeat(64),
+    },
+    gateResult,
+  };
+  return { ...core, evidenceDigest: sha256(Buffer.from(JSON.stringify(core))) };
+}
+
+function createProcessSample({ elapsedMs, totalWorkingSetBytes, workingSetBytes, privateBytes, handleCount, cpuTime100ns }) {
+  const browser = {
+    pid: 1200,
+    parentPid: 0,
+    role: "browser",
+    creationTime: "20260817000000.000000+480",
+    totalWorkingSetBytes: Math.floor(totalWorkingSetBytes * 0.6),
+    workingSetBytes: Math.floor(workingSetBytes * 0.6),
+    privateBytes: Math.floor(privateBytes * 0.6),
+    handleCount: Math.floor(handleCount * 0.6),
+    cpuTime100ns: Math.floor(cpuTime100ns * 0.6),
+  };
+  const renderer = {
+    pid: 1201,
+    parentPid: 1200,
+    role: "renderer",
+    creationTime: "20260817000001.000000+480",
+    totalWorkingSetBytes: totalWorkingSetBytes - browser.totalWorkingSetBytes,
+    workingSetBytes: workingSetBytes - browser.workingSetBytes,
+    privateBytes: privateBytes - browser.privateBytes,
+    handleCount: handleCount - browser.handleCount,
+    cpuTime100ns: cpuTime100ns - browser.cpuTime100ns,
+  };
+  return { elapsedMs, rootPid: 1200, processCount: 2, totalWorkingSetBytes, workingSetBytes, privateBytes, handleCount, cpuTime100ns, processes: [browser, renderer] };
+}
+
+function summarizeFixtureProcessTimeline(timeline, logicalProcessorCount) {
+  const first = timeline[0];
+  const last = timeline.at(-1);
+  const intervals = timeline.slice(1).map((sample, index) => ({
+    intervalMs: sample.elapsedMs - timeline[index].elapsedMs,
+    cpuPercent: ((sample.cpuTime100ns - timeline[index].cpuTime100ns) / ((sample.elapsedMs - timeline[index].elapsedMs) * 10_000 * logicalProcessorCount)) * 100,
+  }));
+  const maximumHandleCount = Math.max(...timeline.map((sample) => sample.handleCount));
+  return {
+    logicalProcessorCount,
+    samples: timeline.length,
+    durationMs: last.elapsedMs - first.elapsedMs,
+    maximumSampleIntervalMs: Math.max(...intervals.map((entry) => entry.intervalMs)),
+    firstWorkingSetBytes: first.workingSetBytes,
+    lastWorkingSetBytes: last.workingSetBytes,
+    maximumWorkingSetBytes: Math.max(...timeline.map((sample) => sample.workingSetBytes)),
+    maximumTotalWorkingSetBytes: Math.max(...timeline.map((sample) => sample.totalWorkingSetBytes)),
+    workingSetGrowthBytes: last.workingSetBytes - first.workingSetBytes,
+    maximumPrivateBytes: Math.max(...timeline.map((sample) => sample.privateBytes)),
+    maximumProcessCount: Math.max(...timeline.map((sample) => sample.processCount)),
+    firstHandleCount: first.handleCount,
+    lastHandleCount: last.handleCount,
+    maximumHandleCount,
+    handleGrowth: last.handleCount - first.handleCount,
+    maximumHandleGrowth: Math.max(0, maximumHandleCount - first.handleCount),
+    averageCpuPercent: ((last.cpuTime100ns - first.cpuTime100ns) / ((last.elapsedMs - first.elapsedMs) * 10_000 * logicalProcessorCount)) * 100,
+    maximumIntervalCpuPercent: Math.max(...intervals.map((entry) => entry.cpuPercent)),
+    processIdentity: "1200@20260817000000.000000+480,1201@20260817000001.000000+480",
+    timeline,
+  };
+}
+
+function summarizeFixtureMetric(value) {
+  const timeline = Array.from({ length: 20 }, () => value);
+  return { samples: timeline.length, minimum: value, p50: value, p95: value, maximum: value, timeline };
 }
 
 function preparePublicAggregateFixture(sourceCommit) {

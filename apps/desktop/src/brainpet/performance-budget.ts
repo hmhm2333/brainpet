@@ -23,6 +23,7 @@ export interface BrainPetProcessMetricsSample {
 }
 
 export interface BrainPetProcessSoakSummary {
+  logicalProcessorCount: number;
   samples: number;
   durationMs: number;
   maximumSampleIntervalMs: number;
@@ -46,6 +47,7 @@ export interface BrainPetProcessSoakSummary {
 
 export interface BrainPetProcessSoakBudget {
   maximumProcessCount: number;
+  maximumTotalWorkingSetBytes: number;
   maximumWorkingSetBytes: number;
   maximumPrivateBytes: number;
   maximumWorkingSetGrowthBytes: number;
@@ -153,6 +155,7 @@ export function summarizeBrainPetProcessSoak(samples: readonly BrainPetProcessMe
   });
   const maximumHandleCount = Math.max(...samples.map((sample) => sample.handleCount));
   return {
+    logicalProcessorCount,
     samples: samples.length,
     durationMs,
     maximumSampleIntervalMs: Math.max(...intervals.map((interval) => interval.intervalMs)),
@@ -181,6 +184,7 @@ export function evaluateBrainPetProcessSoakBudget(summary: BrainPetProcessSoakSu
   if (summary.durationMs < budget.minimumDurationMs) violations.push(`duration ${summary.durationMs} is below ${budget.minimumDurationMs}`);
   if (summary.maximumSampleIntervalMs > budget.maximumSampleIntervalMs) violations.push(`sample interval ${summary.maximumSampleIntervalMs} exceeds ${budget.maximumSampleIntervalMs}`);
   if (summary.maximumProcessCount > budget.maximumProcessCount) violations.push(`process count ${summary.maximumProcessCount} exceeds ${budget.maximumProcessCount}`);
+  if (summary.maximumTotalWorkingSetBytes > budget.maximumTotalWorkingSetBytes) violations.push(`total working set ${summary.maximumTotalWorkingSetBytes} exceeds ${budget.maximumTotalWorkingSetBytes}`);
   if (summary.maximumWorkingSetBytes > budget.maximumWorkingSetBytes) violations.push(`working set ${summary.maximumWorkingSetBytes} exceeds ${budget.maximumWorkingSetBytes}`);
   if (summary.maximumPrivateBytes > budget.maximumPrivateBytes) violations.push(`private bytes ${summary.maximumPrivateBytes} exceeds ${budget.maximumPrivateBytes}`);
   if (summary.workingSetGrowthBytes >= budget.maximumWorkingSetGrowthBytes) violations.push(`working set growth ${summary.workingSetGrowthBytes} is not below ${budget.maximumWorkingSetGrowthBytes}`);

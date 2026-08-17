@@ -24,6 +24,7 @@ function sample(elapsedMs: number, values: { processCount?: number; workingSetBy
 
 const normalBudget = {
   maximumProcessCount: 6,
+  maximumTotalWorkingSetBytes: 650 * MiB,
   maximumWorkingSetBytes: 650 * MiB,
   maximumPrivateBytes: 650 * MiB,
   maximumWorkingSetGrowthBytes: 64 * MiB,
@@ -37,15 +38,15 @@ const normalBudget = {
 
 test("long-soak evidence records an auditable stable process timeline", () => {
   const samples = [
-    sample(0, { processCount: 6, workingSetBytes: 560 * MiB, privateBytes: 260 * MiB, handleCount: 2_900, cpuTime100ns: 10_000_000 }),
-    sample(900_000, { processCount: 6, workingSetBytes: 585 * MiB, privateBytes: 280 * MiB, handleCount: 2_940, cpuTime100ns: 50_000_000 }),
-    sample(1_800_000, { processCount: 6, workingSetBytes: 590 * MiB, privateBytes: 282 * MiB, handleCount: 2_960, cpuTime100ns: 90_000_000 }),
+    sample(0, { processCount: 6, workingSetBytes: 510 * MiB, privateBytes: 260 * MiB, handleCount: 2_900, cpuTime100ns: 10_000_000 }),
+    sample(900_000, { processCount: 6, workingSetBytes: 535 * MiB, privateBytes: 280 * MiB, handleCount: 2_940, cpuTime100ns: 50_000_000 }),
+    sample(1_800_000, { processCount: 6, workingSetBytes: 540 * MiB, privateBytes: 282 * MiB, handleCount: 2_960, cpuTime100ns: 90_000_000 }),
   ];
   const summary = summarizeBrainPetProcessSoak(samples, 8);
   assert.equal(summary.timeline, samples);
   assert.equal(summary.maximumSampleIntervalMs, 900_000);
   assert.equal(summary.workingSetGrowthBytes, 30 * MiB);
-  assert.equal(summary.maximumTotalWorkingSetBytes, 690 * MiB);
+  assert.equal(summary.maximumTotalWorkingSetBytes, 640 * MiB);
   assert.equal(summary.maximumHandleCount, 2_960);
   assert.equal(summary.handleGrowth, 60);
   assert.equal(summary.maximumHandleGrowth, 60);

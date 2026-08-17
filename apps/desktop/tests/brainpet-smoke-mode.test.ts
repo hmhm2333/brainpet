@@ -87,17 +87,15 @@ test("idle settlement starts only after the replacement target and exact process
 
 test("canonical package commands and the Windows collector stay bound to the fail-closed contract", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8"));
-  assert.match(packageJson.scripts["test:brainpet-soak"], /BRAINPET_PERFORMANCE_GATE=active-30m BRAINPET_SOAK_MS=1800000/);
-  assert.match(packageJson.scripts["test:brainpet-soak"], /package:brainpet:unpacked[\s\S]*BRAINPET_ELECTRON_EXECUTABLE=dist-brainpet\/private-test\/win-unpacked\/brainpet\.exe[\s\S]*BRAINPET_PERFORMANCE_EXECUTABLE=dist-brainpet\/private-test\/win-unpacked\/brainpet\.exe/);
-  assert.match(packageJson.scripts["test:brainpet-soak"], /BRAINPET_PACKAGE_RECEIPT=dist-brainpet\/private-test\/brainpet-package-receipt-windows-x64\.json/);
-  assert.match(packageJson.scripts["test:brainpet-idle-soak"], /BRAINPET_PERFORMANCE_GATE=idle-24h BRAINPET_IDLE_SOAK_MS=86400000/);
-  assert.match(packageJson.scripts["test:brainpet-idle-soak"], /package:brainpet:unpacked[\s\S]*BRAINPET_ELECTRON_EXECUTABLE=dist-brainpet\/private-test\/win-unpacked\/brainpet\.exe/);
-  assert.match(packageJson.scripts["test:brainpet-idle-soak"], /BRAINPET_PACKAGE_RECEIPT=dist-brainpet\/private-test\/brainpet-package-receipt-windows-x64\.json/);
+  assert.equal(packageJson.scripts["test:brainpet-soak"], "pnpm brainpet:active-gate:start");
+  assert.equal(packageJson.scripts["test:brainpet-idle-soak"], "pnpm brainpet:idle-gate:start");
+  assert.match(packageJson.scripts["package:brainpet:unpacked"], /^node scripts\/clean-brainpet-build-output\.cjs/);
   const smokeSource = await readFile(new URL("../../scripts/brainpet-electron-smoke.mjs", import.meta.url), "utf8");
   assert.match(smokeSource, /BRAINPET_METRICS_ROOT_PID/);
   assert.match(smokeSource, /Win32_PerfRawData_PerfProc_Process[\s\S]*WorkingSetPrivate/);
   assert.match(smokeSource, /private working-set counters are missing/);
   assert.match(smokeSource, /for \(\$attempt = 1; \$attempt -le 3; \$attempt \+= 1\)[\s\S]*Start-Sleep -Milliseconds 100[\s\S]*if \(\$missingPrivateWorkingSet\.Count -gt 0\) \{ throw/);
+  assert.match(smokeSource, /\$expectedIdentity = \$identity[\s\S]*process tree changed during private working-set retry/);
   assert.match(smokeSource, /if \(\$ids\.Contains\(\[uint32\]\$process\.ParentProcessId\) -and \$ids\.Add/);
   assert.doesNotMatch(smokeSource, /rootNames\.Contains/);
   assert.match(smokeSource, /gatePassed: smokeMode\.gatePassedEligible/);
@@ -107,14 +105,17 @@ test("canonical package commands and the Windows collector stay bound to the fai
   assert.match(smokeSource, /retryBrainPetHeapSample\(\(\) => sendCdp\(target\.webSocketDebuggerUrl, "Runtime\.getHeapUsage", \{\}, 5_000\)\)/);
   assert.match(smokeSource, /await delay\(10_000\)/);
   assert.match(smokeSource, /cleanup become quiescent[\s\S]*await delay\(2_000\)/);
-  assert.match(smokeSource, /coldWakeMs\.push\(performance\.now\(\) - sampleStartedAt\)/);
+  assert.match(smokeSource, /spawnSync\(stagedHelper, \["--agent", "codex"\][\s\S]*hook_event_name: "UserPromptSubmit"/);
+  assert.match(smokeSource, /coldWakeMs\.push\(performance\.now\(\) - wakeStartedAt\)/);
+  assert.match(smokeSource, /maximumTotalWorkingSetBytes/);
   assert.match(smokeSource, /minimumInteractionFrameRateP95Fps: 50/);
   assert.match(smokeSource, /maximumHandleCount: 2_750/);
   assert.match(smokeSource, /handleCount: 2_750/);
   assert.match(smokeSource, /\/json\/list`[\s\S]*AbortSignal\.timeout\(1_000\)/);
   assert.match(smokeSource, /waitForTargetToDisappear[\s\S]*catch \{[\s\S]*endpoint never becomes observable again/);
-  assert.match(smokeSource, /validateBrainPetPerformanceCandidate[\s\S]*assertBrainPetPerformanceReceiptAvailable[\s\S]*runColdPerformancePreflight\(40\)/);
-  assert.match(smokeSource, /finally \{[\s\S]*stopProcessesForUserDataDir[\s\S]*writeBrainPetPerformanceReceipt/);
+  assert.match(smokeSource, /validateBrainPetPerformanceCandidate[\s\S]*runColdPerformancePreflight\(40\)/);
+  assert.doesNotMatch(smokeSource, /writeBrainPetPerformanceReceipt/);
+  assert.match(smokeSource, /Timed out after \$\{timeoutMs\} ms waiting for process/);
   assert.match(smokeSource, /Formal responsiveness and soak evidence must execute the same packaged BrainPet bytes/);
   const receiptSource = await readFile(new URL("../../scripts/brainpet-performance-receipt.mjs", import.meta.url), "utf8");
   assert.match(receiptSource, /status", "--porcelain=v1", "--untracked-files=no"/);
@@ -125,11 +126,13 @@ test("canonical package commands and the Windows collector stay bound to the fai
   const runnerSource = await readFile(new URL("../../scripts/brainpet-performance-gate-runner.mjs", import.meta.url), "utf8");
   assert.match(runnerSource, /detached: true/);
   assert.match(runnerSource, /windowsHide: true/);
-  assert.match(runnerSource, /creationDate === manifest\.runner\?\.creationDate/);
-  assert.match(runnerSource, /normalizeWindowsPath\(identity\.executablePath\) === normalizeWindowsPath\(manifest\.runner\?\.executable\)/);
+  assert.match(runnerSource, /identity\.creationDate === expected\.creationDate/);
+  assert.match(runnerSource, /normalizeWindowsPath\(identity\.executablePath\) === normalizeWindowsPath\(expected\.executable\)/);
   assert.match(runnerSource, /commandNeedles\.every/);
   assert.match(runnerSource, /waitForPath\(manifestPath, 30_000\)[\s\S]*runPnpmDesktopScript/);
+  assert.match(runnerSource, /createCleanPerformanceEnvironment[\s\S]*BRAINPET_ENFORCE_RESOURCE_BUDGET: "1"/);
   assert.match(runnerSource, /validateBrainPetPerformanceReceipt[\s\S]*writeJsonExclusiveAtomic\(completionPath/);
+  assert.match(runnerSource, /status\.state === "interrupted" && status\.receiptPath[\s\S]*rmSyncExact/);
   const brainPetBuilder = await readFile(new URL("../../electron-builder.brainpet.base.yml", import.meta.url), "utf8");
   assert.doesNotMatch(brainPetBuilder, /asarUnpack:[\s\S]*node_modules\/\*\*/);
   const hostCore = await readFile(new URL("../../src/composition/host-core.ts", import.meta.url), "utf8");

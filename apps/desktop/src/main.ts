@@ -11,6 +11,19 @@ const distribution = resolveDesktopDistributionSettings(app.getName(), process.e
 const brainPetFeatureEnabled = isBrainPetFeatureEnabled(distribution, process.env.BRAINPET_ENABLED);
 const composition = resolveDesktopComposition(distribution, brainPetFeatureEnabled);
 
+// BrainPet renders only bundled local surfaces and keeps renderer sandboxing,
+// but Electron's separate GPU process duplicates enough shared Chromium pages
+// to miss the frozen 400 MiB total-working-set budget on the Windows reference
+// machine. Keep hardware acceleration enabled while hosting Chromium's GPU
+// service as a browser-process thread for the BrainPet Windows product only.
+if (distribution.profile === "brainpet" && process.platform === "win32") app.commandLine.appendSwitch("in-process-gpu");
+
+const performanceDebugPort = process.env.BRAINPET_PERFORMANCE_REMOTE_DEBUGGING_PORT;
+if (process.env.BRAINPET_GATE_RUN_ID && performanceDebugPort) {
+  if (!/^(?:active-30m|idle-24h)-[a-f0-9]{40}-\d{13}-[a-f0-9-]{36}$/i.test(process.env.BRAINPET_GATE_RUN_ID) || !/^\d{2,5}$/.test(performanceDebugPort)) throw new Error("Invalid BrainPet performance cold-wake debugging contract.");
+  app.commandLine.appendSwitch("remote-debugging-port", performanceDebugPort);
+}
+
 if (shouldUseIsolatedBrainPetUserData(distribution.profile, process.argv)) {
   app.setPath("userData", join(app.getPath("appData"), "BrainPet"));
 }
@@ -58,6 +71,7 @@ if (!gotSingleInstanceLock) {
       arch: process.arch,
       packaged: app.isPackaged,
       pid: process.pid,
+      gpuProcessMode: app.commandLine.hasSwitch("in-process-gpu") ? "browser-thread" : "isolated-process",
       ozonePlatform: app.commandLine.getSwitchValue("ozone-platform") || null,
       explicitOzonePlatformArg: hasExplicitOzonePlatformArg,
     });
