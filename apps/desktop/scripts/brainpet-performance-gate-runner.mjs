@@ -518,10 +518,29 @@ async function writeJsonReplaceAtomic(path, value) {
     await handle.sync();
     await handle.close();
     handle = undefined;
-    await rename(temporary, target);
+    await renameReplaceAtomicWithRetry(temporary, target);
   } finally {
     if (handle) await handle.close().catch(() => {});
     await rm(temporary, { force: true }).catch(() => {});
+  }
+}
+
+export async function renameReplaceAtomicWithRetry(source, target, {
+  platform = process.platform,
+  renameFile = rename,
+  wait = delay,
+  maxAttempts = 20,
+} = {}) {
+  assert.ok(Number.isInteger(maxAttempts) && maxAttempts >= 1 && maxAttempts <= 100, "Atomic replacement retry count is invalid.");
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await renameFile(source, target);
+      return;
+    } catch (error) {
+      const transientWindowsLock = platform === "win32" && ["EPERM", "EACCES", "EBUSY"].includes(error?.code);
+      if (!transientWindowsLock || attempt === maxAttempts) throw error;
+      await wait(Math.min(25 * attempt, 250));
+    }
   }
 }
 

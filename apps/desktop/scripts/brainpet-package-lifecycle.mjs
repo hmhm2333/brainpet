@@ -92,7 +92,7 @@ async function main() {
       await stopRuntime(upgraded, paths.executable, paths.discovery);
     }
 
-    uninstallArtifact(currentPackage.artifact.path, target, options.artifactKind, paths);
+    await uninstallArtifact(currentPackage.artifact.path, target, options.artifactKind, paths);
     assert.equal(existsSync(paths.executable), false, "BrainPet executable remains after uninstall.");
     runHelper(currentHelper, fixture.environment, "UserPromptSubmit", "post-uninstall");
     await delay(3_000);
@@ -248,11 +248,12 @@ function installArtifact(path, target, kind, paths, scratch) {
   runRequired("sudo", ["env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "--yes", "--no-install-recommends", path], { timeout: 180_000 });
 }
 
-function uninstallArtifact(path, target, kind, paths) {
+async function uninstallArtifact(path, target, kind, paths) {
   if (target.platform === "windows") {
     const uninstallers = findFiles(dirname(paths.executable), (name) => /^Uninstall.*\.exe$/i.test(name));
     assert.equal(uninstallers.length, 1, "NSIS uninstall executable was not found.");
     runRequired(uninstallers[0], ["/S"], { timeout: 120_000 });
+    await waitForMissing(paths.executable, 30_000);
     return;
   }
   if (target.platform === "macos") {

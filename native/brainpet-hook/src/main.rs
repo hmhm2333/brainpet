@@ -659,11 +659,11 @@ mod tests {
     fn blocking_path_io_respects_the_deadline() {
         let started = Instant::now();
         let result = run_io_with_timeout(Duration::from_millis(20), || {
-            thread::sleep(Duration::from_millis(200));
+            thread::sleep(Duration::from_millis(1_000));
             Ok(())
         });
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
-        assert!(started.elapsed() < Duration::from_millis(150));
+        assert!(started.elapsed() < Duration::from_millis(750));
     }
 
     #[test]

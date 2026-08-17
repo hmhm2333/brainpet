@@ -80,8 +80,13 @@ function stripMacosSignatures(appOutDir, commandRunner = spawnSync) {
   }
   for (const candidate of stripped) assertUnsigned(runCodesign(["--display", "--verbose=4", candidate], commandRunner), candidate);
 
+  const signableCandidates = candidates.filter((candidate) => candidate === appBundle
+    || codeBundlePattern.test(candidate)
+    || codeFileExtensions.has(extname(candidate).toLowerCase())
+    || basename(candidate) === "brainpet-hook"
+    || stripped.includes(candidate));
   const adHocSigned = [];
-  for (const candidate of stripped.filter((candidate) => candidate !== appBundle)) {
+  for (const candidate of signableCandidates.filter((candidate) => candidate !== appBundle)) {
     const signing = runCodesign(["--force", "--sign", "-", candidate], commandRunner);
     assert.equal(signing.status, 0, signing.stderr || `Unable to apply an ad-hoc signature to ${candidate}.`);
     assertAdhocOnly(runCodesign(["--display", "--verbose=4", candidate], commandRunner), candidate);

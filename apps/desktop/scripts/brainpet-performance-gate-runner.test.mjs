@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract } from "../../../scripts/brainpet-release-contract.mjs";
 import { sha256Bytes, sha256File, writeJsonExclusiveAtomic } from "./brainpet-performance-receipt.mjs";
-import { createBrainPetPerformanceGatePaths, createCleanPerformanceEnvironment, finalizePerformancePublication, handoffPerformanceLeaseAndPublishManifest, queryWindowsProcessIdentity, readBrainPetPerformanceGateStatus, recoverOrRejectPerformanceLease, updateOwnedPerformanceLease, validateWindowsJobSupervisorResult } from "./brainpet-performance-gate-runner.mjs";
+import { createBrainPetPerformanceGatePaths, createCleanPerformanceEnvironment, finalizePerformancePublication, handoffPerformanceLeaseAndPublishManifest, queryWindowsProcessIdentity, readBrainPetPerformanceGateStatus, recoverOrRejectPerformanceLease, renameReplaceAtomicWithRetry, updateOwnedPerformanceLease, validateWindowsJobSupervisorResult } from "./brainpet-performance-gate-runner.mjs";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(appDir, "..", "..");
@@ -23,6 +23,27 @@ const createdPaths = [];
 test.after(() => {
   for (const path of createdPaths.reverse()) rmSync(path, { force: true, recursive: true });
   rmSync(performanceRoot, { force: true, recursive: true });
+});
+
+test("atomic lease replacement retries only transient Windows file locks", async () => {
+  let attempts = 0;
+  const waits = [];
+  await renameReplaceAtomicWithRetry("fixture-source", "fixture-target", {
+    platform: "win32",
+    maxAttempts: 4,
+    wait: async (milliseconds) => waits.push(milliseconds),
+    renameFile: async () => {
+      attempts += 1;
+      if (attempts < 3) throw Object.assign(new Error("temporarily locked"), { code: attempts === 1 ? "EPERM" : "EBUSY" });
+    },
+  });
+  assert.equal(attempts, 3);
+  assert.deepEqual(waits, [25, 50]);
+  await assert.rejects(renameReplaceAtomicWithRetry("fixture-source", "fixture-target", {
+    platform: "win32",
+    wait: async () => assert.fail("non-transient replacement errors must not wait"),
+    renameFile: async () => { throw Object.assign(new Error("invalid path"), { code: "EINVAL" }); },
+  }), /invalid path/);
 });
 
 test("runner status requires exact PID creation identity and command binding", () => {

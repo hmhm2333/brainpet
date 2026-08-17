@@ -49,6 +49,8 @@ assert.match(macosSignatureHook, /isSymbolicLink\(\)\) return/);
 assert.match(packageLifecycleSource, /stageLifecycleAppImageForExtraction/);
 assert.match(packageLifecycleSource, /apt-get", "install/);
 assert.match(packageLifecycleSource, /removeOwnedLifecycleDiscovery/);
+assert.match(packageLifecycleSource, /await uninstallArtifact/);
+assert.match(packageLifecycleSource, /await waitForMissing\(paths\.executable, 30_000\)/, "NSIS lifecycle must wait for the asynchronous uninstaller to remove the exact executable.");
 assert.match(publicConfig, /hardenedRuntime: false/);
 assert.match(publicConfig, /gatekeeperAssess: false/);
 assert.match(publicConfig, /notarize: false/);
@@ -268,6 +270,7 @@ assert.match(performanceRunnerSource, /brainpet-windows-job-supervisor\.ps1[\s\S
 assert.match(performanceRunnerSource, /supervisorExitCode[\s\S]*validateWindowsJobSupervisorResult[\s\S]*does not match its supervisor exit status/);
 assert.match(performanceRunnerSource, /completion publication failed[\s\S]*preserving the recovery lease/);
 assert.match(performanceRunnerSource, /caught instanceof BrainPetPerformanceReceiptRollbackError[\s\S]*throw caught/);
+assert.match(performanceRunnerSource, /renameReplaceAtomicWithRetry[\s\S]*\["EPERM", "EACCES", "EBUSY"\]/, "Windows performance lease replacement must retry only bounded transient file-lock errors.");
 const performanceJobSupervisorSource = readFileSync(join(desktop, "scripts", "brainpet-windows-job-supervisor.ps1"), "utf8");
 assert.match(performanceJobSupervisorSource, /CREATE_SUSPENDED[\s\S]*JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE[\s\S]*AssignProcessToJobObject[\s\S]*TerminateProcess[\s\S]*Suspended child termination wait/);
 assert.match(performanceJobSupervisorSource, /WaitForPermit\(resumePermitPath[\s\S]*ResumeThread[\s\S]*QueryActiveProcesses[\s\S]*TerminateJobObject/);
