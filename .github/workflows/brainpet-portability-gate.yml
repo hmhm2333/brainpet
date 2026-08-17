@@ -148,6 +148,7 @@ jobs:
         with:
           name: brainpet-codex-bridge
           path: output/brainpet-release/brainpet-codex-bridge
+          include-hidden-files: true
           if-no-files-found: error
 
   aggregate-private-receipt:

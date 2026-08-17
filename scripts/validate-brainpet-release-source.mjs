@@ -146,6 +146,7 @@ assert.doesNotMatch(publicReleaseWorkflow, /BRAINPET_(?:WIN|MAC)|WIN_CSC|CSC_LIN
 assert.doesNotMatch(publicReleaseWorkflow, /--defer-trust/);
 assert.doesNotMatch(publicReleaseWorkflow, /actions\/attest|gh attestation/, "Private-repository RC6 must not depend on GitHub Artifact Attestations.");
 const portabilityWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-portability-gate.yml"), "utf8");
+assert.match(portabilityWorkflow, /name:\s*brainpet-codex-bridge\r?\n\s+path:\s*output\/brainpet-release\/brainpet-codex-bridge\r?\n\s+include-hidden-files:\s*true/, "Private Bridge artifact must preserve .codex-plugin and every other hidden release entry.");
 for (const [name, source] of [["portability", portabilityWorkflow], ["public release", publicReleaseWorkflow]]) {
   assert.match(source, /pnpm --filter @open-pets\/desktop\.\.\. install --frozen-lockfile --ignore-scripts/, `BrainPet ${name} runtime jobs must install without executing unrelated root-only build scripts.`);
   assert.match(source, /pnpm --filter @open-pets\/desktop\.\.\. rebuild esbuild get-windows sharp/, `BrainPet ${name} runtime jobs must rebuild the exact desktop native dependency allowlist.`);
