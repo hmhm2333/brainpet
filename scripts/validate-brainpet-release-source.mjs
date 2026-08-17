@@ -148,10 +148,13 @@ assert.ok(existsSync(join(root, ".github", "workflows", "brainpet-public-release
 const physicalIntakeWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-physical-receipt-intake.yml"), "utf8");
 const performanceIntakeWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-performance-receipt-intake.yml"), "utf8");
 const publicFinalizeWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-public-release-finalize.yml"), "utf8");
-for (const [name, source] of [["portability", portabilityWorkflow], ["public release", publicReleaseWorkflow], ["physical intake", physicalIntakeWorkflow], ["performance intake", performanceIntakeWorkflow], ["public finalize", publicFinalizeWorkflow]]) {
-  const actionLines = source.split(/\r?\n/).filter((line) => /^\s*- uses:\s+/.test(line));
+for (const [name, source] of [["portability", portabilityWorkflow], ["public release", publicReleaseWorkflow], ["physical intake", physicalIntakeWorkflow], ["performance intake", performanceIntakeWorkflow], ["public finalize", publicFinalizeWorkflow]]) assertExactWorkflowPins(name, source);
+assert.throws(() => assertExactWorkflowPins("job-level regression fixture", "jobs:\n  delegated:\n    uses: owner/repository/.github/workflows/reusable.yml@main\n"), /exact 40-character commit/, "Job-level reusable workflows must not bypass exact action pinning.");
+
+function assertExactWorkflowPins(name, source) {
+  const actionLines = source.split(/\r?\n/).filter((line) => /^\s*(?:-\s*)?uses:\s+/.test(line));
   assert.ok(actionLines.length > 0, `BrainPet ${name} workflow must use at least one pinned action.`);
-  for (const line of actionLines) assert.match(line, /^\s*- uses:\s+[^@\s]+@[a-f0-9]{40}(?:\s+#.*)?$/, `BrainPet ${name} workflow action must be pinned to an exact 40-character commit: ${line.trim()}`);
+  for (const line of actionLines) assert.match(line, /^\s*(?:-\s*)?uses:\s+[^@\s]+@[a-f0-9]{40}(?:\s+#.*)?$/, `BrainPet ${name} workflow action must be pinned to an exact 40-character commit: ${line.trim()}`);
 }
 for (const [name, source] of [["physical intake", physicalIntakeWorkflow], ["performance intake", performanceIntakeWorkflow], ["public finalize", publicFinalizeWorkflow]]) {
   assert.doesNotMatch(source, /^\s*run:.*\$\{\{\s*inputs\./m, `BrainPet ${name} must not interpolate workflow_dispatch inputs into shell source.`);
