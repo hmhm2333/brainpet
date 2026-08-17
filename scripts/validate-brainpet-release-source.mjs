@@ -129,7 +129,9 @@ assert.doesNotMatch(publicReleaseWorkflow, /--defer-trust/);
 assert.doesNotMatch(publicReleaseWorkflow, /actions\/attest|gh attestation/, "Private-repository RC6 must not depend on GitHub Artifact Attestations.");
 const portabilityWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-portability-gate.yml"), "utf8");
 for (const [name, source] of [["portability", portabilityWorkflow], ["public release", publicReleaseWorkflow]]) {
-  assert.match(source, /pnpm --filter @open-pets\/desktop\.\.\. install --frozen-lockfile/, `BrainPet ${name} runtime jobs must exclude unrelated root-only dependencies on Windows ARM64.`);
+  assert.match(source, /pnpm --filter @open-pets\/desktop\.\.\. install --frozen-lockfile --ignore-scripts/, `BrainPet ${name} runtime jobs must install without executing unrelated root-only build scripts.`);
+  assert.match(source, /pnpm --filter @open-pets\/desktop\.\.\. rebuild esbuild get-windows sharp/, `BrainPet ${name} runtime jobs must rebuild the exact desktop native dependency allowlist.`);
+  assert.doesNotMatch(source, /pnpm --filter @open-pets\/desktop\.\.\. rebuild[^\r\n]*workerd/, `BrainPet ${name} runtime jobs must not execute the unsupported root-only workerd build on Windows ARM64.`);
 }
 assert.match(portabilityWorkflow, /source-contract:[\s\S]*?pnpm install --frozen-lockfile[\s\S]*?pnpm brainpet:release:test/, "The portability source-contract job must still install and test the complete workspace.");
 for (const [name, source] of [["portability", portabilityWorkflow], ["public release", publicReleaseWorkflow]]) {

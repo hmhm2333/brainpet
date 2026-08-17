@@ -188,13 +188,37 @@ export function assertBrainPetAsarWorkspaceClosure(appAsar) {
 function findPackageArtifacts(outputRoot, target, packageTarget) {
   if (packageTarget === "dir") return [];
   const names = readdirSync(outputRoot, { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => entry.name);
-  const matchingArchitecture = (name) => name.toLowerCase().includes(`-${target.arch}-`) || name.toLowerCase().includes(`-${target.arch}.`);
+  const matchingArchitecture = (name) => matchesBrainPetArtifactArchitecture(name, target);
   if (packageTarget === "portable") {
     return names.filter((name) => /\.exe$/i.test(name) && !/-setup\.exe$/i.test(name) && matchingArchitecture(name)).map((name) => ({ path: join(outputRoot, name), kind: "portable" }));
   }
   if (target.platform === "windows") return names.filter((name) => /-setup\.exe$/i.test(name) && matchingArchitecture(name)).map((name) => ({ path: join(outputRoot, name), kind: "nsis" }));
   if (target.platform === "macos") return names.filter((name) => /\.dmg$/i.test(name) && matchingArchitecture(name)).map((name) => ({ path: join(outputRoot, name), kind: "dmg" }));
   return names.filter((name) => /\.(appimage|deb)$/i.test(name) && matchingArchitecture(name)).map((name) => ({ path: join(outputRoot, name), kind: /\.appimage$/i.test(name) ? "appimage" : "deb" }));
+}
+
+export function matchesBrainPetArtifactArchitecture(name, target) {
+  assert.ok(typeof name === "string" && name.length > 0, "BrainPet artifact name is invalid.");
+  assert.ok(target && typeof target === "object", "BrainPet artifact target is invalid.");
+  const platformToken = target.platform === "windows" ? "win" : target.platform === "macos" ? "mac" : target.platform === "linux" ? "linux" : null;
+  assert.ok(platformToken, "BrainPet artifact target platform is invalid.");
+  const aliases = target.platform === "linux"
+    ? target.arch === "x64"
+      ? ["x64", "x86_64", "amd64"]
+      : target.arch === "arm64"
+        ? ["arm64", "aarch64"]
+        : [target.arch]
+    : [target.arch];
+  const normalized = name.toLowerCase();
+  const extension = target.platform === "windows"
+    ? "(?:-setup)?\\.exe"
+    : target.platform === "macos"
+      ? "\\.dmg"
+      : "\\.(?:appimage|deb)";
+  return aliases.some((alias) => {
+    const escaped = String(alias).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`-${platformToken}-${escaped}${extension}$`).test(normalized);
+  });
 }
 
 function validatePackageArtifact(artifact, target, outputRoot) {

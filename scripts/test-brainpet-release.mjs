@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,7 +20,7 @@ import { validateBrainPetPerformanceReceiptSet } from "./brainpet-performance-re
 import { brainPetPerformanceReceiptWorkflow, brainPetPhysicalReceiptWorkflow, brainPetPublicReleaseFinalizeWorkflow, brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, signBrainPetReleaseEvidence, signBrainPetSubjects, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
 import { stageBrainPetPackageArtifacts, validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
 import { createBrainPetBuilderInvocation, parseBrainPetPackageArgs, prepareBrainPetBundledMarketplace, resolveBrainPetElectronDist, validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
-import { assertBrainPetAsarWorkspaceClosure, assertMacosCodeObjectIsUnsigned, resolveBrainPetResourcesRoot, validateUnsignedLinuxArtifacts } from "../apps/desktop/scripts/validate-brainpet-package.mjs";
+import { assertBrainPetAsarWorkspaceClosure, assertMacosCodeObjectIsUnsigned, matchesBrainPetArtifactArchitecture, resolveBrainPetResourcesRoot, validateUnsignedLinuxArtifacts } from "../apps/desktop/scripts/validate-brainpet-package.mjs";
 import { createBrainPetRuntimeTree } from "../apps/desktop/scripts/brainpet-runtime-tree.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -76,6 +76,17 @@ try {
   const publicLinuxInvocation = createBrainPetBuilderInvocation(parseBrainPetPackageArgs(["--platform", "linux", "--arch", "x64", "--target", "installer", "--mode", "public-release", "--dry-run"]));
   assert.ok(publicLinuxInvocation.args.includes("AppImage"));
   assert.ok(publicLinuxInvocation.args.includes("deb"));
+  const linuxX64 = getBrainPetReleaseTarget("linux", "x64");
+  const linuxArm64 = getBrainPetReleaseTarget("linux", "arm64");
+  assert.equal(matchesBrainPetArtifactArchitecture("BrainPet-Unsigned-3.4.0-linux-x86_64.AppImage", linuxX64), true);
+  assert.equal(matchesBrainPetArtifactArchitecture("BrainPet-Unsigned-3.4.0-linux-amd64.deb", linuxX64), true);
+  assert.equal(matchesBrainPetArtifactArchitecture("BrainPet-Unsigned-3.4.0-linux-arm64.AppImage", linuxX64), false);
+  assert.equal(matchesBrainPetArtifactArchitecture("BrainPet-Unsigned-3.4.0-linux-aarch64.AppImage", linuxArm64), true);
+  assert.equal(matchesBrainPetArtifactArchitecture("BrainPet-Unsigned-3.4.0-linux-x64evil.AppImage", linuxX64), false);
+  assert.equal(matchesBrainPetArtifactArchitecture("BrainPet-Unsigned-3.4.0-linux-arm64-x64.AppImage", linuxX64), false);
+  assert.equal(matchesBrainPetArtifactArchitecture("BrainPet-Unsigned-3.4.0-linux-arm64-x64.AppImage", linuxArm64), false);
+  assert.equal(matchesBrainPetArtifactArchitecture("BrainPet-Unsigned-3.4.0-linux-amd64-aarch64.deb", linuxX64), false);
+  assert.equal(matchesBrainPetArtifactArchitecture("BrainPet-Unsigned-3.4.0-linux-amd64-aarch64.deb", linuxArm64), false);
   const asarSource = join(testRoot, "malicious-asar-source");
   const asarClientRoot = join(asarSource, "node_modules", "@open-pets", "client");
   mkdirSync(join(asarClientRoot, "dist"), { recursive: true });
@@ -89,6 +100,25 @@ try {
   const builderRequire = createRequire(desktopRequire.resolve("electron-builder"));
   await builderRequire("@electron/asar").createPackage(asarSource, maliciousAsar);
   assert.throws(() => assertBrainPetAsarWorkspaceClosure(maliciousAsar), /non-runtime workspace file.*\.test-dist/i);
+  const runtimeLinkRoot = join(testRoot, "runtime-tree-links");
+  mkdirSync(join(runtimeLinkRoot, "Versions", "A"), { recursive: true });
+  writeFileSync(join(runtimeLinkRoot, "Versions", "A", "runtime.bin"), "runtime\n");
+  let relativeSymlinkCreated = false;
+  try {
+    symlinkSync("A", join(runtimeLinkRoot, "Versions", "Current"), "dir");
+    relativeSymlinkCreated = true;
+  } catch (error) {
+    if (error?.code !== "EPERM") throw error;
+  }
+  if (relativeSymlinkCreated) {
+    const runtimeTree = createBrainPetRuntimeTree(runtimeLinkRoot);
+    assert.deepEqual(runtimeTree.entries.find((entry) => entry.path === "Versions/Current"), { path: "Versions/Current", type: "symlink", target: "A" });
+    assert.equal(runtimeTree.schemaVersion, 2);
+    const outsideTarget = join(testRoot, "outside-runtime-link-target");
+    mkdirSync(outsideTarget);
+    symlinkSync(outsideTarget, join(runtimeLinkRoot, "escape"), "dir");
+    assert.throws(() => createBrainPetRuntimeTree(runtimeLinkRoot), /invalid target|not portable|unsafe|escapes/i);
+  }
   const dryRunFixture = parseBrainPetPackageArgs(["--platform", "linux", "--arch", "x64", "--target", "installer", "--mode", "private-test", "--dry-run"]);
   const fakeElectronPackage = join(root, "node_modules", ".pnpm", "electron@42.0.0", "node_modules", "electron", "package.json");
   assert.equal(

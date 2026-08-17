@@ -61,7 +61,8 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm --filter @open-pets/desktop... install --frozen-lockfile
+      - run: pnpm --filter @open-pets/desktop... install --frozen-lockfile --ignore-scripts
+      - run: pnpm --filter @open-pets/desktop... rebuild esbuild get-windows sharp
       - uses: actions/download-artifact@v4
         with:
           name: brainpet-public-helper-${{ matrix.id }}
