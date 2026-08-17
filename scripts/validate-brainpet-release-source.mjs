@@ -149,10 +149,14 @@ const physicalIntakeWorkflow = readFileSync(join(root, ".github", "workflows", "
 const performanceIntakeWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-performance-receipt-intake.yml"), "utf8");
 const publicFinalizeWorkflow = readFileSync(join(root, ".github", "workflows", "brainpet-public-release-finalize.yml"), "utf8");
 for (const [name, source] of [["portability", portabilityWorkflow], ["public release", publicReleaseWorkflow], ["physical intake", physicalIntakeWorkflow], ["performance intake", performanceIntakeWorkflow], ["public finalize", publicFinalizeWorkflow]]) assertExactWorkflowPins(name, source);
-assert.throws(() => assertExactWorkflowPins("job-level regression fixture", "jobs:\n  delegated:\n    uses: owner/repository/.github/workflows/reusable.yml@main\n"), /exact 40-character commit/, "Job-level reusable workflows must not bypass exact action pinning.");
+for (const [name, fixture] of [
+  ["job-level", "jobs:\n  delegated:\n    uses: owner/repository/.github/workflows/reusable.yml@main\n"],
+  ["quoted-key", "jobs:\n  delegated:\n    \"uses\": owner/repository/.github/workflows/reusable.yml@main\n"],
+  ["flow-mapping", "steps:\n  - { uses: owner/action@main }\n"],
+]) assert.throws(() => assertExactWorkflowPins(`${name} regression fixture`, fixture), /exact 40-character commit/, `${name} workflow syntax must not bypass exact action pinning.`);
 
 function assertExactWorkflowPins(name, source) {
-  const actionLines = source.split(/\r?\n/).filter((line) => /^\s*(?:-\s*)?uses:\s+/.test(line));
+  const actionLines = source.split(/\r?\n/).filter((line) => /(?:^|[{,])\s*(?:-\s*)?(?:["']uses["']|uses)\s*:/.test(line) || /^\s*\?\s*(?:["']uses["']|uses)\s*$/.test(line));
   assert.ok(actionLines.length > 0, `BrainPet ${name} workflow must use at least one pinned action.`);
   for (const line of actionLines) assert.match(line, /^\s*(?:-\s*)?uses:\s+[^@\s]+@[a-f0-9]{40}(?:\s+#.*)?$/, `BrainPet ${name} workflow action must be pinned to an exact 40-character commit: ${line.trim()}`);
 }
