@@ -122,7 +122,7 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
     runtimeReleaseReady,
     publicReleaseReady: false,
     note: mode === "public-release"
-      ? "Unsigned direct-download runtime and installer passed structure and signature-absence gates. Aggregate readiness still requires Sigstore provenance, Bridge, lifecycle, Adapter and physical user-consent evidence."
+      ? "Direct-download runtime and installer passed structure and publisher-identity-absence gates. macOS uses certificate-free ad-hoc code signatures only. Aggregate readiness still requires Sigstore provenance, Bridge, lifecycle, Adapter and physical user-consent evidence."
       : "Private-test runtime; not eligible for public release.",
   };
   writeFileSync(join(resolvedOutput, `brainpet-package-receipt-${target.id}.json`), `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
@@ -264,7 +264,7 @@ function validateUnsignedPlatformPolicy({ appRoot, executable, artifacts, target
   }
   if (target.platform === "macos") {
     const appBundle = appRoot.endsWith("Contents") ? dirname(appRoot) : appRoot;
-    assertMacosCodeObjectIsUnsigned(spawnSync("codesign", ["--display", "--verbose=4", appBundle], { encoding: "utf8" }), "BrainPet app bundle");
+    assertMacosAppUsesAdhocOnly(spawnSync("codesign", ["--display", "--verbose=4", appBundle], { encoding: "utf8" }), "BrainPet app bundle");
     for (const artifact of artifacts.map((candidate) => candidate.path)) {
       assertMacosCodeObjectIsUnsigned(spawnSync("codesign", ["--display", "--verbose=4", artifact], { encoding: "utf8" }), `BrainPet DMG ${artifact}`);
       const assessment = spawnSync("spctl", ["--assess", "--type", "open", "--context", "context:primary-signature", "--verbose=2", artifact], { encoding: "utf8" });
@@ -279,6 +279,15 @@ function validateUnsignedPlatformPolicy({ appRoot, executable, artifacts, target
     return true;
   }
   validateUnsignedLinuxArtifacts(artifacts);
+  return true;
+}
+
+export function assertMacosAppUsesAdhocOnly(result, label) {
+  assert.equal(result.error, undefined, `Unable to run the macOS code-signature probe for ${label}.`);
+  assert.equal(result.status, 0, `${label} lacks the certificate-free ad-hoc signature required for a runnable Apple Silicon app.`);
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  assert.match(output, /Signature=adhoc/i, `${label} does not have an ad-hoc signature.`);
+  assert.doesNotMatch(output, /^\s*Authority=/im, `${label} unexpectedly contains a certificate-backed signing authority.`);
   return true;
 }
 

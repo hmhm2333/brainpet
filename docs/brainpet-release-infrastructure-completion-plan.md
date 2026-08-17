@@ -73,6 +73,7 @@ workspace 路径、全局 Node、开发环境变量或人工缓存都不能成�
 - Windows 与 macOS 安装包必须明确标注 `Unsigned`，不得声称已获平台信任；
 - 用户必须看见系统安全警告并主动确认后才能继续，产品文档提供系统原生确认路径；
 - CI 使用 GitHub OIDC 的 Sigstore keyless provenance 绑定仓库、workflow、提交和 SHA-256；这证明来源与完整性，不等同于 Authenticode、Developer ID 或 notarization；
+- macOS 公开包不使用 Developer ID 或开发者注册：移除 Electron 继承的证书身份后，仅用 certificate-free ad-hoc 签名满足 Apple Silicon 运行要求；DMG 仍无签名、无公证并要求用户确认系统警告；
 - `publicReleaseReady=true` 仅表示“可诚实发布的未签名直装候选”完成全部自动门和 Stable 实机验收，不表示操作系统信任发布者。
 
 ### 2.6 分支与发布拓扑

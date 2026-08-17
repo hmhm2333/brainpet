@@ -21,7 +21,7 @@ import { validateBrainPetPerformanceReceiptSet } from "./brainpet-performance-re
 import { brainPetPerformanceReceiptWorkflow, brainPetPhysicalReceiptWorkflow, brainPetPublicReleaseFinalizeWorkflow, brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, signBrainPetReleaseEvidence, signBrainPetSubjects, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
 import { stageBrainPetPackageArtifacts, validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
 import { createBrainPetBuilderInvocation, parseBrainPetPackageArgs, prepareBrainPetBundledMarketplace, resolveBrainPetElectronDist, runBrainPetElectronBuilder, validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
-import { assertBrainPetAsarWorkspaceClosure, assertMacosCodeObjectIsUnsigned, matchesBrainPetArtifactArchitecture, resolveBrainPetResourcesRoot, validateUnsignedLinuxArtifacts } from "../apps/desktop/scripts/validate-brainpet-package.mjs";
+import { assertBrainPetAsarWorkspaceClosure, assertMacosAppUsesAdhocOnly, assertMacosCodeObjectIsUnsigned, matchesBrainPetArtifactArchitecture, resolveBrainPetResourcesRoot, validateUnsignedLinuxArtifacts } from "../apps/desktop/scripts/validate-brainpet-package.mjs";
 import { createBrainPetRuntimeTree } from "../apps/desktop/scripts/brainpet-runtime-tree.mjs";
 import { materializeLifecycleHelper, removeOwnedLifecycleDiscovery, stageLifecycleAppImageForExtraction } from "../apps/desktop/scripts/brainpet-package-lifecycle-support.mjs";
 
@@ -144,7 +144,8 @@ try {
   assert.equal(electronLoaded, true, "missing Electron distributions must be prepared before electron-builder runs");
   const signatureFixtureRoot = join(testRoot, "macos-signature-strip");
   const signatureApp = join(signatureFixtureRoot, "BrainPet.app");
-  const signatureExecutable = join(signatureApp, "Contents", "MacOS", "brainpet.node");
+  const signatureMarketplace = join(signatureApp, "Contents", "Resources", "integrations", "codex", "brainpet-marketplace");
+  const signatureExecutable = join(signatureMarketplace, "plugins", "brainpet-codex-bridge", "bin", "macos-arm64", "brainpet-hook");
   const signatureFramework = join(signatureApp, "Contents", "Frameworks", "Fixture.framework");
   const signatureFrameworkExecutable = join(signatureFramework, "Versions", "A", "Fixture.dylib");
   mkdirSync(dirname(signatureExecutable), { recursive: true });
@@ -153,17 +154,35 @@ try {
   writeFileSync(signatureFrameworkExecutable, "framework\n");
   chmodSync(signatureExecutable, 0o755);
   chmodSync(signatureFrameworkExecutable, 0o755);
+  const originalSignatureHelper = readFileSync(signatureExecutable);
+  writeFileSync(join(signatureMarketplace, "brainpet-bundle.json"), `${JSON.stringify({
+    schemaVersion: 1,
+    product: "brainpet",
+    target: "macos-arm64",
+    helper: { path: "plugins/brainpet-codex-bridge/bin/macos-arm64/brainpet-hook", bytes: originalSignatureHelper.length, sha256: createHash("sha256").update(originalSignatureHelper).digest("hex") },
+  })}\n`);
   const signedMacosCandidates = new Set([signatureApp, signatureExecutable, signatureFramework, signatureFrameworkExecutable]);
+  const adHocMacosCandidates = new Set();
   const strippedMacos = stripMacosSignatures(signatureFixtureRoot, (_command, args) => {
     const candidate = args.at(-1);
-    if (args[0] === "--display") return signedMacosCandidates.has(candidate)
-      ? { status: 0, stdout: "Signature=adhoc", stderr: "" }
-      : { status: 1, stdout: "", stderr: `${candidate}: code object is not signed at all` };
-    assert.deepEqual(args.slice(0, 1), ["--remove-signature"]);
-    return { status: signedMacosCandidates.delete(candidate) ? 0 : 1, stdout: "", stderr: "" };
+    if (args[0] === "--display") {
+      if (signedMacosCandidates.has(candidate)) return { status: 0, stdout: "Signature=Developer ID\nAuthority=Developer ID Application: Fixture", stderr: "" };
+      if (adHocMacosCandidates.has(candidate)) return { status: 0, stdout: "Signature=adhoc\nTeamIdentifier=not set", stderr: "" };
+      return { status: 1, stdout: "", stderr: `${candidate}: code object is not signed at all` };
+    }
+    if (args[0] === "--verify") return { status: adHocMacosCandidates.size === 4 ? 0 : 1, stdout: "", stderr: "" };
+    if (args[0] === "--remove-signature") return { status: signedMacosCandidates.delete(candidate) ? 0 : 1, stdout: "", stderr: "" };
+    assert.deepEqual(args.slice(0, 3), ["--force", "--sign", "-"]);
+    if (candidate === signatureExecutable) writeFileSync(candidate, Buffer.concat([readFileSync(candidate), Buffer.from("adhoc-signature\n")]));
+    adHocMacosCandidates.add(candidate);
+    return { status: 0, stdout: "", stderr: "" };
   });
   assert.equal(strippedMacos.stripped.length, 4);
   assert.equal(signedMacosCandidates.size, 0);
+  assert.equal(strippedMacos.adHocSigned.length, 4);
+  assert.equal(adHocMacosCandidates.size, 4);
+  assert.equal(strippedMacos.bundle.receipt.helper.sha256, createHash("sha256").update(readFileSync(signatureExecutable)).digest("hex"));
+  assert.notEqual(strippedMacos.bundle.receipt.helper.sha256, createHash("sha256").update(originalSignatureHelper).digest("hex"));
   const macRetryRoot = join(testRoot, "macos-package-retry");
   mkdirSync(macRetryRoot);
   writeFileSync(join(macRetryRoot, "partial.dmg"), "partial\n");
@@ -208,6 +227,10 @@ try {
   assert.equal(existsSync(ownedDiscoveryPath), true, "Lifecycle cleanup must not remove another runtime's discovery.");
   assert.equal(resolveBrainPetResourcesRoot("/fixture/app", getBrainPetReleaseTarget("linux", "x64")), join("/fixture/app", "resources"));
   assert.equal(resolveBrainPetResourcesRoot("/fixture/app", getBrainPetReleaseTarget("macos", "arm64")), join("/fixture/app", "Resources"));
+  assert.equal(assertMacosAppUsesAdhocOnly({ status: 0, stdout: "Signature=adhoc\nTeamIdentifier=not set", stderr: "" }, "fixture app"), true);
+  for (const publisherIdentity of ["Developer ID Application", "Apple Development", "3rd Party Mac Developer Application", "self-signed"]) {
+    assert.throws(() => assertMacosAppUsesAdhocOnly({ status: 0, stdout: `Signature=Developer ID\nAuthority=${publisherIdentity}`, stderr: "" }, publisherIdentity), /ad-hoc|authority/i);
+  }
   assert.equal(assertMacosCodeObjectIsUnsigned({ status: 1, stdout: "", stderr: "code object is not signed at all" }, "fixture"), true);
   for (const signedIdentity of ["adhoc", "Apple Development", "3rd Party Mac Developer Application", "self-signed"]) {
     assert.throws(() => assertMacosCodeObjectIsUnsigned({ status: 0, stdout: "", stderr: `Signature=\nAuthority=${signedIdentity}` }, signedIdentity), /contains a code signature/i);

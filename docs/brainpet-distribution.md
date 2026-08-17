@@ -103,8 +103,10 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
 - 私测 portability workflow 在 GitHub 托管的干净 runner 上，对 Windows x64 NSIS、
   macOS arm64 DMG、Linux x64 AppImage/deb 运行真实安装、默认 discovery、包内 helper（先按回执 hash 复制到隔离验收目录，确保卸载后仍能验证 fail-open）、
   Adapter 安装/升级/卸载、冷唤醒、状态保留升级和 runtime 卸载。
-- 公开 workflow 反向验证 Windows Authenticode 为 `NotSigned`；macOS app/DMG 的 `codesign`
-  必须明确返回“完全未签名”，ad-hoc、Apple Development、Mac App Store、自签等任意签名都失败；
+- 公开 workflow 反向验证 Windows Authenticode 为 `NotSigned`；macOS app 会先移除 Electron 继承的
+  Developer ID/其他证书身份，再使用无需证书和开发者注册的 ad-hoc 签名维持 Apple Silicon 可运行性，
+  并拒绝任何 `Authority=` 发布者身份；DMG 本身必须明确返回“完全未签名”，没有 notarization ticket，
+  Gatekeeper 必须拒绝自动信任并要求用户确认；
   Linux AppImage 的嵌入签名段必须为空，deb 的 `ar` 成员必须严格只有标准控制/数据成员。
   GitHub-hosted runner 使用 GitHub OIDC 与 Sigstore keyless bundle 为每份 package receipt、
   receipt 中列出的 installer、lifecycle 和 Bridge 回执建立 provenance；Bridge 回执列出每个文件、

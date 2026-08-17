@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
-const { lstatSync, readdirSync } = require("node:fs");
-const { extname, join } = require("node:path");
+const { createHash } = require("node:crypto");
+const { lstatSync, readFileSync, readdirSync, writeFileSync } = require("node:fs");
+const { basename, extname, join, relative, resolve } = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const codeBundlePattern = /\.(?:app|bundle|framework|xpc)$/i;
@@ -14,7 +15,7 @@ function collectCodeCandidates(root, candidates, isRoot = false) {
     if (isRoot || codeBundlePattern.test(root)) candidates.push(root);
     return;
   }
-  if (stat.isFile() && ((stat.mode & 0o111) !== 0 || codeFileExtensions.has(extname(root).toLowerCase()))) candidates.push(root);
+  if (stat.isFile() && ((stat.mode & 0o111) !== 0 || basename(root) === "brainpet-hook" || codeFileExtensions.has(extname(root).toLowerCase()))) candidates.push(root);
 }
 
 function runCodesign(args, commandRunner) {
@@ -27,6 +28,33 @@ function runCodesign(args, commandRunner) {
 function assertUnsigned(result, label) {
   assert.notEqual(result.status, 0, `${label} still contains a code signature after stripping.`);
   assert.match(`${result.stdout ?? ""}\n${result.stderr ?? ""}`, /code object is not signed at all/i, `${label} did not produce the exact unsigned codesign outcome after stripping.`);
+}
+
+function assertAdhocOnly(result, label) {
+  assert.equal(result.status, 0, `${label} is not ad-hoc signed.`);
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  assert.match(output, /Signature=adhoc/i, `${label} does not have the required ad-hoc signature.`);
+  assert.doesNotMatch(output, /^\s*Authority=/im, `${label} unexpectedly retains a certificate-backed signing authority.`);
+}
+
+function refreshBundledHelperReceipt(appBundle) {
+  const marketplaceRoot = join(appBundle, "Contents", "Resources", "integrations", "codex", "brainpet-marketplace");
+  const receiptPath = join(marketplaceRoot, "brainpet-bundle.json");
+  const receiptStat = lstatSync(receiptPath);
+  assert.ok(receiptStat.isFile() && !receiptStat.isSymbolicLink(), `BrainPet bundle receipt is unsafe: ${receiptPath}`);
+  const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+  assert.equal(receipt.product, "brainpet", "BrainPet bundle receipt has the wrong product identity.");
+  assert.match(receipt.helper?.path ?? "", /^plugins\/brainpet-codex-bridge\/bin\/[a-z0-9-]+\/brainpet-hook$/, "BrainPet macOS helper receipt path is invalid.");
+  const helperPath = resolve(marketplaceRoot, ...receipt.helper.path.split("/"));
+  const helperRelative = relative(marketplaceRoot, helperPath);
+  assert.ok(helperRelative && !helperRelative.startsWith(".."), "BrainPet macOS helper escaped its marketplace root.");
+  const helperStat = lstatSync(helperPath);
+  assert.ok(helperStat.isFile() && !helperStat.isSymbolicLink(), `BrainPet packaged helper is unsafe: ${helperPath}`);
+  const helperBytes = readFileSync(helperPath);
+  receipt.helper.bytes = helperBytes.length;
+  receipt.helper.sha256 = createHash("sha256").update(helperBytes).digest("hex");
+  writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+  return { receiptPath, helperPath, receipt };
 }
 
 function stripMacosSignatures(appOutDir, commandRunner = spawnSync) {
@@ -51,14 +79,29 @@ function stripMacosSignatures(appOutDir, commandRunner = spawnSync) {
     stripped.push(candidate);
   }
   for (const candidate of stripped) assertUnsigned(runCodesign(["--display", "--verbose=4", candidate], commandRunner), candidate);
-  assertUnsigned(runCodesign(["--display", "--verbose=4", appBundle], commandRunner), "BrainPet app bundle");
-  return { appBundle, stripped };
+
+  const adHocSigned = [];
+  for (const candidate of stripped.filter((candidate) => candidate !== appBundle)) {
+    const signing = runCodesign(["--force", "--sign", "-", candidate], commandRunner);
+    assert.equal(signing.status, 0, signing.stderr || `Unable to apply an ad-hoc signature to ${candidate}.`);
+    assertAdhocOnly(runCodesign(["--display", "--verbose=4", candidate], commandRunner), candidate);
+    adHocSigned.push(candidate);
+  }
+  const bundle = refreshBundledHelperReceipt(appBundle);
+  const appSigning = runCodesign(["--force", "--sign", "-", appBundle], commandRunner);
+  assert.equal(appSigning.status, 0, appSigning.stderr || "Unable to apply an ad-hoc signature to the BrainPet app bundle.");
+  assertAdhocOnly(runCodesign(["--display", "--verbose=4", appBundle], commandRunner), "BrainPet app bundle");
+  const verification = runCodesign(["--verify", "--deep", "--strict", appBundle], commandRunner);
+  assert.equal(verification.status, 0, verification.stderr || "BrainPet ad-hoc app signature closure is invalid.");
+  assert.equal(createHash("sha256").update(readFileSync(bundle.helperPath)).digest("hex"), bundle.receipt.helper.sha256, "Ad-hoc app signing changed the helper after its bundle receipt was refreshed.");
+  adHocSigned.push(appBundle);
+  return { appBundle, stripped, adHocSigned, bundle };
 }
 
 async function afterPack(context) {
   if (context.electronPlatformName !== "darwin") return;
   const result = stripMacosSignatures(context.appOutDir);
-  console.log(`BrainPet stripped ${result.stripped.length} inherited macOS code signatures before artifact creation.`);
+  console.log(`BrainPet replaced ${result.stripped.length} inherited macOS signatures with certificate-free ad-hoc signatures before artifact creation.`);
 }
 
 module.exports = afterPack;
