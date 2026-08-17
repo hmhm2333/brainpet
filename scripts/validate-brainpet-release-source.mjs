@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseDocument } from "yaml";
 
 import { brainPetDistributionContract, brainPetReleaseTargetIds } from "./brainpet-release-contract.mjs";
 import { assertBrainPetProviderMatrixCurrent } from "./generate-brainpet-provider-matrix.mjs";
@@ -153,12 +154,32 @@ for (const [name, fixture] of [
   ["job-level", "jobs:\n  delegated:\n    uses: owner/repository/.github/workflows/reusable.yml@main\n"],
   ["quoted-key", "jobs:\n  delegated:\n    \"uses\": owner/repository/.github/workflows/reusable.yml@main\n"],
   ["flow-mapping", "steps:\n  - { uses: owner/action@main }\n"],
+  ["tagged-key", "steps:\n  - !!map\n    !!str uses: owner/action@main\n"],
+  ["anchored-key", "steps:\n  - &step\n    &uses-key uses: owner/action@main\n"],
 ]) assert.throws(() => assertExactWorkflowPins(`${name} regression fixture`, fixture), /exact 40-character commit/, `${name} workflow syntax must not bypass exact action pinning.`);
 
 function assertExactWorkflowPins(name, source) {
-  const actionLines = source.split(/\r?\n/).filter((line) => /(?:^|[{,])\s*(?:-\s*)?(?:["']uses["']|uses)\s*:/.test(line) || /^\s*\?\s*(?:["']uses["']|uses)\s*$/.test(line));
-  assert.ok(actionLines.length > 0, `BrainPet ${name} workflow must use at least one pinned action.`);
-  for (const line of actionLines) assert.match(line, /^\s*(?:-\s*)?uses:\s+[^@\s]+@[a-f0-9]{40}(?:\s+#.*)?$/, `BrainPet ${name} workflow action must be pinned to an exact 40-character commit: ${line.trim()}`);
+  const document = parseDocument(source, { uniqueKeys: true, prettyErrors: false });
+  assert.equal(document.errors.length, 0, `BrainPet ${name} workflow YAML is invalid: ${document.errors[0]?.message ?? "unknown parse error"}`);
+  assert.equal(document.warnings.length, 0, `BrainPet ${name} workflow YAML has an unsafe warning: ${document.warnings[0]?.message ?? "unknown warning"}`);
+  const actionReferences = [];
+  collectWorkflowUses(document.toJS({ mapAsMap: true, maxAliasCount: 100 }), actionReferences);
+  assert.ok(actionReferences.length > 0, `BrainPet ${name} workflow must use at least one pinned action.`);
+  for (const reference of actionReferences) {
+    assert.equal(typeof reference, "string", `BrainPet ${name} workflow action reference must be a scalar string.`);
+    assert.match(reference, /^[^@\s]+@[a-f0-9]{40}$/, `BrainPet ${name} workflow action must be pinned to an exact 40-character commit: ${String(reference)}`);
+  }
+}
+
+function collectWorkflowUses(value, references) {
+  if (value instanceof Map) {
+    for (const [key, child] of value) {
+      if (key === "uses") references.push(child);
+      collectWorkflowUses(child, references);
+    }
+  } else if (Array.isArray(value)) {
+    for (const child of value) collectWorkflowUses(child, references);
+  }
 }
 for (const [name, source] of [["physical intake", physicalIntakeWorkflow], ["performance intake", performanceIntakeWorkflow], ["public finalize", publicFinalizeWorkflow]]) {
   assert.doesNotMatch(source, /^\s*run:.*\$\{\{\s*inputs\./m, `BrainPet ${name} must not interpolate workflow_dispatch inputs into shell source.`);
