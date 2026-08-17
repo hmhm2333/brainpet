@@ -149,13 +149,17 @@ try {
   const signatureFramework = join(signatureApp, "Contents", "Frameworks", "Fixture.framework");
   const signatureFrameworkExecutable = join(signatureFramework, "Versions", "A", "Fixture.dylib");
   const unsignedNestedApp = join(signatureApp, "Contents", "Frameworks", "BrainPet Helper (Renderer).app");
+  const unsignedCrashpad = join(signatureFramework, "Versions", "A", "Helpers", "chrome_crashpad_handler");
   mkdirSync(dirname(signatureExecutable), { recursive: true });
   mkdirSync(dirname(signatureFrameworkExecutable), { recursive: true });
   mkdirSync(unsignedNestedApp, { recursive: true });
+  mkdirSync(dirname(unsignedCrashpad), { recursive: true });
   writeFileSync(signatureExecutable, "brainpet\n");
   writeFileSync(signatureFrameworkExecutable, "framework\n");
+  writeFileSync(unsignedCrashpad, Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0x00, 0x00, 0x00, 0x00]));
   chmodSync(signatureExecutable, 0o755);
   chmodSync(signatureFrameworkExecutable, 0o755);
+  chmodSync(unsignedCrashpad, 0o755);
   const originalSignatureHelper = readFileSync(signatureExecutable);
   writeFileSync(join(signatureMarketplace, "brainpet-bundle.json"), `${JSON.stringify({
     schemaVersion: 1,
@@ -172,7 +176,10 @@ try {
       if (adHocMacosCandidates.has(candidate)) return { status: 0, stdout: "Signature=adhoc\nTeamIdentifier=not set", stderr: "" };
       return { status: 1, stdout: "", stderr: `${candidate}: code object is not signed at all` };
     }
-    if (args[0] === "--verify") return { status: adHocMacosCandidates.size === 5 ? 0 : 1, stdout: "", stderr: "" };
+    if (args[0] === "--verify") {
+      const valid = adHocMacosCandidates.size === 6;
+      return { status: valid ? 0 : 1, stdout: "", stderr: valid ? "" : `unexpected ad-hoc candidates: ${JSON.stringify([...adHocMacosCandidates])}` };
+    }
     if (args[0] === "--remove-signature") return { status: signedMacosCandidates.delete(candidate) ? 0 : 1, stdout: "", stderr: "" };
     assert.deepEqual(args.slice(0, 3), ["--force", "--sign", "-"]);
     if (candidate === signatureExecutable) writeFileSync(candidate, Buffer.concat([readFileSync(candidate), Buffer.from("adhoc-signature\n")]));
@@ -181,9 +188,10 @@ try {
   });
   assert.equal(strippedMacos.stripped.length, 4);
   assert.equal(signedMacosCandidates.size, 0);
-  assert.equal(strippedMacos.adHocSigned.length, 5);
-  assert.equal(adHocMacosCandidates.size, 5);
+  assert.equal(strippedMacos.adHocSigned.length, 6);
+  assert.equal(adHocMacosCandidates.size, 6);
   assert.equal(adHocMacosCandidates.has(unsignedNestedApp), true, "An initially unsigned nested code bundle must still join the ad-hoc signature closure.");
+  assert.equal(adHocMacosCandidates.has(unsignedCrashpad), true, "An initially unsigned extensionless Mach-O executable must still join the ad-hoc signature closure.");
   assert.equal(strippedMacos.bundle.receipt.helper.sha256, createHash("sha256").update(readFileSync(signatureExecutable)).digest("hex"));
   assert.notEqual(strippedMacos.bundle.receipt.helper.sha256, createHash("sha256").update(originalSignatureHelper).digest("hex"));
   const macRetryRoot = join(testRoot, "macos-package-retry");

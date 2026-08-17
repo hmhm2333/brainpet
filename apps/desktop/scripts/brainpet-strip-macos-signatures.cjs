@@ -1,11 +1,24 @@
 const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
-const { lstatSync, readFileSync, readdirSync, writeFileSync } = require("node:fs");
+const { closeSync, lstatSync, openSync, readFileSync, readSync, readdirSync, writeFileSync } = require("node:fs");
 const { basename, extname, join, relative, resolve } = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const codeBundlePattern = /\.(?:app|bundle|framework|xpc)$/i;
 const codeFileExtensions = new Set([".dylib", ".node", ".so"]);
+const machOMagic = new Set(["feedface", "cefaedfe", "feedfacf", "cffaedfe", "cafebabe", "bebafeca", "cafebabf", "bfbafeca"]);
+
+function isMachOFile(path) {
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 4) return false;
+  const descriptor = openSync(path, "r");
+  const magic = Buffer.allocUnsafe(4);
+  try {
+    return readSync(descriptor, magic, 0, magic.length, 0) === magic.length && machOMagic.has(magic.toString("hex"));
+  } finally {
+    closeSync(descriptor);
+  }
+}
 
 function collectCodeCandidates(root, candidates, isRoot = false) {
   const stat = lstatSync(root);
@@ -15,7 +28,7 @@ function collectCodeCandidates(root, candidates, isRoot = false) {
     if (isRoot || codeBundlePattern.test(root)) candidates.push(root);
     return;
   }
-  if (stat.isFile() && ((stat.mode & 0o111) !== 0 || basename(root) === "brainpet-hook" || codeFileExtensions.has(extname(root).toLowerCase()))) candidates.push(root);
+  if (stat.isFile() && ((stat.mode & 0o111) !== 0 || basename(root) === "brainpet-hook" || codeFileExtensions.has(extname(root).toLowerCase()) || isMachOFile(root))) candidates.push(root);
 }
 
 function runCodesign(args, commandRunner) {
@@ -84,6 +97,7 @@ function stripMacosSignatures(appOutDir, commandRunner = spawnSync) {
     || codeBundlePattern.test(candidate)
     || codeFileExtensions.has(extname(candidate).toLowerCase())
     || basename(candidate) === "brainpet-hook"
+    || isMachOFile(candidate)
     || stripped.includes(candidate));
   const adHocSigned = [];
   for (const candidate of signableCandidates.filter((candidate) => candidate !== appBundle)) {

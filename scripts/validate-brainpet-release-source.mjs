@@ -42,6 +42,7 @@ assert.match(publicConfig, /afterPack:\s+scripts\/brainpet-strip-macos-signature
 assert.match(macosSignatureHook, /--remove-signature/);
 assert.match(macosSignatureHook, /\["--force", "--sign", "-", candidate\]/, "macOS packaging must replace inherited identities with certificate-free ad-hoc signatures.");
 assert.match(macosSignatureHook, /Signature=adhoc/);
+assert.match(macosSignatureHook, /machOMagic[\s\S]*isMachOFile[\s\S]*isMachOFile\(candidate\)/, "macOS packaging must include initially unsigned extensionless Mach-O executables in the ad-hoc closure.");
 assert.match(macosSignatureHook, /\["--verify", "--deep", "--strict", appBundle\]/, "macOS packaging must validate the complete ad-hoc app signature closure.");
 assert.match(macosSignatureHook, /refreshBundledHelperReceipt/, "macOS packaging must rebind the bundled helper receipt after ad-hoc signing changes its bytes.");
 assert.match(macosSignatureHook, /code object is not signed at all/);
