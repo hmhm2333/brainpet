@@ -377,6 +377,7 @@ intake 必须经过 protected Environment 的非触发者 reviewer，审批评�
 
 - 真实 Codex/Claude/OpenCode 任务连续运行；
 - 24 小时 idle、30 分钟游戏 soak、崩溃恢复、睡眠唤醒、多显示器和 DPI；
+- Windows 正式 runner 以 suspended 创建、精确 lease 绑定和禁止 breakaway 的 Job Object 承载每个命令；只有完整 Job 进程树归零才可发布 completion 或释放 lease；
 - 安装说明、隐私政策、支持矩阵、诊断导出和回退说明最终校验；
 - 修复所有 P0/P1，P2 必须有明确延期 ADR。
 

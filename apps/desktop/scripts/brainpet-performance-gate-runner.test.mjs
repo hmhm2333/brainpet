@@ -4,14 +4,14 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract } from "../../../scripts/brainpet-release-contract.mjs";
 import { sha256Bytes, sha256File } from "./brainpet-performance-receipt.mjs";
-import { createBrainPetPerformanceGatePaths, createCleanPerformanceEnvironment, queryWindowsProcessIdentity, readBrainPetPerformanceGateStatus, recoverOrRejectPerformanceLease, writePerformanceCompletionOrRollback } from "./brainpet-performance-gate-runner.mjs";
+import { createBrainPetPerformanceGatePaths, createCleanPerformanceEnvironment, finalizePerformancePublication, queryWindowsProcessIdentity, readBrainPetPerformanceGateStatus, recoverOrRejectPerformanceLease } from "./brainpet-performance-gate-runner.mjs";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(appDir, "..", "..");
@@ -70,6 +70,7 @@ test("formal runner environment drops inherited BrainPet/OpenPets bypass control
     const clean = createCleanPerformanceEnvironment({ BRAINPET_ENFORCE_RESOURCE_BUDGET: "1" });
     assert.equal(clean.BRAINPET_ENFORCE_RESOURCE_BUDGET, "1");
     assert.equal(clean.OPENPETS_BRAINPET_EXERCISER, undefined);
+    assert.equal(new Set(Object.keys(clean).map((key) => key.toLowerCase())).size, Object.keys(clean).length, "Windows environment keys must be unique case-insensitively.");
   } finally {
     if (originalBrainPet === undefined) delete process.env.BRAINPET_ENFORCE_RESOURCE_BUDGET; else process.env.BRAINPET_ENFORCE_RESOURCE_BUDGET = originalBrainPet;
     if (originalOpenPets === undefined) delete process.env.OPENPETS_BRAINPET_EXERCISER; else process.env.OPENPETS_BRAINPET_EXERCISER = originalOpenPets;
@@ -151,6 +152,34 @@ test("recovery kills an orphan descendant when the leased wrapper dies before re
   }
 });
 
+test("Windows Job supervisor exits promptly after a successful complete process tree", { skip: process.platform !== "win32" }, async () => {
+  const supervised = await runWindowsJobSupervisorFixture(process.execPath, ["-e", "process.exit(0)"]);
+  assert.equal(supervised.exitCode, 0, JSON.stringify(supervised));
+  assert.equal(supervised.result.exitCode, 0);
+  assert.equal(supervised.result.jobQuiescent, true);
+  assert.equal(supervised.result.remainingProcesses, 0);
+  assert.equal(queryWindowsProcessIdentity(supervised.ready.pid), null);
+});
+
+test("Windows Job supervisor rejects and terminates a successful root that leaves a detached descendant", { skip: process.platform !== "win32" }, async () => {
+  const descendantPidPath = join(performanceRoot, `detached-${randomUUID()}.pid`);
+  const token = `brainpet-job-leak-${randomUUID()}`;
+  const rootCode = `const {spawn}=require("node:child_process");const {writeFileSync}=require("node:fs");const child=spawn(process.execPath,["-e","setInterval(()=>{},1000)",${JSON.stringify(token)}],{detached:true,stdio:"ignore"});writeFileSync(${JSON.stringify(descendantPidPath)},String(child.pid));child.unref();`;
+  const supervised = await runWindowsJobSupervisorFixture(process.execPath, ["-e", rootCode, token]);
+  const descendantPid = Number.parseInt(readFileSync(descendantPidPath, "utf8"), 10);
+  assert.notEqual(supervised.exitCode, 0);
+  assert.equal(supervised.result.exitCode, 0, "The fixture root itself must succeed before leaving its background descendant.");
+  assert.equal(supervised.result.jobQuiescent, false);
+  assert.ok(supervised.result.remainingProcesses > 0);
+  assert.equal(queryWindowsProcessIdentity(descendantPid), null, "The Job must terminate the detached descendant before the supervisor exits.");
+});
+
+test("terminating the Windows Job supervisor kills its leased command", { skip: process.platform !== "win32" }, async () => {
+  const supervised = await runWindowsJobSupervisorFixture(process.execPath, ["-e", "setInterval(()=>{},1000)"], { interruptAfterResume: true });
+  assert.notEqual(supervised.exitCode, 0);
+  assert.equal(queryWindowsProcessIdentity(supervised.ready.pid), null, "KILL_ON_JOB_CLOSE must terminate the leased command with its supervisor.");
+});
+
 test("a corrupt performance lease fails closed and is not discarded", () => {
   mkdirSync(performanceRoot, { recursive: true });
   const leasePath = join(performanceRoot, "brainpet-performance-gate.lease.json");
@@ -168,13 +197,33 @@ test("completion publication failure rolls back the newly published success rece
   const receiptPath = join(performanceRoot, `published-${randomUUID()}.receipt.json`);
   writeFileSync(completionPath, "occupied\n");
   writeFileSync(receiptPath, "published\n");
+  let releaseCount = 0;
   await assert.rejects(
-    writePerformanceCompletionOrRollback({ completionPath, completion: { succeeded: true }, writtenReceiptPath: receiptPath }),
+    finalizePerformancePublication({ completionPath, completion: { succeeded: true }, writtenReceiptPath: receiptPath, releaseLease: () => { releaseCount += 1; } }),
     /EEXIST|exists/i,
   );
   assert.equal(readFileSync(completionPath, "utf8"), "occupied\n");
   assert.equal(existsSyncForTest(receiptPath), false);
+  assert.equal(releaseCount, 1, "A successfully rolled-back publication failure must release its recovery lease.");
   rmSync(completionPath, { force: true });
+});
+
+test("receipt rollback failure preserves the recovery lease and both errors", async () => {
+  const completionError = new Error("fixture completion publication failed");
+  const rollbackError = new Error("fixture receipt rollback failed");
+  let releaseCount = 0;
+  await assert.rejects(
+    finalizePerformancePublication({
+      completionPath: "unused-completion.json",
+      completion: { succeeded: true },
+      writtenReceiptPath: "occupied-receipt.json",
+      writeCompletion: async () => { throw completionError; },
+      removeReceipt: async () => { throw rollbackError; },
+      releaseLease: () => { releaseCount += 1; },
+    }),
+    (error) => error instanceof AggregateError && error.errors.includes(completionError) && error.errors.includes(rollbackError) && /preserving the recovery lease/i.test(error.message),
+  );
+  assert.equal(releaseCount, 0, "A failed receipt rollback must keep the recovery lease fail-closed.");
 });
 
 function createRunFixture() {
@@ -207,6 +256,87 @@ function createRunFixture() {
   }, null, 2)}\n`);
   createdPaths.push(manifestPath, logPath);
   return { commit, runId, manifestPath, completionPath, resultPath, logPath, creationDate };
+}
+
+async function runWindowsJobSupervisorFixture(command, args, { interruptAfterResume = false } = {}) {
+  mkdirSync(runsRoot, { recursive: true });
+  const controlId = randomUUID();
+  const runId = `active-30m-${"9".repeat(40)}-1786900000000-${randomUUID()}`;
+  const launchPermitPath = join(runsRoot, `.${controlId}.launch.json`);
+  const readyPath = join(runsRoot, `.${controlId}.ready.json`);
+  const resumePermitPath = join(runsRoot, `.${controlId}.resume.json`);
+  const resultPath = join(runsRoot, `.${controlId}.result.json`);
+  const supervisorScript = join(appDir, "scripts", "brainpet-windows-job-supervisor.ps1");
+  const supervisor = spawn("powershell.exe", [
+    "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", supervisorScript,
+    "-RunId", runId,
+    "-LaunchPermitPath", launchPermitPath,
+    "-ReadyPath", readyPath,
+    "-ResumePermitPath", resumePermitPath,
+    "-ResultPath", resultPath,
+  ], {
+    cwd: repoRoot,
+    env: {
+      ...createCleanPerformanceEnvironment(),
+      BRAINPET_WRAPPED_CHILD_SPEC: JSON.stringify({ command, args, cwd: repoRoot, environmentEntries: Object.entries(createCleanPerformanceEnvironment()).map(([name, value]) => `${name}=${value}`) }),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  let stderr = "";
+  supervisor.stderr.setEncoding("utf8");
+  supervisor.stderr.on("data", (chunk) => { stderr += chunk; });
+  const completion = once(supervisor, "exit");
+  writeFileSync(launchPermitPath, `${JSON.stringify({ runId })}\n`);
+  await Promise.race([
+    waitForTestPath(readyPath, 30_000),
+    completion.then(([exitCode, signal]) => { throw new Error(`Windows Job supervisor exited before readiness (exit=${exitCode}, signal=${signal}): ${stderr}`); }),
+  ]);
+  const ready = JSON.parse(readFileSync(readyPath, "utf8"));
+  writeFileSync(resumePermitPath, `${JSON.stringify({ runId, pid: ready.pid })}\n`);
+  if (interruptAfterResume) {
+    await waitForTestProcess(ready.pid, 5_000);
+    supervisor.kill();
+  }
+  const [exitCode, signal] = await new Promise((resolvePromise, reject) => {
+    const timer = setTimeout(() => reject(new Error("Windows Job supervisor fixture timed out.")), 30_000);
+    completion.then((value) => { clearTimeout(timer); resolvePromise(value); }, (error) => { clearTimeout(timer); reject(error); });
+  });
+  if (interruptAfterResume) {
+    assert.ok(signal || exitCode !== 0, "The interrupted supervisor unexpectedly reported success.");
+    await waitForTestProcessExit(ready.pid, 10_000);
+    return { exitCode, ready, result: null };
+  }
+  assert.equal(signal, null, stderr);
+  assert.equal(existsSync(resultPath), true, stderr || "Windows Job supervisor did not publish a result.");
+  return { exitCode, ready, result: JSON.parse(readFileSync(resultPath, "utf8")) };
+}
+
+async function waitForTestPath(path, timeoutMs) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (existsSync(path)) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+  }
+  throw new Error(`Timed out waiting for fixture path: ${path}`);
+}
+
+async function waitForTestProcess(pid, timeoutMs) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (queryWindowsProcessIdentity(pid)) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+  }
+  throw new Error(`Timed out waiting for fixture process ${pid}.`);
+}
+
+async function waitForTestProcessExit(pid, timeoutMs) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (!queryWindowsProcessIdentity(pid)) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+  }
+  throw new Error(`Timed out waiting for fixture process ${pid} to exit.`);
 }
 
 function createCompletion(fixture, succeeded, resultSha256 = null) {

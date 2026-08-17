@@ -12,7 +12,9 @@ import { brainPetDistributionContract } from "../../../scripts/brainpet-release-
 import { validateBrainPetFormalGateResult } from "./brainpet-performance-contract.mjs";
 import {
   assertBrainPetPerformanceReceiptAvailable,
+  BrainPetPerformanceReceiptRollbackError,
   revalidateBrainPetPerformanceCandidate,
+  removePublishedBrainPetPerformanceReceipt,
   resolveBrainPetPerformanceReceiptPath,
   resolveTrackedGitIdentity,
   sha256Bytes,
@@ -196,9 +198,12 @@ if ($null -eq $process) { exit 3 }
 
 export function createCleanPerformanceEnvironment(overrides = {}) {
   const allowed = ["PATH", "Path", "PATHEXT", "SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "PNPM_HOME"];
-  const environment = {};
-  for (const key of allowed) if (typeof process.env[key] === "string") environment[key] = process.env[key];
-  return { ...environment, ...overrides };
+  const environment = new Map();
+  for (const key of allowed) {
+    if (!environment.has(key.toLowerCase()) && typeof process.env[key] === "string") environment.set(key.toLowerCase(), [key, process.env[key]]);
+  }
+  for (const [key, value] of Object.entries(overrides)) environment.set(key.toLowerCase(), [key, value]);
+  return Object.fromEntries(environment.values());
 }
 
 export function recoverOrRejectPerformanceLease(queryProcessIdentity = queryWindowsProcessIdentity, terminateProcessTree = terminateWindowsProcessTree, paths = defaultPerformancePaths) {
@@ -279,7 +284,20 @@ async function runWorker(options) {
     writtenReceiptPath = written.path;
     completion = { schemaVersion: 2, kind: "brainpet-performance-gate-completion", ...completionCore, completionCoreDigest, receiptSha256: written.sha256 };
   } catch (caught) {
-    if (writtenReceiptPath) await rm(writtenReceiptPath, { force: true }).catch(() => {});
+    if (caught instanceof BrainPetPerformanceReceiptRollbackError) {
+      await rm(stagingRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
+      throw caught;
+    }
+    if (writtenReceiptPath) {
+      try {
+        await removePublishedBrainPetPerformanceReceipt(writtenReceiptPath);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [caught, cleanupError],
+          "BrainPet performance execution failed and its published receipt could not be rolled back; preserving the recovery lease.",
+        );
+      }
+    }
     await rm(stagingRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
     await flushWritable(process.stdout).catch(() => {});
     const executionLogBytes = existsSync(logPath) ? statSync(logPath).size : 0;
@@ -288,22 +306,52 @@ async function runWorker(options) {
     const completionCore = { runId: options.runId, profile: options.profile, sourceCommit: manifest.source.commit, succeeded: false, exitCode: 1, completedAt: new Date().toISOString(), error: boundedError(caught), manifestSha256, resultSha256, executionLogSha256, executionLogBytes };
     completion = { schemaVersion: 2, kind: "brainpet-performance-gate-completion", ...completionCore, completionCoreDigest: sha256Bytes(Buffer.from(JSON.stringify(completionCore))), receiptSha256: null };
   }
-  try {
-    await writePerformanceCompletionOrRollback({ completionPath, completion, writtenReceiptPath });
-  } finally {
-    releaseOwnedLease(options.runId);
-  }
+  await finalizePerformancePublication({
+    completionPath,
+    completion,
+    writtenReceiptPath,
+    releaseLease: () => releaseOwnedLease(options.runId),
+  });
   process.stdout.write(`BRAINPET_GATE_COMPLETION ${JSON.stringify(completion)}\n`);
   process.exitCode = completion.exitCode;
 }
 
-export async function writePerformanceCompletionOrRollback({ completionPath, completion, writtenReceiptPath }) {
+export async function finalizePerformancePublication({
+  completionPath,
+  completion,
+  writtenReceiptPath,
+  writeCompletion = writeJsonExclusiveAtomic,
+  removeReceipt = removePublishedBrainPetPerformanceReceipt,
+  releaseLease = () => {},
+}) {
+  let publicationError = null;
   try {
-    await writeJsonExclusiveAtomic(completionPath, completion);
+    await writeCompletion(completionPath, completion);
   } catch (error) {
-    if (writtenReceiptPath) await rm(writtenReceiptPath, { force: true }).catch(() => {});
-    throw error;
+    publicationError = error;
+    if (writtenReceiptPath) {
+      try {
+        await removeReceipt(writtenReceiptPath);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "BrainPet completion publication failed and its success receipt could not be rolled back; preserving the recovery lease.",
+        );
+      }
+    }
   }
+  try {
+    await releaseLease();
+  } catch (releaseError) {
+    if (publicationError) {
+      throw new AggregateError(
+        [publicationError, releaseError],
+        "BrainPet completion publication failed and its recovery lease could not be released.",
+      );
+    }
+    throw releaseError;
+  }
+  if (publicationError) throw publicationError;
 }
 
 function validateManifest(manifest, manifestPath, expectedLeasePath = leasePath, expectedRunsRoot = runsRoot) {
@@ -518,32 +566,41 @@ function rmSyncExact(path) {
 function runPnpmDesktopScript(scriptName, environment, runId, leaseOwner) { return runChild("cmd.exe", ["/d", "/s", "/c", "pnpm.cmd", "--filter", "@open-pets/desktop", scriptName], repoRoot, environment, runId, leaseOwner); }
 function runNodeScript(path, environment, runId, leaseOwner) { return runChild(process.execPath, [path], appDir, environment, runId, leaseOwner); }
 async function runChild(command, args, cwd, environment, runId, leaseOwner) {
-  const descendantExpectation = createDescendantExpectation(command, args);
-  const wrapper = spawn(process.execPath, [scriptPath, "child", "--run-id", runId], {
+  const supervisorScript = join(scriptDir, "brainpet-windows-job-supervisor.ps1");
+  const controlId = `${runId}.${randomUUID()}`;
+  const launchPermitPath = join(runsRoot, `.${controlId}.launch.json`);
+  const readyPath = join(runsRoot, `.${controlId}.ready.json`);
+  const resumePermitPath = join(runsRoot, `.${controlId}.resume.json`);
+  const resultPath = join(runsRoot, `.${controlId}.job-result.json`);
+  const supervisor = spawn("powershell.exe", [
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    supervisorScript,
+    "-RunId",
+    runId,
+    "-LaunchPermitPath",
+    launchPermitPath,
+    "-ReadyPath",
+    readyPath,
+    "-ResumePermitPath",
+    resumePermitPath,
+    "-ResultPath",
+    resultPath,
+  ], {
     cwd: repoRoot,
-    env: { ...createCleanPerformanceEnvironment(), BRAINPET_WRAPPED_CHILD_SPEC: JSON.stringify({ command, args, cwd, environment }) },
-    stdio: ["ignore", "inherit", "inherit", "ipc"],
+    env: { ...createCleanPerformanceEnvironment(), BRAINPET_WRAPPED_CHILD_SPEC: JSON.stringify({ command, args, cwd, environmentEntries: Object.entries(environment).map(([name, value]) => `${name}=${value}`) }) },
+    stdio: ["ignore", "inherit", "inherit"],
     windowsHide: true,
   });
-  assert.ok(Number.isInteger(wrapper.pid) && wrapper.pid > 0, "BrainPet leased child wrapper lacks a PID.");
-  let rejectStarted;
-  let resolveCompletedAttestation;
-  const completedAttestation = new Promise((resolvePromise) => { resolveCompletedAttestation = resolvePromise; });
-  const started = new Promise((resolvePromise, reject) => {
-    rejectStarted = reject;
-    wrapper.on("message", (message) => {
-      if (message?.command === "child-started") resolvePromise(message.identity);
-      else if (message?.command === "child-completed") {
-        resolveCompletedAttestation(message.exitCode);
-      }
-    });
-  });
+  assert.ok(Number.isInteger(supervisor.pid) && supervisor.pid > 0, "BrainPet Windows Job supervisor lacks a PID.");
   const completion = new Promise((resolvePromise, reject) => {
-    wrapper.once("error", (error) => { rejectStarted(error); reject(error); });
-    wrapper.once("exit", (code, signal) => {
-      const error = signal ? new Error(`BrainPet child wrapper was terminated by ${signal}.`) : null;
-      if (error) { rejectStarted(error); reject(error); }
-      else { rejectStarted(new Error("BrainPet child wrapper exited before reporting its child identity.")); resolvePromise(code ?? 1); }
+    supervisor.once("error", reject);
+    supervisor.once("exit", (code, signal) => {
+      if (signal) reject(new Error(`BrainPet Windows Job supervisor was terminated by ${signal}.`));
+      else resolvePromise(code ?? 1);
     });
   });
   let leaseUpdated = false;
@@ -551,29 +608,46 @@ async function runChild(command, args, cwd, environment, runId, leaseOwner) {
   let primaryError = null;
   let activeChild = null;
   try {
-    const identity = await waitForWindowsProcessIdentity(wrapper.pid, 5_000);
-    const wrapperIdentity = { pid: wrapper.pid, creationDate: identity.creationDate, executable: process.execPath, commandNeedles: [basename(scriptPath), "child", runId], descendantExpectation };
-    activeChild = { wrapper: wrapperIdentity, process: null };
-    await updateOwnedLease(runId, leaseOwner, { activeChild, phase: "child-wrapper-ready" });
+    const identity = await waitForWindowsProcessIdentity(supervisor.pid, 5_000);
+    const supervisorIdentity = {
+      pid: supervisor.pid,
+      creationDate: identity.creationDate,
+      executable: identity.executablePath,
+      commandNeedles: [basename(supervisorScript), runId],
+    };
+    activeChild = { wrapper: supervisorIdentity, process: null };
+    await updateOwnedLease(runId, leaseOwner, { activeChild, phase: "child-supervisor-ready" });
     leaseUpdated = true;
-    await sendWrapperMessage(wrapper, { command: "start" });
-    const childIdentity = await started;
-    assert.ok(childIdentity && Number.isInteger(childIdentity.pid) && childIdentity.pid > 0, "BrainPet child wrapper reported an invalid process identity.");
-    assert.deepEqual(childIdentity.commandNeedles, descendantExpectation.commandNeedles, "BrainPet child wrapper changed its command binding.");
-    assert.equal(matchesProcessIdentity(queryWindowsProcessIdentity(childIdentity.pid), childIdentity), true, "BrainPet child process identity did not match the leased command.");
-    activeChild = { wrapper: wrapperIdentity, process: childIdentity };
-    await updateOwnedLease(runId, leaseOwner, { activeChild, phase: "child-running" });
-    const exitCode = await completion;
-    const reportedExitCode = await Promise.race([
-      completedAttestation,
-      delay(1_000).then(() => { throw new Error("BrainPet child wrapper exited without a child-completed attestation."); }),
+    await writeJsonExclusiveAtomic(launchPermitPath, { schemaVersion: 1, kind: "brainpet-windows-job-launch-permit", runId });
+    await Promise.race([
+      waitForPath(readyPath, 30_000),
+      completion.then((exitCode) => { throw new Error(`BrainPet Windows Job supervisor exited with code ${exitCode} before publishing its suspended child identity.`); }),
     ]);
-    assert.equal(reportedExitCode, exitCode, "BrainPet child wrapper exit code differs from its completion attestation.");
+    const ready = readJsonRegularFile(readyPath, 16 * 1024, "BrainPet Windows Job ready record");
+    assert.deepEqual({ schemaVersion: ready.schemaVersion, kind: ready.kind, runId: ready.runId }, { schemaVersion: 1, kind: "brainpet-windows-job-ready", runId });
+    assert.ok(Number.isInteger(ready.pid) && ready.pid > 0, "BrainPet Windows Job ready record lacks its suspended root PID.");
+    const childIdentitySnapshot = await waitForWindowsProcessIdentity(ready.pid, 5_000);
+    const descendantExpectation = createDescendantExpectation(command, args);
+    const childIdentity = { pid: ready.pid, creationDate: childIdentitySnapshot.creationDate, executable: childIdentitySnapshot.executablePath, commandNeedles: descendantExpectation.commandNeedles };
+    assert.equal(matchesProcessIdentity(queryWindowsProcessIdentity(childIdentity.pid), childIdentity), true, "BrainPet child process identity did not match the leased command.");
+    activeChild = { wrapper: supervisorIdentity, process: childIdentity };
+    await updateOwnedLease(runId, leaseOwner, { activeChild, phase: "child-running" });
+    await writeJsonExclusiveAtomic(resumePermitPath, { schemaVersion: 1, kind: "brainpet-windows-job-resume-permit", runId, pid: ready.pid });
+    await completion;
+    await waitForPath(resultPath, 5_000);
+    const result = readJsonRegularFile(resultPath, 16 * 1024, "BrainPet Windows Job result");
+    assert.deepEqual(
+      { schemaVersion: result.schemaVersion, kind: result.kind, runId: result.runId, pid: result.pid },
+      { schemaVersion: 1, kind: "brainpet-windows-job-result", runId, pid: ready.pid },
+    );
+    assert.ok(Number.isInteger(result.exitCode) && result.exitCode >= 0, "BrainPet Windows Job result has an invalid exit code.");
+    assert.equal(result.remainingProcesses, 0, "BrainPet wrapped command left background processes in its Windows Job.");
+    assert.equal(result.jobQuiescent, true, "BrainPet Windows Job did not attest a quiescent complete process tree.");
     safeToClear = true;
-    return exitCode;
+    return result.exitCode;
   } catch (error) {
     primaryError = error;
-    try { wrapper.kill(); } catch {}
+    try { supervisor.kill(); } catch {}
     await completion.catch(() => {});
     try {
       if (activeChild) terminateWindowsProcessTree(activeChild);
@@ -591,46 +665,13 @@ async function runChild(command, args, cwd, environment, runId, leaseOwner) {
         throw error;
       }
     }
+    await Promise.all([launchPermitPath, readyPath, resumePermitPath, resultPath].map((path) => rm(path, { force: true }).catch(() => {})));
   }
-}
-
-async function runWrappedChild(options) {
-  assert.match(options.runId ?? "", /^(?:active-30m|idle-24h)-[a-f0-9]{40}-\d{13}-[a-f0-9-]{36}$/i);
-  const spec = JSON.parse(process.env.BRAINPET_WRAPPED_CHILD_SPEC ?? "null");
-  assert.ok(spec && typeof spec.command === "string" && Array.isArray(spec.args) && typeof spec.cwd === "string" && spec.environment && typeof spec.environment === "object", "BrainPet wrapped child specification is invalid.");
-  await new Promise((resolvePromise, reject) => {
-    const timer = setTimeout(() => reject(new Error("Timed out waiting for the BrainPet child lease permit.")), 10_000);
-    process.once("disconnect", () => { clearTimeout(timer); reject(new Error("BrainPet worker disconnected before permitting its leased child.")); });
-    process.once("message", (message) => {
-      if (message?.command !== "start") return;
-      clearTimeout(timer);
-      resolvePromise();
-    });
-  });
-  const descendantExpectation = createDescendantExpectation(spec.command, spec.args);
-  const child = spawn(spec.command, spec.args, { cwd: spec.cwd, env: spec.environment, stdio: "inherit", windowsHide: true });
-  assert.ok(Number.isInteger(child.pid) && child.pid > 0, "BrainPet wrapped process lacks a PID.");
-  const identity = await waitForWindowsProcessIdentity(child.pid, 5_000);
-  const childIdentity = { pid: child.pid, creationDate: identity.creationDate, executable: identity.executablePath, commandNeedles: descendantExpectation.commandNeedles };
-  await sendWrapperMessage(process, { command: "child-started", identity: childIdentity });
-  const exitCode = await new Promise((resolvePromise, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => signal ? reject(new Error(`BrainPet wrapped child was terminated by ${signal}.`)) : resolvePromise(code ?? 1));
-  });
-  await sendWrapperMessage(process, { command: "child-completed", exitCode });
-  process.exitCode = exitCode;
 }
 
 function createDescendantExpectation(command, args) {
   const commandNeedles = [basename(command), ...args].filter((value) => typeof value === "string" && value.length > 0);
   return { executableBasename: basename(command), commandNeedles };
-}
-
-function sendWrapperMessage(target, message) {
-  return new Promise((resolvePromise, reject) => {
-    if (typeof target.send !== "function" || target.connected === false) { reject(new Error("BrainPet child wrapper IPC channel is unavailable.")); return; }
-    target.send(message, (error) => error ? reject(error) : resolvePromise());
-  });
 }
 
 async function waitForWindowsProcessIdentity(pid, timeoutMs) { const startedAt = Date.now(); while (Date.now() - startedAt < timeoutMs) { const identity = queryWindowsProcessIdentity(pid); if (identity) return identity; await delay(100); } throw new Error(`Timed out resolving detached BrainPet gate worker PID ${pid}.`); }
@@ -642,7 +683,7 @@ function parseOptions(argv) {
   const command = argv[0];
   const options = { command, profile: null, runId: null, manifest: null, completion: null };
   if ((command === "start" || command === "status") && argv[1] && !argv[1].startsWith("--")) options.profile = argv[1];
-  for (let index = command === "worker" || command === "child" ? 1 : 2; index < argv.length; index += 1) {
+  for (let index = command === "worker" ? 1 : 2; index < argv.length; index += 1) {
     const value = argv[index + 1];
     if (argv[index] === "--profile") options.profile = value;
     else if (argv[index] === "--run-id") options.runId = value;
@@ -659,7 +700,6 @@ async function main(argv) {
   if (options.command === "start") { const started = await startBrainPetPerformanceGate(options.profile); process.stdout.write(`${JSON.stringify({ state: "started", manifestPath: started.manifestPath, manifest: started.manifest })}\n`); }
   else if (options.command === "status") { assertPerformanceProfile(options.profile); const [manifestPath] = listBrainPetPerformanceRunManifests(options.profile); assert.ok(manifestPath, `No BrainPet ${options.profile} run manifest exists.`); process.stdout.write(`${JSON.stringify(readBrainPetPerformanceGateStatus(manifestPath))}\n`); }
   else if (options.command === "worker") { assert.ok(options.profile && options.runId && options.manifest && options.completion, "BrainPet gate worker arguments are incomplete."); await runWorker(options); }
-  else if (options.command === "child") { assert.ok(options.runId, "BrainPet child wrapper run id is missing."); await runWrappedChild(options); }
   else throw new Error("Usage: brainpet-performance-gate-runner.mjs <start|status> <active-30m|idle-24h>");
 }
 

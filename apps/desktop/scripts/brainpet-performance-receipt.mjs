@@ -18,6 +18,14 @@ const appDir = resolve(scriptDir, "..");
 const defaultRepoRoot = resolve(appDir, "..", "..");
 const formalGateProfiles = new Set(["active-30m", "idle-24h"]);
 
+export class BrainPetPerformanceReceiptRollbackError extends AggregateError {
+  constructor(errors, receiptPath) {
+    super(errors, "BrainPet performance receipt validation failed and its published bytes could not be rolled back.");
+    this.name = "BrainPetPerformanceReceiptRollbackError";
+    this.receiptPath = resolve(receiptPath);
+  }
+}
+
 export function resolveTrackedGitIdentity(repoRoot = defaultRepoRoot) {
   const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8", windowsHide: true });
   assert.equal(commit.status, 0, commit.stderr || "Unable to resolve the BrainPet source commit.");
@@ -117,7 +125,16 @@ export function assertBrainPetPerformanceReceiptAvailable(receiptPath) {
   assert.equal(existsSync(receiptPath), false, `BrainPet performance receipt already exists and cannot be overwritten: ${receiptPath}`);
 }
 
-export async function writeBrainPetPerformanceReceipt({ receiptPath, candidate, gateProfile, startedAt, gateResult, runEvidence }) {
+export async function writeBrainPetPerformanceReceipt({
+  receiptPath,
+  candidate,
+  gateProfile,
+  startedAt,
+  gateResult,
+  runEvidence,
+  validatePublishedReceipt = validateBrainPetPerformanceReceipt,
+  removePublishedReceipt = removePublishedBrainPetPerformanceReceipt,
+}) {
   assertFormalGateProfile(gateProfile);
   const normalizedGateResult = normalizeBrainPetFormalGateResult(gateResult, gateProfile);
   assertBrainPetPerformanceCandidateShape(candidate);
@@ -143,12 +160,23 @@ export async function writeBrainPetPerformanceReceipt({ receiptPath, candidate, 
   try {
     await writeJsonExclusiveAtomic(receiptPath, receipt);
     published = true;
-    const validated = validateBrainPetPerformanceReceipt(receiptPath, { candidate, gateProfile });
+    const validated = validatePublishedReceipt(receiptPath, { candidate, gateProfile });
     return { path: resolve(receiptPath), sha256: sha256File(receiptPath), receipt: validated };
   } catch (error) {
-    if (published) await rm(receiptPath, { force: true }).catch(() => {});
+    if (published) {
+      try {
+        await removePublishedReceipt(receiptPath);
+      } catch (cleanupError) {
+        throw new BrainPetPerformanceReceiptRollbackError([error, cleanupError], receiptPath);
+      }
+    }
     throw error;
   }
+}
+
+export async function removePublishedBrainPetPerformanceReceipt(receiptPath, removeReceipt = rm) {
+  await removeReceipt(receiptPath, { force: true });
+  assert.equal(existsSync(receiptPath), false, "BrainPet published performance receipt remained after rollback.");
 }
 
 export function validateBrainPetPerformanceReceipt(receiptPath, { candidate, gateProfile } = {}) {

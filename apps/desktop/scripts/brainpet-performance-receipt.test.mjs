@@ -11,6 +11,8 @@ import { summarizeBrainPetProcessSoak } from "../dist/brainpet/performance-budge
 import { createBrainPetRuntimeTree } from "./brainpet-runtime-tree.mjs";
 import {
   assertBrainPetPerformanceReceiptAvailable,
+  BrainPetPerformanceReceiptRollbackError,
+  removePublishedBrainPetPerformanceReceipt,
   resolveBrainPetPerformanceReceiptPath,
   sha256Bytes,
   validateBrainPetPerformanceCandidate,
@@ -83,6 +85,50 @@ test("performance receipt is digest-checked and cannot overwrite an existing suc
   tampered.evidenceDigest = sha256Bytes(Buffer.from(JSON.stringify(tamperedCore)));
   writeFileSync(receiptPath, `${JSON.stringify(tampered, null, 2)}\n`);
   assert.throws(() => validateBrainPetPerformanceReceipt(receiptPath), /sample count does not match|raw heap samples/i);
+});
+
+test("published receipt cleanup reports deletion failures and verifies absence", async () => {
+  const fixture = createCandidateFixture();
+  const receiptPath = join(fixture.root, "published-receipt.json");
+  writeFileSync(receiptPath, "published\n");
+  const removalError = new Error("fixture removal failed");
+  await assert.rejects(
+    removePublishedBrainPetPerformanceReceipt(receiptPath, async () => { throw removalError; }),
+    (error) => error === removalError,
+  );
+  assert.equal(existsSync(receiptPath), true);
+  await assert.rejects(
+    removePublishedBrainPetPerformanceReceipt(receiptPath, async () => {}),
+    /remained after rollback/i,
+  );
+  assert.equal(existsSync(receiptPath), true);
+  await removePublishedBrainPetPerformanceReceipt(receiptPath);
+  assert.equal(existsSync(receiptPath), false);
+});
+
+test("post-publication validation plus rollback failure identifies the orphan receipt", async () => {
+  const fixture = createCandidateFixture();
+  const candidate = validateBrainPetPerformanceCandidate(fixture.options);
+  const receiptPath = resolveBrainPetPerformanceReceiptPath(candidate, "idle-24h", join(fixture.root, "output", "rollback-failure"));
+  const validationError = new Error("fixture post-publication validation failed");
+  const removalError = new Error("fixture published receipt removal failed");
+  await assert.rejects(
+    writeBrainPetPerformanceReceipt({
+      receiptPath,
+      candidate,
+      gateProfile: "idle-24h",
+      startedAt: new Date(Date.now() - 86_400_001).toISOString(),
+      gateResult: createIdleGateResult(),
+      runEvidence: createRunEvidence(candidate.commit, "idle-24h"),
+      validatePublishedReceipt: () => { throw validationError; },
+      removePublishedReceipt: async () => { throw removalError; },
+    }),
+    (error) => error instanceof BrainPetPerformanceReceiptRollbackError
+      && error.receiptPath === receiptPath
+      && error.errors.includes(validationError)
+      && error.errors.includes(removalError),
+  );
+  assert.equal(existsSync(receiptPath), true, "The fixture must preserve the exact orphan that requires lease recovery.");
 });
 
 function createCandidateFixture() {

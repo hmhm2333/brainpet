@@ -126,7 +126,7 @@ test("canonical package commands and the Windows collector stay bound to the fai
   assert.match(receiptSource, /appAsarSha256[\s\S]*packaged app\.asar bytes do not match/);
   assert.match(receiptSource, /await handle\.sync\(\)[\s\S]*await link\(temporary, target\)/);
   assert.doesNotMatch(receiptSource, /rename\(temporary, target\)/);
-  assert.match(receiptSource, /let published = false[\s\S]*if \(published\) await rm\(receiptPath/);
+  assert.match(receiptSource, /let published = false[\s\S]*removePublishedReceipt\(receiptPath\)[\s\S]*BrainPetPerformanceReceiptRollbackError/);
   const runnerSource = await readFile(new URL("../../scripts/brainpet-performance-gate-runner.mjs", import.meta.url), "utf8");
   assert.match(runnerSource, /detached: true/);
   assert.match(runnerSource, /windowsHide: true/);
@@ -135,9 +135,12 @@ test("canonical package commands and the Windows collector stay bound to the fai
   assert.match(runnerSource, /commandNeedles\.every/);
   assert.match(runnerSource, /waitForPath\(manifestPath, 30_000\)[\s\S]*runPnpmDesktopScript/);
   assert.match(runnerSource, /createCleanPerformanceEnvironment[\s\S]*BRAINPET_ENFORCE_RESOURCE_BUDGET: "1"/);
-  assert.match(runnerSource, /validateBrainPetPerformanceReceipt[\s\S]*writeJsonExclusiveAtomic\(completionPath/);
+  assert.match(runnerSource, /validateBrainPetPerformanceReceipt[\s\S]*finalizePerformancePublication\(\{/);
   assert.match(runnerSource, /status\.state === "interrupted" && status\.receiptPath[\s\S]*rmSyncExact/);
-  assert.match(runnerSource, /writeJsonExclusiveAtomic\(completionPath, completion\)[\s\S]*if \(writtenReceiptPath\) await rm\(writtenReceiptPath/);
+  assert.match(runnerSource, /finalizePerformancePublication[\s\S]*removePublishedBrainPetPerformanceReceipt[\s\S]*preserving the recovery lease/);
+  assert.match(runnerSource, /caught instanceof BrainPetPerformanceReceiptRollbackError[\s\S]*throw caught/);
+  assert.match(runnerSource, /brainpet-windows-job-supervisor\.ps1[\s\S]*child-supervisor-ready[\s\S]*brainpet-windows-job-resume-permit[\s\S]*jobQuiescent/);
+  assert.doesNotMatch(runnerSource, /child-completed|runWrappedChild|sendWrapperMessage/);
   const brainPetBuilder = await readFile(new URL("../../electron-builder.brainpet.base.yml", import.meta.url), "utf8");
   assert.doesNotMatch(brainPetBuilder, /asarUnpack:[\s\S]*node_modules\/\*\*/);
   const hostCore = await readFile(new URL("../../src/composition/host-core.ts", import.meta.url), "utf8");

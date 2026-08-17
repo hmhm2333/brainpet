@@ -193,6 +193,7 @@ assert.match(performanceReceiptSource, /packageReceipt\.source\.treeDirty, false
 assert.match(performanceReceiptSource, /await link\(temporary, target\)/, "Successful performance receipts must use non-overwriting atomic publication.");
 assert.match(performanceReceiptSource, /validateBrainPetRuntimeTree\(runtimeRoot, packageReceipt\.runtimeTree\)/);
 assert.match(performanceReceiptSource, /validateBrainPetFormalGateResult/);
+assert.match(performanceReceiptSource, /BrainPetPerformanceReceiptRollbackError[\s\S]*receiptPath = resolve\(receiptPath\)/);
 const performanceRunnerSource = readFileSync(join(desktop, "scripts", "brainpet-performance-gate-runner.mjs"), "utf8");
 assert.match(performanceRunnerSource, /detached: true/);
 assert.match(performanceRunnerSource, /identity\.creationDate === expected\.creationDate/);
@@ -202,6 +203,13 @@ assert.match(performanceRunnerSource, /createCleanPerformanceEnvironment\([\s\S]
 assert.match(performanceRunnerSource, /package:brainpet:unpacked/);
 assert.match(performanceRunnerSource, /status\.state === "interrupted" && status\.receiptPath[\s\S]*rmSyncExact/);
 assert.match(performanceRunnerSource, /maximumTotalWorkingSetBytes|validateBrainPetFormalGateResult/);
+assert.match(performanceRunnerSource, /brainpet-windows-job-supervisor\.ps1[\s\S]*child-supervisor-ready[\s\S]*brainpet-windows-job-resume-permit[\s\S]*jobQuiescent/);
+assert.match(performanceRunnerSource, /completion publication failed[\s\S]*preserving the recovery lease/);
+assert.match(performanceRunnerSource, /caught instanceof BrainPetPerformanceReceiptRollbackError[\s\S]*throw caught/);
+const performanceJobSupervisorSource = readFileSync(join(desktop, "scripts", "brainpet-windows-job-supervisor.ps1"), "utf8");
+assert.match(performanceJobSupervisorSource, /CREATE_SUSPENDED[\s\S]*JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE[\s\S]*AssignProcessToJobObject/);
+assert.match(performanceJobSupervisorSource, /WaitForPermit\(resumePermitPath[\s\S]*ResumeThread[\s\S]*QueryActiveProcesses[\s\S]*TerminateJobObject/);
+assert.match(performanceJobSupervisorSource, /jobQuiescent[\s\S]*remainingProcesses/);
 const desktopPackage = JSON.parse(readFileSync(join(desktop, "package.json"), "utf8"));
 assert.equal(desktopPackage.scripts["test:brainpet-soak"], "pnpm brainpet:active-gate:start");
 assert.equal(desktopPackage.scripts["test:brainpet-idle-soak"], "pnpm brainpet:idle-gate:start");
