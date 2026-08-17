@@ -22,7 +22,7 @@ import { brainPetPerformanceReceiptWorkflow, brainPetPhysicalReceiptWorkflow, br
 import { stageBrainPetPackageArtifacts, validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
 import { createBrainPetCiRuntimeArchive, extractAllBrainPetCiRuntimeArchives, extractBrainPetCiRuntimeArchive, validateBrainPetCiRuntimeArchiveListing } from "./brainpet-ci-runtime-archive.mjs";
 import { createBrainPetBuilderInvocation, parseBrainPetPackageArgs, prepareBrainPetBundledMarketplace, resolveBrainPetElectronDist, runBrainPetElectronBuilder, validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
-import { assertBrainPetAsarWorkspaceClosure, assertMacosAppUsesAdhocOnly, assertMacosCodeObjectIsUnsigned, matchesBrainPetArtifactArchitecture, resolveBrainPetResourcesRoot, validateUnsignedLinuxArtifacts } from "../apps/desktop/scripts/validate-brainpet-package.mjs";
+import { assertBrainPetAsarWorkspaceClosure, assertMacosAppUsesAdhocOnly, assertMacosCodeObjectIsUnsigned, matchesBrainPetArtifactArchitecture, resolveBrainPetResourcesRoot, resolveBrainPetUnpackedAppRoot, validateUnsignedLinuxArtifacts } from "../apps/desktop/scripts/validate-brainpet-package.mjs";
 import { createBrainPetRuntimeTree } from "../apps/desktop/scripts/brainpet-runtime-tree.mjs";
 import { materializeLifecycleHelper, removeOwnedLifecycleDiscovery, stageLifecycleAppImageForExtraction } from "../apps/desktop/scripts/brainpet-package-lifecycle-support.mjs";
 
@@ -265,6 +265,8 @@ try {
   assert.equal(existsSync(ownedDiscoveryPath), true, "Lifecycle cleanup must not remove another runtime's discovery.");
   assert.equal(resolveBrainPetResourcesRoot("/fixture/app", getBrainPetReleaseTarget("linux", "x64")), join("/fixture/app", "resources"));
   assert.equal(resolveBrainPetResourcesRoot("/fixture/app", getBrainPetReleaseTarget("macos", "arm64")), join("/fixture/app", "Resources"));
+  assert.equal(resolveBrainPetUnpackedAppRoot("/fixture/mac", getBrainPetReleaseTarget("macos", "x64")), join("/fixture/mac", "brainpet.app", "Contents"));
+  assert.equal(resolveBrainPetUnpackedAppRoot("/fixture/linux", getBrainPetReleaseTarget("linux", "x64")), "/fixture/linux");
   assert.equal(assertMacosAppUsesAdhocOnly({ status: 0, stdout: "Signature=adhoc\nTeamIdentifier=not set", stderr: "" }, "fixture app"), true);
   for (const publisherIdentity of ["Developer ID Application", "Apple Development", "3rd Party Mac Developer Application", "self-signed"]) {
     assert.throws(() => assertMacosAppUsesAdhocOnly({ status: 0, stdout: `Signature=Developer ID\nAuthority=${publisherIdentity}`, stderr: "" }, publisherIdentity), /ad-hoc|authority/i);

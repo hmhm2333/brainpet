@@ -254,6 +254,8 @@ assert.match(packageValidatorSource, /deb unexpectedly contains an embedded sign
 assert.match(packageValidatorSource, /assertBrainPetAsarWorkspaceClosure[\s\S]*non-runtime workspace file/);
 assert.match(packageValidatorSource, /appAsarSha256:/, "Package receipts must bind the packaged application bytes.");
 assert.match(packageValidatorSource, /const runtimeTree = createBrainPetRuntimeTree\(unpackedRoot\)[\s\S]*runtimeTree,/, "Package receipts must bind the complete unpacked runtime tree.");
+assert.match(packageValidatorSource, /brainPetDistributionContract\.identity\.executableName}\.app/, "macOS package receipts must use the exact case-sensitive bundle name emitted from executableName.");
+assert.doesNotMatch(packageValidatorSource, /join\(unpackedRoot, "BrainPet\.app"/, "macOS package validation must not rely on the runner filesystem being case-insensitive.");
 const performanceReceiptSource = readFileSync(join(desktop, "scripts", "brainpet-performance-receipt.mjs"), "utf8");
 assert.match(performanceReceiptSource, /--untracked-files=no/);
 assert.match(performanceReceiptSource, /packageReceipt\.source\.treeDirty, false/);

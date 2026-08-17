@@ -23,6 +23,12 @@ const unpackedNames = {
   "linux-arm64": "linux-arm64-unpacked",
 };
 
+export function resolveBrainPetUnpackedAppRoot(unpackedRoot, target) {
+  return target.platform === "macos"
+    ? join(unpackedRoot, `${brainPetDistributionContract.identity.executableName}.app`, "Contents")
+    : unpackedRoot;
+}
+
 export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-test", packageTarget = "installer" }) {
   const target = brainPetReleaseTargets.find((candidate) => candidate.id === targetId);
   assert.ok(target, `Unknown BrainPet package target: ${targetId}`);
@@ -34,7 +40,7 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
   assert.ok(existsSync(unpackedRoot), `BrainPet unpacked output is missing: ${unpackedNames[targetId]}`);
   assert.ok(lstatSync(unpackedRoot).isDirectory(), "BrainPet unpacked output must be a directory.");
 
-  const appRoot = target.platform === "macos" ? join(unpackedRoot, "BrainPet.app", "Contents") : unpackedRoot;
+  const appRoot = resolveBrainPetUnpackedAppRoot(unpackedRoot, target);
   const resources = resolveBrainPetResourcesRoot(appRoot, target);
   const executable = target.platform === "windows"
     ? join(appRoot, "brainpet.exe")
