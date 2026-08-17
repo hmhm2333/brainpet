@@ -47,7 +47,7 @@ export function intakeBrainPetPerformanceReceipts(options) {
   const receipts = decodeCompressedPayload(payload);
   const validated = validateBrainPetPerformanceReceiptSet(receipts, { sourceCommit, packageReceipt: publicWindowsPackage, ...exactBindings });
   const approvalComment = formatBrainPetPerformanceApprovalComment(candidate, sha256Text(payload));
-  const actor = options.actor ?? process.env.GITHUB_ACTOR;
+  const actor = options.actor ?? (options.identity ? options.identity.actor : process.env.GITHUB_ACTOR);
   const reviewer = options.approvalHistoryPath ? validateEnvironmentApproval(options.approvalHistoryPath, actor, approvalComment) : options.expectedReviewer;
   assert.ok(typeof reviewer === "string" && reviewer.length > 0, "Performance intake requires an authenticated reviewer.");
   if (!options.outputRoot) return { receipts: validated, candidate, payload, approvalComment, reviewer };
@@ -56,15 +56,22 @@ export function intakeBrainPetPerformanceReceipts(options) {
   assert.equal(existsSync(outputRoot), false, `Performance intake output already exists: ${outputRoot}`);
   mkdirSync(outputRoot, { recursive: true });
   for (const receipt of validated) writeFileSync(join(outputRoot, `brainpet-${receipt.gateProfile}.json`), `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+  const identity = options.identity ?? {
+    workflow: process.env.GITHUB_WORKFLOW ?? null,
+    runId: process.env.GITHUB_RUN_ID ?? null,
+    runAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
+    actor: process.env.GITHUB_ACTOR ?? null,
+    runnerEnvironment: process.env.RUNNER_ENVIRONMENT ?? null,
+  };
   const github = {
-    workflow: process.env.GITHUB_WORKFLOW ?? options.identity?.workflow ?? null,
-    runId: process.env.GITHUB_RUN_ID ?? options.identity?.runId ?? null,
-    runAttempt: process.env.GITHUB_RUN_ATTEMPT ?? options.identity?.runAttempt ?? null,
-    actor: actor ?? options.identity?.actor ?? null,
+    workflow: identity.workflow,
+    runId: identity.runId,
+    runAttempt: identity.runAttempt,
+    actor: actor ?? identity.actor,
     environment: "brainpet-physical-acceptance",
     environmentReviewer: reviewer,
     environmentApprovalComment: approvalComment,
-    runnerEnvironment: process.env.RUNNER_ENVIRONMENT ?? options.identity?.runnerEnvironment ?? null,
+    runnerEnvironment: identity.runnerEnvironment,
     payloadSha256: sha256Text(payload),
   };
   const intake = {
