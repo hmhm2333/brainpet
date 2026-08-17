@@ -133,9 +133,15 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
    intake 后的公开回执只保存这些候选绑定、平台、显示器摘要、安装包
    文件名/大小/hash、平台签名缺席、系统警告与人工确认结果和 reviewer；本地 note 会被清空，不保存
    本机绝对路径、Agent 内容或配置正文。
-3. 在同一干净 commit 上分别通过 `brainpet:active-gate:start` 与 `brainpet:idle-gate:start`。
-   runner 会排除外部 `BRAINPET_*`/`OPENPETS_*` 覆盖、获取跨会话全局租约、从清空后的输出重新打包，
-   并绑定 manifest、完整 runtime tree、原始 process/heap/latency timeline、总工作集预算、execution log 前缀和 completion。
+3. 在 Windows x64 上先执行
+   `pnpm brainpet:performance:candidate:prepare -- --run-id <candidate-run-id> --commit <40-char-sha>`。
+   该事务只下载上述成功 run 的 Windows x64 package closure、候选聚合回执与 Sigstore bundle；Sigstore 证书/透明日志验签已由该成功 workflow 在生成 aggregate 时执行，本地准备阶段继续逐项绑定
+   workflow、run/attempt、commit、receipt/installer hash；在解包前拒绝绝对路径、遍历和冲突路径，再用系统 `tar.exe`
+   从原始 NSIS 无安装解出 runtime，并以 package receipt 的完整 runtime tree 复验。随后在同一干净 commit 上分别运行
+   `node apps/desktop/scripts/brainpet-performance-gate-runner.mjs start active-30m --candidate <prepared-manifest>` 与
+   `node apps/desktop/scripts/brainpet-performance-gate-runner.mjs start idle-24h --candidate <prepared-manifest>`。
+   runner 会排除外部 `BRAINPET_*`/`OPENPETS_*` 覆盖、获取跨会话全局租约，并在长测前后重验同一份公开候选；它不再本机重打 private-test 包。
+   回执绑定 prepared manifest、公开候选回执、NSIS、Sigstore bundle、完整 runtime tree、原始 process/heap/latency timeline、总工作集预算、execution log 前缀和 completion。
    30 分钟 active 必须运行 `cargo-signal`；24 小时 idle 必须连续完成。随后用候选回执生成 performance dispatch envelope；
    intake 会再次计算所有预算，并要求两份回执的 executable、app.asar 与 runtime-tree digest 和公开 Windows 候选完全一致。
 4. 物理与性能回执中的 reviewer 必须填写将批准 intake 环境的 GitHub 用户名。在仓库中一次性创建

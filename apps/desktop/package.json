@@ -24,7 +24,7 @@
     "package:brainpet:portable": "node scripts/brainpet-package.mjs --target portable --mode private-test",
     "package:brainpet:unpacked": "node scripts/brainpet-package.mjs --target dir --mode private-test",
     "package:brainpet:matrix": "node scripts/brainpet-package-matrix.mjs",
-    "test": "node scripts/run-tests.mjs && node scripts/brainpet-performance-receipt.test.mjs && node scripts/brainpet-performance-gate-runner.test.mjs",
+    "test": "node scripts/run-tests.mjs && node scripts/brainpet-performance-receipt.test.mjs && node scripts/brainpet-performance-gate-runner.test.mjs && node ../../scripts/prepare-brainpet-public-performance-candidate.test.mjs",
     "test:brainpet-electron": "pnpm build && node scripts/brainpet-electron-smoke.mjs",
     "test:brainpet-foundation": "pnpm build && cross-env BRAINPET_SMOKE_TASK=foundation-probe node scripts/brainpet-electron-smoke.mjs ../../output/playwright/brainpet-foundation-probe.png",
     "test:brainpet-stress": "pnpm build && cross-env BRAINPET_LIFECYCLE_CYCLES=100 node scripts/brainpet-electron-smoke.mjs",

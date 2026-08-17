@@ -286,13 +286,15 @@ function createRunFixture() {
   const completionPath = join(runsRoot, `${runId}.completion.json`);
   const resultPath = join(runsRoot, `${runId}.result.json`);
   const logPath = join(runsRoot, `${runId}.log`);
-  const stagingRoot = join(runsRoot, `${runId}.candidate`);
+  const preparedCandidateManifest = join(performanceRoot, "fixture-public-candidate", "brainpet-performance-candidate.json");
+  const preparedCandidateManifestRelative = toRepoRelative(preparedCandidateManifest);
+  const preparedCandidateManifestSha256 = "e".repeat(64);
   const leasePath = join(performanceRoot, "brainpet-performance-gate.lease.json");
   const receiptPath = join(performanceRoot, `brainpet-idle-24h-${commit}.json`);
   const creationDate = "2026-08-17T00:00:00.000Z";
   writeFileSync(logPath, "fixture\n");
   writeFileSync(manifestPath, `${JSON.stringify({
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "brainpet-performance-gate-run",
     runId,
     profile: "idle-24h",
@@ -302,7 +304,16 @@ function createRunFixture() {
     result: toRepoRelative(resultPath),
     log: toRepoRelative(logPath),
     completion: toRepoRelative(completionPath),
-    stagingRoot: toRepoRelative(stagingRoot),
+    preparedCandidateManifest: preparedCandidateManifestRelative,
+    preparedCandidateManifestSha256,
+    candidate: {
+      repository: brainPetDistributionContract.identity.repository,
+      commit,
+      releaseMode: "public-release",
+      packageTarget: "installer",
+      preparedManifest: preparedCandidateManifestRelative,
+      preparedManifestSha256: preparedCandidateManifestSha256,
+    },
     lease: toRepoRelative(leasePath),
     runner: { pid: 4242, creationDate, executable: process.execPath, commandNeedles: ["brainpet-performance-gate-runner.mjs", "worker", runId] },
   }, null, 2)}\n`);

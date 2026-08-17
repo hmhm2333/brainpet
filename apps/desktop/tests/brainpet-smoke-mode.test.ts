@@ -133,7 +133,8 @@ test("canonical package commands and the Windows collector stay bound to the fai
   assert.match(runnerSource, /identity\.creationDate === expected\.creationDate/);
   assert.match(runnerSource, /normalizeWindowsPath\(identity\.executablePath\) === normalizeWindowsPath\(expected\.executable\)/);
   assert.match(runnerSource, /commandNeedles\.every/);
-  assert.match(runnerSource, /waitForPath\(manifestPath, 30_000\)[\s\S]*runPnpmDesktopScript/);
+  assert.match(runnerSource, /waitForPath\(manifestPath, 30_000\)[\s\S]*validateBrainPetPreparedPerformanceCandidate/);
+  assert.doesNotMatch(runnerSource, /runPnpmDesktopScript|package:brainpet:unpacked/);
   assert.match(runnerSource, /createCleanPerformanceEnvironment[\s\S]*BRAINPET_ENFORCE_RESOURCE_BUDGET: "1"/);
   assert.match(runnerSource, /validateBrainPetPerformanceReceipt[\s\S]*finalizePerformancePublication\(\{/);
   assert.match(runnerSource, /status\.state === "interrupted" && status\.receiptPath[\s\S]*rmSyncExact/);

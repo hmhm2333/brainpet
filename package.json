@@ -44,6 +44,7 @@
     "brainpet:release:validate-source": "node scripts/validate-brainpet-release-source.mjs",
     "brainpet:release:test": "pnpm brainpet:release:validate-source && pnpm brainpet:adapter-contracts:check && pnpm brainpet:adapters:check && pnpm --filter @open-pets/desktop package:brainpet:matrix && node scripts/test-brainpet-release.mjs",
     "brainpet:release:aggregate": "node scripts/aggregate-brainpet-release-receipt.mjs",
+    "brainpet:performance:candidate:prepare": "node scripts/prepare-brainpet-public-performance-candidate.mjs",
     "brainpet:active-gate:start": "pnpm --filter @open-pets/desktop brainpet:active-gate:start",
     "brainpet:active-gate:status": "pnpm --filter @open-pets/desktop brainpet:active-gate:status",
     "brainpet:idle-gate:start": "pnpm --filter @open-pets/desktop brainpet:idle-gate:start",

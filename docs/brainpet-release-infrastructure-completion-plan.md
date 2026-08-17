@@ -13,7 +13,7 @@
 | RC-3～RC-4 | 已通过 | `6464fe3`、`b8d87fa`；Audit B 整改与独立复审在 `73ffb47`、`9e6a691` 通过 |
 | RC-5 | 已通过 | `f9802a9`；Windows x64 native-only 包、一次点击 Codex、single-instance、冷唤醒恢复与真实 packaged UI smoke 通过 |
 | RC-6 | 进行中 | 默认 package 自动 validator、真实 installer lifecycle、未签名直装合同、可信 provenance、候选→physical/performance intake→finalize 聚合回执已完成本地门；Windows x64 未签名公开包已通过本机结构/Authenticode 缺席验证；远端六目标/四格式/Stable 实机回执未通过前不标完成 |
-| RC-7 | 进行中 | 正式性能 runner、原始证据重算、跨会话租约和 release 聚合已实现；30 分钟/24 小时正式证据及最终独立审核未通过前不标完成 |
+| RC-7 | 进行中 | 正式性能 runner、公开 NSIS 同字节候选准备、原始证据重算、跨会话租约和 release 聚合已实现；30 分钟/24 小时正式证据及最终独立审核未通过前不标完成 |
 
 ## 1. 最终目标
 
@@ -377,6 +377,7 @@ intake 必须经过 protected Environment 的非触发者 reviewer，审批评�
 
 - 真实 Codex/Claude/OpenCode 任务连续运行；
 - 24 小时 idle、30 分钟游戏 soak、崩溃恢复、睡眠唤醒、多显示器和 DPI；
+- 正式性能 runner 只接受成功公开 workflow 的 Windows x64 NSIS：下载 package/aggregate receipt 与 Sigstore bundle，安全解包后按完整 runtime tree 复验，并在两条长测前后绑定同一 run、attempt、installer、executable、app.asar 和 runtime-tree digest；禁止本机重打 private-test 后冒充公开候选；
 - Windows 正式 runner 以 suspended 创建、精确 lease 绑定和禁止 breakaway 的 Job Object 承载每个命令；只有完整 Job 进程树归零才可发布 completion 或释放 lease；
 - 安装说明、隐私政策、支持矩阵、诊断导出和回退说明最终校验；
 - 修复所有 P0/P1，P2 必须有明确延期 ADR。

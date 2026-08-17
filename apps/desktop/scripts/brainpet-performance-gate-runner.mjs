@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { cp, mkdir, open, rename, rm } from "node:fs/promises";
+import { mkdir, open, rename, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +19,7 @@ import {
   resolveTrackedGitIdentity,
   sha256Bytes,
   sha256File,
+  validateBrainPetPreparedPerformanceCandidate,
   validateBrainPetPerformanceReceipt,
   writeBrainPetPerformanceReceipt,
   writeJsonExclusiveAtomic,
@@ -48,18 +49,23 @@ export function createBrainPetPerformanceGatePaths(root) {
   });
 }
 
-export async function startBrainPetPerformanceGate(profile) {
+export async function startBrainPetPerformanceGate(profile, candidateManifestPath) {
   assert.equal(process.platform, "win32", "The detached BrainPet performance runner currently requires Windows.");
   assertPerformanceProfile(profile);
   const source = resolveTrackedGitIdentity(repoRoot);
   assert.equal(source.treeDirty, false, "A formal BrainPet performance run requires a clean tracked worktree.");
+  assert.ok(typeof candidateManifestPath === "string" && candidateManifestPath.length > 0, "A formal BrainPet performance run requires --candidate <prepared-manifest>.");
+  const resolvedCandidateManifestPath = isAbsolute(candidateManifestPath) ? resolve(candidateManifestPath) : resolve(repoRoot, candidateManifestPath);
+  const candidate = validateBrainPetPreparedPerformanceCandidate(resolvedCandidateManifestPath, { repoRoot, gitIdentity: source });
+  assert.equal(candidate.releaseMode, "public-release", "Formal BrainPet performance evidence requires a public-release candidate.");
+  assert.equal(candidate.packageTarget, "installer", "Formal BrainPet performance evidence requires the public installer candidate.");
+  assert.equal(candidate.commit, source.commit, "Prepared BrainPet candidate does not match the current source commit.");
   await ensureSafeEvidenceDirectory(runsRoot);
   const runId = `${profile}-${source.commit}-${Date.now()}-${randomUUID()}`;
   const manifestPath = join(runsRoot, `${runId}.manifest.json`);
   const completionPath = join(runsRoot, `${runId}.completion.json`);
   const resultPath = join(runsRoot, `${runId}.result.json`);
   const logPath = join(runsRoot, `${runId}.log`);
-  const stagingRoot = join(runsRoot, `${runId}.candidate`);
   const expectedReceiptPath = resolveBrainPetPerformanceReceiptPath(source, profile, performanceRoot);
   recoverOrRejectPerformanceLease();
   assertBrainPetPerformanceReceiptAvailable(expectedReceiptPath);
@@ -78,7 +84,7 @@ export async function startBrainPetPerformanceGate(profile) {
     assert.ok(Number.isInteger(child.pid) && child.pid > 0, "Detached BrainPet gate worker lacks a PID.");
     const runnerIdentity = await waitForWindowsProcessIdentity(child.pid, 5_000);
     const manifest = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "brainpet-performance-gate-run",
       runId,
       profile,
@@ -88,7 +94,9 @@ export async function startBrainPetPerformanceGate(profile) {
       result: toRepoRelative(resultPath),
       log: toRepoRelative(logPath),
       completion: toRepoRelative(completionPath),
-      stagingRoot: toRepoRelative(stagingRoot),
+      preparedCandidateManifest: toRepoRelative(resolvedCandidateManifestPath),
+      preparedCandidateManifestSha256: sha256File(resolvedCandidateManifestPath),
+      candidate,
       lease: toRepoRelative(leasePath),
       runner: {
         pid: child.pid,
@@ -105,7 +113,7 @@ export async function startBrainPetPerformanceGate(profile) {
     return { manifestPath, manifest };
   } catch (error) {
     child?.kill();
-    await Promise.all([manifestPath, completionPath, resultPath, logPath, stagingRoot].map((path) => rm(path, { recursive: true, force: true }).catch(() => {})));
+    await Promise.all([manifestPath, completionPath, resultPath, logPath].map((path) => rm(path, { recursive: true, force: true }).catch(() => {})));
     releaseOwnedLease(runId);
     throw error;
   } finally {
@@ -239,27 +247,25 @@ async function runWorker(options) {
   assert.equal(manifest.profile, options.profile);
   const resultPath = resolveRepoRelative(manifest.result, "performance gate result");
   const logPath = resolveRepoRelative(manifest.log, "performance execution log");
-  const stagingRoot = resolveRepoRelative(manifest.stagingRoot, "performance candidate staging root");
   const receiptPath = resolveRepoRelative(manifest.expectedReceipt, "expected performance receipt");
   const manifestSha256 = sha256File(manifestPath);
   let completion;
   let writtenReceiptPath = null;
   try {
-    const packageExit = await runPnpmDesktopScript("package:brainpet:unpacked", createCleanPerformanceEnvironment(), options.runId, manifest.runner);
-    if (packageExit !== 0) throw new Error(`BrainPet package command exited with code ${packageExit}.`);
-    const sourceRoot = join(appDir, "dist-brainpet", "private-test");
-    assert.equal(existsSync(stagingRoot), false, "BrainPet per-run candidate staging root already exists.");
-    await cp(sourceRoot, stagingRoot, { recursive: true, force: false, errorOnExist: true });
-    const stagedExecutable = join(stagingRoot, "win-unpacked", "brainpet.exe");
-    const stagedReceipt = join(stagingRoot, "brainpet-package-receipt-windows-x64.json");
+    const preparedManifestPath = resolveRepoRelative(manifest.preparedCandidateManifest, "prepared performance candidate manifest");
+    assert.equal(sha256File(preparedManifestPath), manifest.preparedCandidateManifestSha256, "Prepared BrainPet candidate manifest changed before execution.");
+    const candidate = validateBrainPetPreparedPerformanceCandidate(preparedManifestPath, { repoRoot });
+    assert.deepEqual(candidate, manifest.candidate, "Prepared BrainPet candidate changed before execution.");
+    const preparedExecutable = resolveRepoRelative(candidate.executable, "prepared BrainPet executable");
+    const preparedReceipt = resolveRepoRelative(candidate.packageReceipt, "prepared BrainPet package receipt");
     const smokeEnvironment = createCleanPerformanceEnvironment({
       BRAINPET_GATE_RUN_ID: options.runId,
       BRAINPET_GATE_RESULT_PATH: resultPath,
       BRAINPET_PERFORMANCE_GATE: options.profile,
       BRAINPET_ENFORCE_RESOURCE_BUDGET: "1",
-      BRAINPET_ELECTRON_EXECUTABLE: stagedExecutable,
-      BRAINPET_PACKAGE_RECEIPT: stagedReceipt,
-      ...(options.profile === "active-30m" ? { BRAINPET_SOAK_MS: profiles[options.profile].soakMs, BRAINPET_PERFORMANCE_EXECUTABLE: stagedExecutable, BRAINPET_SMOKE_TASK: profiles[options.profile].task } : { BRAINPET_IDLE_SOAK_MS: profiles[options.profile].idleSoakMs }),
+      BRAINPET_ELECTRON_EXECUTABLE: preparedExecutable,
+      BRAINPET_PACKAGE_RECEIPT: preparedReceipt,
+      ...(options.profile === "active-30m" ? { BRAINPET_SOAK_MS: profiles[options.profile].soakMs, BRAINPET_PERFORMANCE_EXECUTABLE: preparedExecutable, BRAINPET_SMOKE_TASK: profiles[options.profile].task } : { BRAINPET_IDLE_SOAK_MS: profiles[options.profile].idleSoakMs }),
     });
     const smokeExit = await runNodeScript(join(scriptDir, "brainpet-electron-smoke.mjs"), smokeEnvironment, options.runId, manifest.runner);
     if (smokeExit !== 0) throw new Error(`BrainPet ${options.profile} command exited with code ${smokeExit}.`);
@@ -268,7 +274,7 @@ async function runWorker(options) {
     assert.equal(gateFile.kind, "brainpet-performance-gate-result");
     assert.equal(gateFile.runId, options.runId);
     assert.equal(gateFile.gateProfile, options.profile);
-    assert.equal(gateFile.candidate.commit, manifest.source.commit);
+    assert.deepEqual(gateFile.candidate, manifest.candidate, "Formal gate executed a different prepared candidate.");
     validateBrainPetFormalGateResult(gateFile.gateResult, options.profile);
     revalidateBrainPetPerformanceCandidate(gateFile.candidate, { repoRoot });
     const resultSha256 = sha256File(resultPath);
@@ -278,13 +284,11 @@ async function runWorker(options) {
     const completedAt = new Date().toISOString();
     const completionCore = { runId: options.runId, profile: options.profile, sourceCommit: manifest.source.commit, succeeded: true, exitCode: 0, completedAt, error: null, manifestSha256, resultSha256, executionLogSha256, executionLogBytes };
     const completionCoreDigest = sha256Bytes(Buffer.from(JSON.stringify(completionCore)));
-    await rm(stagingRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     const written = await writeBrainPetPerformanceReceipt({ receiptPath, candidate: gateFile.candidate, gateProfile: options.profile, startedAt: gateFile.startedAt, gateResult: gateFile.gateResult, runEvidence: { runId: options.runId, manifestSha256, resultSha256, executionLogSha256, executionLogBytes, completionCoreDigest } });
     writtenReceiptPath = written.path;
     completion = { schemaVersion: 2, kind: "brainpet-performance-gate-completion", ...completionCore, completionCoreDigest, receiptSha256: written.sha256 };
   } catch (caught) {
     if (caught instanceof BrainPetPerformanceReceiptRollbackError) {
-      await rm(stagingRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
       throw caught;
     }
     if (writtenReceiptPath) {
@@ -297,7 +301,6 @@ async function runWorker(options) {
         );
       }
     }
-    await rm(stagingRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
     await flushWritable(process.stdout).catch(() => {});
     const executionLogBytes = existsSync(logPath) ? statSync(logPath).size : 0;
     const executionLogSha256 = existsSync(logPath) ? sha256FilePrefix(logPath, executionLogBytes) : sha256Bytes(Buffer.alloc(0));
@@ -354,7 +357,7 @@ export async function finalizePerformancePublication({
 }
 
 function validateManifest(manifest, manifestPath, expectedLeasePath = leasePath, expectedRunsRoot = runsRoot) {
-  assert.equal(manifest.schemaVersion, 2);
+  assert.equal(manifest.schemaVersion, 3);
   assert.equal(manifest.kind, "brainpet-performance-gate-run");
   assertPerformanceProfile(manifest.profile);
   assert.match(manifest.runId ?? "", new RegExp(`^${escapeRegex(manifest.profile)}-[a-f0-9]{40}-\\d{13}-[a-f0-9-]{36}$`, "i"));
@@ -363,8 +366,14 @@ function validateManifest(manifest, manifestPath, expectedLeasePath = leasePath,
   assert.equal(manifest.source?.treeDirty, false);
   assert.equal(Number.isNaN(Date.parse(manifest.startedAt)), false);
   assert.equal(dirname(resolve(manifestPath)), expectedRunsRoot);
-  for (const [key, label] of [["completion", "completion"], ["result", "result"], ["log", "log"], ["stagingRoot", "staging"], ["lease", "lease"]]) resolveRepoRelative(manifest[key], `performance ${label}`);
+  for (const [key, label] of [["completion", "completion"], ["result", "result"], ["log", "log"], ["preparedCandidateManifest", "prepared candidate manifest"], ["lease", "lease"]]) resolveRepoRelative(manifest[key], `performance ${label}`);
   assert.equal(resolveRepoRelative(manifest.lease, "performance lease"), expectedLeasePath);
+  assert.match(manifest.preparedCandidateManifestSha256 ?? "", /^[a-f0-9]{64}$/i);
+  assert.equal(manifest.candidate?.releaseMode, "public-release");
+  assert.equal(manifest.candidate?.packageTarget, "installer");
+  assert.equal(manifest.candidate?.commit, manifest.source.commit);
+  assert.equal(manifest.candidate?.preparedManifest, manifest.preparedCandidateManifest);
+  assert.equal(manifest.candidate?.preparedManifestSha256, manifest.preparedCandidateManifestSha256);
   assert.ok(Array.isArray(manifest.runner?.commandNeedles) && manifest.runner.commandNeedles.length === 3 && manifest.runner.commandNeedles.every((needle) => typeof needle === "string" && needle.length > 0));
 }
 
@@ -392,7 +401,7 @@ function validateGateFile(gateFile, manifest) {
   assert.equal(gateFile.kind, "brainpet-performance-gate-result");
   assert.equal(gateFile.runId, manifest.runId);
   assert.equal(gateFile.gateProfile, manifest.profile);
-  assert.equal(gateFile.candidate?.commit, manifest.source.commit);
+  assert.deepEqual(gateFile.candidate, manifest.candidate, "BrainPet formal result candidate differs from its run manifest.");
   validateBrainPetFormalGateResult(gateFile.gateResult, manifest.profile);
 }
 
@@ -567,7 +576,6 @@ function rmSyncExact(path) {
   assert.equal(result.status, 0, result.stderr || `Unable to remove exact BrainPet evidence path: ${path}`);
 }
 
-function runPnpmDesktopScript(scriptName, environment, runId, leaseOwner) { return runChild("cmd.exe", ["/d", "/s", "/c", "pnpm.cmd", "--filter", "@open-pets/desktop", scriptName], repoRoot, environment, runId, leaseOwner); }
 function runNodeScript(path, environment, runId, leaseOwner) { return runChild(process.execPath, [path], appDir, environment, runId, leaseOwner); }
 async function runChild(command, args, cwd, environment, runId, leaseOwner) {
   const supervisorScript = join(scriptDir, "brainpet-windows-job-supervisor.ps1");
@@ -693,7 +701,7 @@ function boundedError(error) { const value = error instanceof Error ? error.mess
 
 function parseOptions(argv) {
   const command = argv[0];
-  const options = { command, profile: null, runId: null, manifest: null, completion: null };
+  const options = { command, profile: null, runId: null, manifest: null, completion: null, candidate: null };
   if ((command === "start" || command === "status") && argv[1] && !argv[1].startsWith("--")) options.profile = argv[1];
   for (let index = command === "worker" ? 1 : 2; index < argv.length; index += 1) {
     const value = argv[index + 1];
@@ -701,6 +709,7 @@ function parseOptions(argv) {
     else if (argv[index] === "--run-id") options.runId = value;
     else if (argv[index] === "--manifest") options.manifest = value;
     else if (argv[index] === "--completion") options.completion = value;
+    else if (argv[index] === "--candidate") options.candidate = value;
     else throw new Error(`Unknown BrainPet performance runner argument: ${argv[index]}`);
     index += 1;
   }
@@ -709,10 +718,10 @@ function parseOptions(argv) {
 
 async function main(argv) {
   const options = parseOptions(argv);
-  if (options.command === "start") { const started = await startBrainPetPerformanceGate(options.profile); process.stdout.write(`${JSON.stringify({ state: "started", manifestPath: started.manifestPath, manifest: started.manifest })}\n`); }
+  if (options.command === "start") { const started = await startBrainPetPerformanceGate(options.profile, options.candidate); process.stdout.write(`${JSON.stringify({ state: "started", manifestPath: started.manifestPath, manifest: started.manifest })}\n`); }
   else if (options.command === "status") { assertPerformanceProfile(options.profile); const [manifestPath] = listBrainPetPerformanceRunManifests(options.profile); assert.ok(manifestPath, `No BrainPet ${options.profile} run manifest exists.`); process.stdout.write(`${JSON.stringify(readBrainPetPerformanceGateStatus(manifestPath))}\n`); }
   else if (options.command === "worker") { assert.ok(options.profile && options.runId && options.manifest && options.completion, "BrainPet gate worker arguments are incomplete."); await runWorker(options); }
-  else throw new Error("Usage: brainpet-performance-gate-runner.mjs <start|status> <active-30m|idle-24h>");
+  else throw new Error("Usage: brainpet-performance-gate-runner.mjs start <active-30m|idle-24h> --candidate <prepared-manifest> | status <profile>");
 }
 
 function assertPerformanceProfile(profile) { assert.equal(typeof profile === "string" && Object.hasOwn(profiles, profile), true, `Unknown BrainPet performance profile: ${profile}`); }

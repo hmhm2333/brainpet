@@ -33,13 +33,16 @@ export function validateBrainPetPerformanceReceiptSet(receipts, expected = {}) {
   assert.deepEqual(validated.map((receipt) => receipt.gateProfile), [...brainPetPerformanceProfiles].sort(), "BrainPet performance evidence requires exactly active-30m and idle-24h receipts.");
   const commits = new Set(validated.map((receipt) => receipt.candidate.commit.toLowerCase()));
   assert.equal(commits.size, 1, "BrainPet performance receipts must bind one source commit.");
-  const bindings = new Set(validated.map((receipt) => JSON.stringify({ repository: receipt.candidate.repository, commit: receipt.candidate.commit.toLowerCase(), appVersion: receipt.candidate.appVersion, target: receipt.candidate.target, executableSha256: receipt.candidate.executableSha256.toLowerCase(), appAsarSha256: receipt.candidate.appAsarSha256.toLowerCase(), runtimeTreeDigest: receipt.candidate.runtimeTreeDigest.toLowerCase() })));
+  const bindings = new Set(validated.map((receipt) => JSON.stringify({ repository: receipt.candidate.repository, commit: receipt.candidate.commit.toLowerCase(), appVersion: receipt.candidate.appVersion, target: receipt.candidate.target, releaseMode: receipt.candidate.releaseMode, packageTarget: receipt.candidate.packageTarget, sourceRunId: receipt.candidate.sourceRunId, sourceRunAttempt: receipt.candidate.sourceRunAttempt, publicCandidateReceiptSha256: receipt.candidate.publicCandidateReceiptSha256.toLowerCase(), installerSha256: receipt.candidate.installerSha256.toLowerCase(), provenanceBundleSha256: receipt.candidate.provenanceBundleSha256.toLowerCase(), executableSha256: receipt.candidate.executableSha256.toLowerCase(), appAsarSha256: receipt.candidate.appAsarSha256.toLowerCase(), runtimeTreeDigest: receipt.candidate.runtimeTreeDigest.toLowerCase() })));
   assert.equal(bindings.size, 1, "BrainPet performance receipts must bind the same packaged runtime bytes.");
   if (expected.sourceCommit) assert.equal([...commits][0], expected.sourceCommit.toLowerCase(), "BrainPet performance receipt commit is invalid.");
   if (expected.packageReceipt) {
     const packageReceipt = expected.packageReceipt;
     for (const receipt of validated) {
       assert.equal(receipt.candidate.appVersion, packageReceipt.appVersion, "BrainPet performance app version differs from the public package.");
+      assert.equal(receipt.candidate.sourceRunId, String(packageReceipt.source?.runId), "BrainPet performance candidate came from a different public run.");
+      assert.equal(receipt.candidate.sourceRunAttempt, String(packageReceipt.source?.runAttempt), "BrainPet performance candidate came from a different public run attempt.");
+      assert.equal(receipt.candidate.installerSha256.toLowerCase(), packageReceipt.artifacts?.find((artifact) => artifact.kind === "nsis")?.sha256?.toLowerCase(), "BrainPet performance installer differs from the public package.");
       assert.equal(receipt.candidate.executableSha256.toLowerCase(), packageReceipt.sha256.toLowerCase(), "BrainPet performance executable differs from the public package.");
       assert.equal(receipt.candidate.appAsarSha256.toLowerCase(), packageReceipt.appAsarSha256.toLowerCase(), "BrainPet performance app.asar differs from the public package.");
       assert.equal(receipt.candidate.runtimeTreeDigest.toLowerCase(), packageReceipt.runtimeTree?.digest?.toLowerCase(), "BrainPet performance runtime tree differs from the public package.");
@@ -54,8 +57,12 @@ function validateCandidate(candidate) {
   assert.match(candidate.commit ?? "", /^[a-f0-9]{40}$/i);
   assert.match(candidate.appVersion ?? "", /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
   assert.equal(candidate.target, "windows-x64");
-  for (const key of ["packageReceiptSha256", "executableSha256", "appAsarSha256", "runtimeTreeDigest"]) assert.match(candidate[key] ?? "", /^[a-f0-9]{64}$/i, `BrainPet performance candidate ${key} is invalid.`);
-  for (const key of ["packageReceipt", "executable", "appAsar"]) assertPortableRelative(candidate[key], `BrainPet performance candidate ${key}`);
+  assert.equal(candidate.releaseMode, "public-release", "Formal performance evidence must bind the public-release package.");
+  assert.equal(candidate.packageTarget, "installer", "Formal performance evidence must bind the public installer package.");
+  assert.match(candidate.sourceRunId ?? "", /^\d{1,20}$/);
+  assert.match(candidate.sourceRunAttempt ?? "", /^\d{1,10}$/);
+  for (const key of ["packageReceiptSha256", "preparedManifestSha256", "publicCandidateReceiptSha256", "installerSha256", "provenanceBundleSha256", "executableSha256", "appAsarSha256", "runtimeTreeDigest"]) assert.match(candidate[key] ?? "", /^[a-f0-9]{64}$/i, `BrainPet performance candidate ${key} is invalid.`);
+  for (const key of ["packageReceipt", "preparedManifest", "publicCandidateReceipt", "installer", "executable", "appAsar"]) assertPortableRelative(candidate[key], `BrainPet performance candidate ${key}`);
 }
 
 function validateRunEvidence(evidence, commit, profile) {

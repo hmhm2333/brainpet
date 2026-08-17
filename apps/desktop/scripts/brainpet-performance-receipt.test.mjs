@@ -49,7 +49,7 @@ test("formal performance candidate binds clean source, package receipt, executab
   const traversalReceipt = JSON.parse(readFileSync(fixture.packageReceiptPath, "utf8"));
   traversalReceipt.appAsar = "../../outside.asar";
   writeFileSync(fixture.packageReceiptPath, `${JSON.stringify(traversalReceipt, null, 2)}\n`);
-  assert.throws(() => validateBrainPetPerformanceCandidate(fixture.options), /must stay under/i);
+  assert.throws(() => validateBrainPetPerformanceCandidate(fixture.options), /must stay under|path is invalid/i);
 });
 
 test("performance receipt is digest-checked and cannot overwrite an existing success", async () => {
