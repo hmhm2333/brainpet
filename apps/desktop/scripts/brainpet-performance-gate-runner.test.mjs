@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -10,8 +10,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract } from "../../../scripts/brainpet-release-contract.mjs";
-import { sha256Bytes, sha256File } from "./brainpet-performance-receipt.mjs";
-import { createBrainPetPerformanceGatePaths, createCleanPerformanceEnvironment, finalizePerformancePublication, queryWindowsProcessIdentity, readBrainPetPerformanceGateStatus, recoverOrRejectPerformanceLease } from "./brainpet-performance-gate-runner.mjs";
+import { sha256Bytes, sha256File, writeJsonExclusiveAtomic } from "./brainpet-performance-receipt.mjs";
+import { createBrainPetPerformanceGatePaths, createCleanPerformanceEnvironment, finalizePerformancePublication, handoffPerformanceLeaseAndPublishManifest, queryWindowsProcessIdentity, readBrainPetPerformanceGateStatus, recoverOrRejectPerformanceLease, updateOwnedPerformanceLease, validateWindowsJobSupervisorResult } from "./brainpet-performance-gate-runner.mjs";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(appDir, "..", "..");
@@ -89,6 +89,41 @@ test("startup lease handoff cannot be stolen before its manifest is published", 
   assert.equal(readFileSync(leasePath, "utf8").includes(runId), true);
   rmSync(leasePath, { force: true });
   createdPaths.pop();
+});
+
+test("production startup handoff publishes the manifest only after owner and revision transfer", async () => {
+  mkdirSync(runsRoot, { recursive: true });
+  const runId = `active-30m-${"a".repeat(40)}-1786900000000-${randomUUID()}`;
+  const manifestPath = join(runsRoot, `${runId}.manifest.json`);
+  const startingOwner = { pid: 5151, creationDate: "2026-08-17T00:00:00.000Z", executable: process.execPath, commandNeedles: ["start"] };
+  const workerOwner = { pid: 6262, creationDate: "2026-08-17T00:00:01.000Z", executable: process.execPath, commandNeedles: ["worker", runId] };
+  const manifest = { schemaVersion: 2, kind: "brainpet-performance-gate-run", runId };
+  await writeJsonExclusiveAtomic(performancePaths.leasePath, { runId, profile: "active-30m", manifest: toRepoRelative(manifestPath), owner: startingOwner, revision: 0, phase: "starting", activeChild: null });
+  await handoffPerformanceLeaseAndPublishManifest({
+    runId,
+    startingOwner,
+    workerOwner,
+    manifestPath,
+    manifest,
+    paths: performancePaths,
+    writeManifest: async (path, value) => {
+      const handedOff = JSON.parse(readFileSync(performancePaths.leasePath, "utf8"));
+      assert.deepEqual(handedOff.owner, workerOwner);
+      assert.equal(handedOff.revision, 1);
+      assert.equal(handedOff.phase, "worker-awaiting-manifest");
+      assert.equal(existsSync(path), false, "Manifest became observable before lease-writer ownership transferred.");
+      await writeJsonExclusiveAtomic(path, value);
+    },
+  });
+  const activeChild = { wrapper: workerOwner, process: null };
+  await updateOwnedPerformanceLease(runId, workerOwner, { activeChild, phase: "child-supervisor-ready" }, performancePaths);
+  const finalLease = JSON.parse(readFileSync(performancePaths.leasePath, "utf8"));
+  assert.equal(finalLease.revision, 2);
+  assert.deepEqual(finalLease.owner, workerOwner);
+  assert.deepEqual(finalLease.activeChild, activeChild);
+  assert.deepEqual(JSON.parse(readFileSync(manifestPath, "utf8")), manifest);
+  rmSync(performancePaths.leasePath, { force: true });
+  rmSync(manifestPath, { force: true });
 });
 
 test("interrupted worker recovery terminates its exact leased child tree before removing the lease", () => {
@@ -180,6 +215,23 @@ test("terminating the Windows Job supervisor kills its leased command", { skip: 
   assert.equal(queryWindowsProcessIdentity(supervised.ready.pid), null, "KILL_ON_JOB_CLOSE must terminate the leased command with its supervisor.");
 });
 
+test("Windows Job setup failure terminates the suspended child before the supervisor exits", { skip: process.platform !== "win32" }, async () => {
+  const token = `brainpet-job-assign-failure-${randomUUID()}`;
+  const supervised = await runWindowsJobSupervisorFixture(process.execPath, ["-e", "setInterval(()=>{},1000)", token], { forceAssignFailure: true });
+  assert.notEqual(supervised.exitCode, 0);
+  assert.equal(supervised.ready, null);
+  await waitForNoTestProcessByNeedle(token, 10_000);
+});
+
+test("runner rejects a preoccupied forged-success Job result when the supervisor cannot publish", { skip: process.platform !== "win32" }, async () => {
+  const supervised = await runWindowsJobSupervisorFixture(process.execPath, ["-e", "process.exit(0)"], { preoccupyResult: true });
+  assert.notEqual(supervised.exitCode, 0);
+  assert.throws(
+    () => validateWindowsJobSupervisorResult(supervised.exitCode, supervised.result, { runId: supervised.runId, pid: supervised.ready.pid }),
+    /does not match its supervisor exit status/i,
+  );
+});
+
 test("a corrupt performance lease fails closed and is not discarded", () => {
   mkdirSync(performanceRoot, { recursive: true });
   const leasePath = join(performanceRoot, "brainpet-performance-gate.lease.json");
@@ -258,7 +310,7 @@ function createRunFixture() {
   return { commit, runId, manifestPath, completionPath, resultPath, logPath, creationDate };
 }
 
-async function runWindowsJobSupervisorFixture(command, args, { interruptAfterResume = false } = {}) {
+async function runWindowsJobSupervisorFixture(command, args, { forceAssignFailure = false, interruptAfterResume = false, preoccupyResult = false } = {}) {
   mkdirSync(runsRoot, { recursive: true });
   const controlId = randomUUID();
   const runId = `active-30m-${"9".repeat(40)}-1786900000000-${randomUUID()}`;
@@ -278,6 +330,7 @@ async function runWindowsJobSupervisorFixture(command, args, { interruptAfterRes
     cwd: repoRoot,
     env: {
       ...createCleanPerformanceEnvironment(),
+      ...(forceAssignFailure ? { BRAINPET_TEST_FORCE_JOB_ASSIGN_FAILURE: "1" } : {}),
       BRAINPET_WRAPPED_CHILD_SPEC: JSON.stringify({ command, args, cwd: repoRoot, environmentEntries: Object.entries(createCleanPerformanceEnvironment()).map(([name, value]) => `${name}=${value}`) }),
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -287,12 +340,24 @@ async function runWindowsJobSupervisorFixture(command, args, { interruptAfterRes
   supervisor.stderr.setEncoding("utf8");
   supervisor.stderr.on("data", (chunk) => { stderr += chunk; });
   const completion = once(supervisor, "exit");
+  if (preoccupyResult) writeFileSync(resultPath, `${JSON.stringify({ schemaVersion: 1, kind: "brainpet-windows-job-result", runId, pid: 0, exitCode: 0, jobQuiescent: true, remainingProcesses: 0 })}\n`);
   writeFileSync(launchPermitPath, `${JSON.stringify({ runId })}\n`);
+  if (forceAssignFailure) {
+    const [exitCode, signal] = await completion;
+    assert.equal(signal, null, stderr);
+    assert.equal(existsSync(readyPath), false, "Assignment failure must occur before readiness is published.");
+    return { exitCode, runId, ready: null, result: null };
+  }
   await Promise.race([
     waitForTestPath(readyPath, 30_000),
     completion.then(([exitCode, signal]) => { throw new Error(`Windows Job supervisor exited before readiness (exit=${exitCode}, signal=${signal}): ${stderr}`); }),
   ]);
   const ready = JSON.parse(readFileSync(readyPath, "utf8"));
+  if (preoccupyResult) {
+    const occupied = JSON.parse(readFileSync(resultPath, "utf8"));
+    occupied.pid = ready.pid;
+    writeFileSync(resultPath, `${JSON.stringify(occupied)}\n`);
+  }
   writeFileSync(resumePermitPath, `${JSON.stringify({ runId, pid: ready.pid })}\n`);
   if (interruptAfterResume) {
     await waitForTestProcess(ready.pid, 5_000);
@@ -309,7 +374,21 @@ async function runWindowsJobSupervisorFixture(command, args, { interruptAfterRes
   }
   assert.equal(signal, null, stderr);
   assert.equal(existsSync(resultPath), true, stderr || "Windows Job supervisor did not publish a result.");
-  return { exitCode, ready, result: JSON.parse(readFileSync(resultPath, "utf8")) };
+  return { exitCode, runId, ready, result: JSON.parse(readFileSync(resultPath, "utf8")) };
+}
+
+async function waitForNoTestProcessByNeedle(needle, timeoutMs) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "$needle=$env:BRAINPET_TEST_PROCESS_NEEDLE; $matches=@(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($needle) }); if ($matches.Count -eq 0) { exit 0 } else { $matches | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress; exit 1 }"], {
+      env: { ...createCleanPerformanceEnvironment(), BRAINPET_TEST_PROCESS_NEEDLE: needle },
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    if (result.status === 0) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+  }
+  throw new Error(`Suspended test process survived failed Job assignment: ${needle}`);
 }
 
 async function waitForTestPath(path, timeoutMs) {

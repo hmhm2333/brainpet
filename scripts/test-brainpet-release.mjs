@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,7 +20,7 @@ import { validateBrainPetPerformanceReceiptSet } from "./brainpet-performance-re
 import { brainPetPerformanceReceiptWorkflow, brainPetPhysicalReceiptWorkflow, brainPetPublicReleaseFinalizeWorkflow, brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, signBrainPetReleaseEvidence, signBrainPetSubjects, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
 import { stageBrainPetPackageArtifacts, validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
 import { createBrainPetBuilderInvocation, parseBrainPetPackageArgs, prepareBrainPetBundledMarketplace, resolveBrainPetElectronDist, validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
-import { assertMacosCodeObjectIsUnsigned, resolveBrainPetResourcesRoot, validateUnsignedLinuxArtifacts } from "../apps/desktop/scripts/validate-brainpet-package.mjs";
+import { assertBrainPetAsarWorkspaceClosure, assertMacosCodeObjectIsUnsigned, resolveBrainPetResourcesRoot, validateUnsignedLinuxArtifacts } from "../apps/desktop/scripts/validate-brainpet-package.mjs";
 import { createBrainPetRuntimeTree } from "../apps/desktop/scripts/brainpet-runtime-tree.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -75,6 +76,19 @@ try {
   const publicLinuxInvocation = createBrainPetBuilderInvocation(parseBrainPetPackageArgs(["--platform", "linux", "--arch", "x64", "--target", "installer", "--mode", "public-release", "--dry-run"]));
   assert.ok(publicLinuxInvocation.args.includes("AppImage"));
   assert.ok(publicLinuxInvocation.args.includes("deb"));
+  const asarSource = join(testRoot, "malicious-asar-source");
+  const asarClientRoot = join(asarSource, "node_modules", "@open-pets", "client");
+  mkdirSync(join(asarClientRoot, "dist"), { recursive: true });
+  mkdirSync(join(asarClientRoot, ".test-dist"), { recursive: true });
+  writeFileSync(join(asarSource, "package.json"), "{\"name\":\"brainpet-asar-fixture\",\"version\":\"1.0.0\"}\n");
+  writeFileSync(join(asarClientRoot, "package.json"), "{\"name\":\"@open-pets/client\",\"version\":\"1.0.0\"}\n");
+  writeFileSync(join(asarClientRoot, "dist", "index.js"), "export {};\n");
+  writeFileSync(join(asarClientRoot, ".test-dist", "hidden-test.js"), "throw new Error('must not ship');\n");
+  const maliciousAsar = join(testRoot, "malicious-workspace.app.asar");
+  const desktopRequire = createRequire(join(root, "apps", "desktop", "package.json"));
+  const builderRequire = createRequire(desktopRequire.resolve("electron-builder"));
+  await builderRequire("@electron/asar").createPackage(asarSource, maliciousAsar);
+  assert.throws(() => assertBrainPetAsarWorkspaceClosure(maliciousAsar), /non-runtime workspace file.*\.test-dist/i);
   const dryRunFixture = parseBrainPetPackageArgs(["--platform", "linux", "--arch", "x64", "--target", "installer", "--mode", "private-test", "--dry-run"]);
   const fakeElectronPackage = join(root, "node_modules", ".pnpm", "electron@42.0.0", "node_modules", "electron", "package.json");
   assert.equal(

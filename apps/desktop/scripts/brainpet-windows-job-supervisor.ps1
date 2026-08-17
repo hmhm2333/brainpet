@@ -152,6 +152,9 @@ public static class BrainPetWindowsJobSupervisor
     private static extern bool TerminateJobObject(IntPtr job, uint exitCode);
 
     [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateProcess(IntPtr process, uint exitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -165,7 +168,8 @@ public static class BrainPetWindowsJobSupervisor
         string runId,
         string readyPath,
         string resumePermitPath,
-        string resultPath)
+        string resultPath,
+        bool forceAssignFailure)
     {
         IntPtr job = IntPtr.Zero;
         IntPtr environment = IntPtr.Zero;
@@ -188,6 +192,7 @@ public static class BrainPetWindowsJobSupervisor
             Ensure(CreateProcess(null, commandLine, IntPtr.Zero, IntPtr.Zero, true,
                 CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
                 environment, currentDirectory, ref startup, out child), "CreateProcess");
+            if (forceAssignFailure) throw new InvalidOperationException("Injected AssignProcessToJobObject failure.");
             Ensure(AssignProcessToJobObject(job, child.hProcess), "AssignProcessToJobObject");
             jobAssigned = true;
 
@@ -221,9 +226,22 @@ public static class BrainPetWindowsJobSupervisor
                 JsonEscape(runId), child.dwProcessId, exitCode, quiescent ? "true" : "false", remaining));
             return quiescent && exitCode == 0 ? 0 : 1;
         }
-        catch
+        catch (Exception primaryError)
         {
-            if (jobAssigned) TerminateJobObject(job, 255);
+            try
+            {
+                if (jobAssigned) Ensure(TerminateJobObject(job, 255), "TerminateJobObject");
+                else if (child.hProcess != IntPtr.Zero)
+                {
+                    Ensure(TerminateProcess(child.hProcess, 255), "TerminateProcess");
+                    uint terminated = WaitForSingleObject(child.hProcess, 10000);
+                    Ensure(terminated == WAIT_OBJECT_0, terminated == WAIT_FAILED ? "WaitForSingleObject" : "Suspended child termination wait");
+                }
+            }
+            catch (Exception cleanupError)
+            {
+                throw new AggregateException("BrainPet Windows Job setup failed and its suspended child could not be proven terminated.", primaryError, cleanupError);
+            }
             throw;
         }
         finally
@@ -343,6 +361,7 @@ $exitCode = [BrainPetWindowsJobSupervisor]::Run(
   $RunId,
   $ReadyPath,
   $ResumePermitPath,
-  $ResultPath
+  $ResultPath,
+  [Environment]::GetEnvironmentVariable("BRAINPET_TEST_FORCE_JOB_ASSIGN_FAILURE") -eq "1"
 )
 exit $exitCode

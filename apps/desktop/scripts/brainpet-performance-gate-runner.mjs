@@ -100,8 +100,7 @@ export async function startBrainPetPerformanceGate(profile) {
     // The worker cannot observe the manifest until the startup process has handed it
     // exclusive lease-writer ownership. This prevents a parent/worker RMW race from
     // overwriting activeChild during startup.
-    await updateOwnedLease(runId, currentProcessIdentity(), { owner: manifest.runner, phase: "worker-awaiting-manifest" });
-    await writeJsonExclusiveAtomic(manifestPath, manifest);
+    await handoffPerformanceLeaseAndPublishManifest({ runId, startingOwner: currentProcessIdentity(), workerOwner: manifest.runner, manifestPath, manifest });
     child.unref();
     return { manifestPath, manifest };
   } catch (error) {
@@ -397,17 +396,22 @@ function validateGateFile(gateFile, manifest) {
   validateBrainPetFormalGateResult(gateFile.gateResult, manifest.profile);
 }
 
-async function acquirePerformanceLease(value) {
-  try { await writeJsonExclusiveAtomic(leasePath, { ...value, revision: 0, phase: "starting", activeChild: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); }
+async function acquirePerformanceLease(value, paths = defaultPerformancePaths) {
+  try { await writeJsonExclusiveAtomic(paths.leasePath, { ...value, revision: 0, phase: "starting", activeChild: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); }
   catch (error) { if (error?.code === "EEXIST") throw new Error("Another BrainPet performance gate acquired the global lease first."); throw error; }
 }
 
-async function updateOwnedLease(runId, expectedOwner, patch) {
-  const current = readJsonRegularFile(leasePath, 64 * 1024, "BrainPet performance lease");
+export async function updateOwnedPerformanceLease(runId, expectedOwner, patch, paths = defaultPerformancePaths) {
+  const current = readJsonRegularFile(paths.leasePath, 64 * 1024, "BrainPet performance lease");
   assert.equal(current.runId, runId, "BrainPet performance lease ownership changed unexpectedly.");
   assert.deepEqual(current.owner, expectedOwner, "BrainPet performance lease writer ownership changed unexpectedly.");
   assert.ok(Number.isInteger(current.revision) && current.revision >= 0, "BrainPet performance lease revision is invalid.");
-  await writeJsonReplaceAtomic(leasePath, { ...current, ...patch, revision: current.revision + 1, updatedAt: new Date().toISOString() });
+  await writeJsonReplaceAtomic(paths.leasePath, { ...current, ...patch, revision: current.revision + 1, updatedAt: new Date().toISOString() });
+}
+
+export async function handoffPerformanceLeaseAndPublishManifest({ runId, startingOwner, workerOwner, manifestPath, manifest, paths = defaultPerformancePaths, writeManifest = writeJsonExclusiveAtomic }) {
+  await updateOwnedPerformanceLease(runId, startingOwner, { owner: workerOwner, phase: "worker-awaiting-manifest" }, paths);
+  await writeManifest(manifestPath, manifest);
 }
 
 function releaseOwnedLease(runId) {
@@ -616,7 +620,7 @@ async function runChild(command, args, cwd, environment, runId, leaseOwner) {
       commandNeedles: [basename(supervisorScript), runId],
     };
     activeChild = { wrapper: supervisorIdentity, process: null };
-    await updateOwnedLease(runId, leaseOwner, { activeChild, phase: "child-supervisor-ready" });
+    await updateOwnedPerformanceLease(runId, leaseOwner, { activeChild, phase: "child-supervisor-ready" });
     leaseUpdated = true;
     await writeJsonExclusiveAtomic(launchPermitPath, { schemaVersion: 1, kind: "brainpet-windows-job-launch-permit", runId });
     await Promise.race([
@@ -631,18 +635,12 @@ async function runChild(command, args, cwd, environment, runId, leaseOwner) {
     const childIdentity = { pid: ready.pid, creationDate: childIdentitySnapshot.creationDate, executable: childIdentitySnapshot.executablePath, commandNeedles: descendantExpectation.commandNeedles };
     assert.equal(matchesProcessIdentity(queryWindowsProcessIdentity(childIdentity.pid), childIdentity), true, "BrainPet child process identity did not match the leased command.");
     activeChild = { wrapper: supervisorIdentity, process: childIdentity };
-    await updateOwnedLease(runId, leaseOwner, { activeChild, phase: "child-running" });
+    await updateOwnedPerformanceLease(runId, leaseOwner, { activeChild, phase: "child-running" });
     await writeJsonExclusiveAtomic(resumePermitPath, { schemaVersion: 1, kind: "brainpet-windows-job-resume-permit", runId, pid: ready.pid });
-    await completion;
+    const supervisorExitCode = await completion;
     await waitForPath(resultPath, 5_000);
     const result = readJsonRegularFile(resultPath, 16 * 1024, "BrainPet Windows Job result");
-    assert.deepEqual(
-      { schemaVersion: result.schemaVersion, kind: result.kind, runId: result.runId, pid: result.pid },
-      { schemaVersion: 1, kind: "brainpet-windows-job-result", runId, pid: ready.pid },
-    );
-    assert.ok(Number.isInteger(result.exitCode) && result.exitCode >= 0, "BrainPet Windows Job result has an invalid exit code.");
-    assert.equal(result.remainingProcesses, 0, "BrainPet wrapped command left background processes in its Windows Job.");
-    assert.equal(result.jobQuiescent, true, "BrainPet Windows Job did not attest a quiescent complete process tree.");
+    validateWindowsJobSupervisorResult(supervisorExitCode, result, { runId, pid: ready.pid });
     safeToClear = true;
     return result.exitCode;
   } catch (error) {
@@ -659,7 +657,7 @@ async function runChild(command, args, cwd, environment, runId, leaseOwner) {
   } finally {
     if (leaseUpdated && safeToClear) {
       try {
-        await updateOwnedLease(runId, leaseOwner, { activeChild: null, phase: "running" });
+        await updateOwnedPerformanceLease(runId, leaseOwner, { activeChild: null, phase: "running" });
       } catch (error) {
         if (primaryError) throw new AggregateError([primaryError, error], "BrainPet child failed and its lease could not be cleared.");
         throw error;
@@ -667,6 +665,20 @@ async function runChild(command, args, cwd, environment, runId, leaseOwner) {
     }
     await Promise.all([launchPermitPath, readyPath, resumePermitPath, resultPath].map((path) => rm(path, { force: true }).catch(() => {})));
   }
+}
+
+export function validateWindowsJobSupervisorResult(supervisorExitCode, result, expected) {
+  assert.deepEqual(
+    { schemaVersion: result.schemaVersion, kind: result.kind, runId: result.runId, pid: result.pid },
+    { schemaVersion: 1, kind: "brainpet-windows-job-result", runId: expected.runId, pid: expected.pid },
+  );
+  assert.ok(Number.isInteger(result.exitCode) && result.exitCode >= 0, "BrainPet Windows Job result has an invalid exit code.");
+  assert.equal(typeof result.jobQuiescent, "boolean", "BrainPet Windows Job result lacks an exact quiescence outcome.");
+  assert.ok(Number.isInteger(result.remainingProcesses) && result.remainingProcesses >= 0, "BrainPet Windows Job result has an invalid remaining-process count.");
+  const expectedSupervisorExitCode = result.jobQuiescent && result.exitCode === 0 ? 0 : 1;
+  assert.equal(supervisorExitCode, expectedSupervisorExitCode, "BrainPet Windows Job result does not match its supervisor exit status.");
+  assert.equal(result.remainingProcesses, 0, "BrainPet wrapped command left background processes in its Windows Job.");
+  assert.equal(result.jobQuiescent, true, "BrainPet Windows Job did not attest a quiescent complete process tree.");
 }
 
 function createDescendantExpectation(command, args) {
