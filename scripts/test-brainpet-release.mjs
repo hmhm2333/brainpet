@@ -68,7 +68,7 @@ try {
   assert.throws(() => assertBrainPetBinary(Buffer.alloc(20 * 1024, 7), brainPetReleaseTargets[0]), /Unsupported executable/);
   for (const target of brainPetReleaseTargets) assert.deepEqual(validatePublicReleaseEnvironment(target), brainPetDistributionContract.releasePolicy);
   assert.deepEqual(brainPetReleaseTargets.map((target) => target.supportLevel), ["stable", "preview", "beta", "stable", "beta", "preview"]);
-  const versionFixture = parseBrainPetPackageArgs(["--platform", "windows", "--arch", "x64", "--target", "dir", "--mode", "private-test", "--app-version", "3.3.999", "--output", "apps/desktop/dist-brainpet/contract-fixture"]);
+  const versionFixture = parseBrainPetPackageArgs(["--platform", "windows", "--arch", "x64", "--target", "dir", "--mode", "private-test", "--dry-run", "--app-version", "3.3.999", "--output", "apps/desktop/dist-brainpet/contract-fixture"]);
   const invocation = createBrainPetBuilderInvocation(versionFixture);
   assert.ok(invocation.args.some((arg) => arg.endsWith("extraMetadata.version=3.3.999")));
   const publicWindowsInvocation = createBrainPetBuilderInvocation(parseBrainPetPackageArgs(["--platform", "windows", "--arch", "x64", "--target", "installer", "--mode", "public-release", "--dry-run"]));
