@@ -84,7 +84,7 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
 ## `0dacd88` 历史发行合同（已由 2026-08-16 决策替代）
 
 - `config/brainpet-distribution.json` 是产品身份、Bridge 版本、deadline 与六平台目标矩阵的机器事实源。
-- Electron builder 分为 `electron-builder.brainpet.base.yml`、`electron-builder.brainpet.private.yml` 和 `electron-builder.brainpet.public.yml`。私测包进入 `dist-brainpet/private-test`；公开包固定关闭平台签名与公证，并对意外签名 fail closed。
+- Electron builder 分为 `electron-builder.brainpet.base.yml`、`electron-builder.brainpet.private.yml` 和 `electron-builder.brainpet.public.yml`。私测包进入 `dist-brainpet/private-test`；公开包固定关闭平台签名与公证。macOS 公开构建在 DMG 生成前移除 Electron 上游继承的代码签名（不跟随 Framework symlink），随后仍以 `codesign` 的精确未签名结果 fail closed。
 - `apps/desktop/scripts/brainpet-package.mjs` 只接受平台、架构、产物类型与 `private-test/public-release` 模式；`package:brainpet:matrix` 对六目标和两种模式做无副作用 dry-run。
 - `integrations/codex/scripts/assemble-bridge-release.mjs` 只从 CI helper 产物装配插件，并生成逐文件 SHA-256 回执。
 - `brainpet:bridge:validate-release` 是二进制发行门；源码 checkout 没有六个 helper 时失败是正确行为。`brainpet:release:test` 是本地源码与装配逻辑门，不替代 Sigstore 或实机验证。
@@ -101,7 +101,7 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
   file/directory tree（含每个文件大小与 SHA-256）、包内 native helper 和每个 installer 的 SHA-256。单目标回执固定写
   `publicReleaseReady=false`，不能越权代替聚合门。
 - 私测 portability workflow 在 GitHub 托管的干净 runner 上，对 Windows x64 NSIS、
-  macOS arm64 DMG、Linux x64 AppImage/deb 运行真实安装、默认 discovery、包内 helper、
+  macOS arm64 DMG、Linux x64 AppImage/deb 运行真实安装、默认 discovery、包内 helper（先按回执 hash 复制到隔离验收目录，确保卸载后仍能验证 fail-open）、
   Adapter 安装/升级/卸载、冷唤醒、状态保留升级和 runtime 卸载。
 - 公开 workflow 反向验证 Windows Authenticode 为 `NotSigned`；macOS app/DMG 的 `codesign`
   必须明确返回“完全未签名”，ad-hoc、Apple Development、Mac App Store、自签等任意签名都失败；

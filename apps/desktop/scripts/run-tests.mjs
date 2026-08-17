@@ -7,7 +7,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { readdir } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import electronPath from "electron";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -54,6 +54,7 @@ async function main() {
 
   // 2. Build tests
   console.log("\n[2/5] Building tests...");
+  await rm(join(rootDir, ".test-dist"), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   await run("pnpm", ["test:build"]);
 
   const behaviorTests = (await readdir(join(rootDir, ".test-dist", "tests")))

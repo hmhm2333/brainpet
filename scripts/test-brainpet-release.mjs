@@ -20,11 +20,14 @@ import { downloadBrainPetPerformanceReceipts } from "./download-brainpet-perform
 import { validateBrainPetPerformanceReceiptSet } from "./brainpet-performance-release-contract.mjs";
 import { brainPetPerformanceReceiptWorkflow, brainPetPhysicalReceiptWorkflow, brainPetPublicReleaseFinalizeWorkflow, brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, signBrainPetReleaseEvidence, signBrainPetSubjects, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
 import { stageBrainPetPackageArtifacts, validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
-import { createBrainPetBuilderInvocation, parseBrainPetPackageArgs, prepareBrainPetBundledMarketplace, resolveBrainPetElectronDist, validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
+import { createBrainPetBuilderInvocation, parseBrainPetPackageArgs, prepareBrainPetBundledMarketplace, resolveBrainPetElectronDist, runBrainPetElectronBuilder, validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
 import { assertBrainPetAsarWorkspaceClosure, assertMacosCodeObjectIsUnsigned, matchesBrainPetArtifactArchitecture, resolveBrainPetResourcesRoot, validateUnsignedLinuxArtifacts } from "../apps/desktop/scripts/validate-brainpet-package.mjs";
 import { createBrainPetRuntimeTree } from "../apps/desktop/scripts/brainpet-runtime-tree.mjs";
+import { materializeLifecycleHelper, removeOwnedLifecycleDiscovery, stageLifecycleAppImageForExtraction } from "../apps/desktop/scripts/brainpet-package-lifecycle-support.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const desktopScriptRequire = createRequire(join(root, "apps", "desktop", "package.json"));
+const { stripMacosSignatures } = desktopScriptRequire("./scripts/brainpet-strip-macos-signatures.cjs");
 const testRoot = join(root, "output", "brainpet-m5-release-test", String(process.pid));
 const artifactsRoot = join(testRoot, "artifacts");
 const pluginRoot = join(testRoot, "brainpet-codex-bridge");
@@ -139,6 +142,70 @@ try {
   );
   assert.equal(resolvedMacDist, join(dirname(fakeElectronPackage), "dist"));
   assert.equal(electronLoaded, true, "missing Electron distributions must be prepared before electron-builder runs");
+  const signatureFixtureRoot = join(testRoot, "macos-signature-strip");
+  const signatureApp = join(signatureFixtureRoot, "BrainPet.app");
+  const signatureExecutable = join(signatureApp, "Contents", "MacOS", "brainpet.node");
+  const signatureFramework = join(signatureApp, "Contents", "Frameworks", "Fixture.framework");
+  const signatureFrameworkExecutable = join(signatureFramework, "Versions", "A", "Fixture.dylib");
+  mkdirSync(dirname(signatureExecutable), { recursive: true });
+  mkdirSync(dirname(signatureFrameworkExecutable), { recursive: true });
+  writeFileSync(signatureExecutable, "brainpet\n");
+  writeFileSync(signatureFrameworkExecutable, "framework\n");
+  chmodSync(signatureExecutable, 0o755);
+  chmodSync(signatureFrameworkExecutable, 0o755);
+  const signedMacosCandidates = new Set([signatureApp, signatureExecutable, signatureFramework, signatureFrameworkExecutable]);
+  const strippedMacos = stripMacosSignatures(signatureFixtureRoot, (_command, args) => {
+    const candidate = args.at(-1);
+    if (args[0] === "--display") return signedMacosCandidates.has(candidate)
+      ? { status: 0, stdout: "Signature=adhoc", stderr: "" }
+      : { status: 1, stdout: "", stderr: `${candidate}: code object is not signed at all` };
+    assert.deepEqual(args.slice(0, 1), ["--remove-signature"]);
+    return { status: signedMacosCandidates.delete(candidate) ? 0 : 1, stdout: "", stderr: "" };
+  });
+  assert.equal(strippedMacos.stripped.length, 4);
+  assert.equal(signedMacosCandidates.size, 0);
+  const macRetryRoot = join(testRoot, "macos-package-retry");
+  mkdirSync(macRetryRoot);
+  writeFileSync(join(macRetryRoot, "partial.dmg"), "partial\n");
+  let macAttempts = 0;
+  await runBrainPetElectronBuilder({ releaseTarget: getBrainPetReleaseTarget("macos", "x64"), outputRoot: macRetryRoot }, {}, async () => {
+    macAttempts += 1;
+    if (macAttempts === 1) throw new Error("hdiutil resource busy");
+  }, async () => {});
+  assert.equal(macAttempts, 2);
+  assert.equal(existsSync(macRetryRoot), false);
+  let deterministicMacAttempts = 0;
+  await assert.rejects(runBrainPetElectronBuilder({ releaseTarget: getBrainPetReleaseTarget("macos", "x64"), outputRoot: join(testRoot, "macos-no-retry") }, {}, async () => {
+    deterministicMacAttempts += 1;
+    throw new Error("deterministic macOS builder failure");
+  }, async () => {}), /deterministic macOS builder failure/);
+  assert.equal(deterministicMacAttempts, 1);
+  let windowsAttempts = 0;
+  await assert.rejects(runBrainPetElectronBuilder({ releaseTarget: getBrainPetReleaseTarget("windows", "x64"), outputRoot: join(testRoot, "windows-no-retry") }, {}, async () => {
+    windowsAttempts += 1;
+    throw new Error("deterministic builder failure");
+  }, async () => {}), /deterministic builder failure/);
+  assert.equal(windowsAttempts, 1);
+  const lifecycleArtifact = join(testRoot, "downloaded-BrainPet.AppImage");
+  writeFileSync(lifecycleArtifact, "appimage-bytes\n");
+  const stagedLifecycleArtifact = stageLifecycleAppImageForExtraction(lifecycleArtifact, testRoot, "fixture");
+  assert.notEqual(stagedLifecycleArtifact.stagedArtifact, lifecycleArtifact);
+  assert.deepEqual(readFileSync(stagedLifecycleArtifact.stagedArtifact), readFileSync(lifecycleArtifact));
+  const installedHelperRoot = join(testRoot, "installed-helper");
+  const installedHelper = join(installedHelperRoot, "brainpet-hook");
+  mkdirSync(installedHelperRoot);
+  writeFileSync(installedHelper, "verified-helper\n");
+  const installedHelperSha256 = createHash("sha256").update(readFileSync(installedHelper)).digest("hex");
+  const durableHelper = materializeLifecycleHelper(installedHelper, testRoot, "current-fixture", "brainpet-hook", installedHelperSha256);
+  rmSync(installedHelperRoot, { recursive: true });
+  assert.deepEqual(readFileSync(durableHelper), Buffer.from("verified-helper\n"), "Packaged helper must remain callable after uninstall removes its source app.");
+  const ownedDiscoveryPath = join(testRoot, "owned-ipc.json");
+  const ownedDiscovery = { product: "brainpet", appId: "dev.brainpet.app", pid: 123, token: "fixture-token", endpoint: "tcp://127.0.0.1:12345" };
+  writeFileSync(ownedDiscoveryPath, JSON.stringify(ownedDiscovery));
+  assert.equal(removeOwnedLifecycleDiscovery(ownedDiscoveryPath, ownedDiscovery), true);
+  writeFileSync(ownedDiscoveryPath, JSON.stringify({ ...ownedDiscovery, token: "replacement-token" }));
+  assert.throws(() => removeOwnedLifecycleDiscovery(ownedDiscoveryPath, ownedDiscovery), /ownership changed/i);
+  assert.equal(existsSync(ownedDiscoveryPath), true, "Lifecycle cleanup must not remove another runtime's discovery.");
   assert.equal(resolveBrainPetResourcesRoot("/fixture/app", getBrainPetReleaseTarget("linux", "x64")), join("/fixture/app", "resources"));
   assert.equal(resolveBrainPetResourcesRoot("/fixture/app", getBrainPetReleaseTarget("macos", "arm64")), join("/fixture/app", "Resources"));
   assert.equal(assertMacosCodeObjectIsUnsigned({ status: 1, stdout: "", stderr: "code object is not signed at all" }, "fixture"), true);

@@ -25,6 +25,8 @@ assert.match(workspacePackage.scripts["brainpet:performance:candidate:prepare"],
 const baseConfig = readFileSync(join(desktop, "electron-builder.brainpet.base.yml"), "utf8");
 const privateConfig = readFileSync(join(desktop, "electron-builder.brainpet.private.yml"), "utf8");
 const publicConfig = readFileSync(join(desktop, "electron-builder.brainpet.public.yml"), "utf8");
+const macosSignatureHook = readFileSync(join(desktop, "scripts", "brainpet-strip-macos-signatures.cjs"), "utf8");
+const packageLifecycleSource = readFileSync(join(desktop, "scripts", "brainpet-package-lifecycle.mjs"), "utf8");
 assert.match(baseConfig, /^appId: dev\.brainpet\.app$/m);
 assert.match(baseConfig, /^productName: BrainPet$/m);
 assert.match(baseConfig, /^executableName: brainpet$/m);
@@ -36,6 +38,13 @@ assert.match(privateConfig, /signAndEditExecutable: false/);
 assert.match(publicConfig, /dist-brainpet\/public-release/);
 assert.match(publicConfig, /BrainPet-Unsigned-/);
 assert.match(publicConfig, /identity: null/);
+assert.match(publicConfig, /afterPack:\s+scripts\/brainpet-strip-macos-signatures\.cjs/);
+assert.match(macosSignatureHook, /--remove-signature/);
+assert.match(macosSignatureHook, /code object is not signed at all/);
+assert.match(macosSignatureHook, /isSymbolicLink\(\)\) return/);
+assert.match(packageLifecycleSource, /stageLifecycleAppImageForExtraction/);
+assert.match(packageLifecycleSource, /apt-get", "install/);
+assert.match(packageLifecycleSource, /removeOwnedLifecycleDiscovery/);
 assert.match(publicConfig, /hardenedRuntime: false/);
 assert.match(publicConfig, /gatekeeperAssess: false/);
 assert.match(publicConfig, /notarize: false/);
@@ -136,6 +145,8 @@ for (const [name, source] of [["portability", portabilityWorkflow], ["public rel
   assert.doesNotMatch(source, /pnpm --filter @open-pets\/desktop\.\.\. rebuild[^\r\n]*workerd/, `BrainPet ${name} runtime jobs must not execute the unsupported root-only workerd build on Windows ARM64.`);
 }
 assert.match(portabilityWorkflow, /source-contract:[\s\S]*?pnpm install --frozen-lockfile[\s\S]*?pnpm brainpet:release:test/, "The portability source-contract job must still install and test the complete workspace.");
+assert.match(portabilityWorkflow, /runner\.os == 'Linux'[\s\S]*?xvfb-run -a node apps\/desktop\/scripts\/brainpet-package-lifecycle\.mjs/, "Linux installer lifecycle and helper cold wake must share one Xvfb session.");
+assert.match(portabilityWorkflow, /runner\.os != 'Linux'[\s\S]*?node apps\/desktop\/scripts\/brainpet-package-lifecycle\.mjs/, "Windows and macOS installer lifecycle must run the same production script without Xvfb.");
 for (const [name, source] of [["portability", portabilityWorkflow], ["public release", publicReleaseWorkflow]]) {
   const pnpmSetupCount = source.match(/pnpm\/action-setup@[a-f0-9]{40}/g)?.length ?? 0;
   const compatibleNodeSetupCount = source.match(/node-version:\s*22\b/g)?.length ?? 0;

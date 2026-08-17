@@ -180,6 +180,7 @@ export function assertCanonicalPackageInputsTracked() {
     "apps/desktop/electron-builder.brainpet.base.yml",
     "apps/desktop/electron-builder.brainpet.private.yml",
     "apps/desktop/electron-builder.brainpet.public.yml",
+    "apps/desktop/scripts/brainpet-strip-macos-signatures.cjs",
     "integrations/codex",
     "native/brainpet-hook/src",
     "native/brainpet-hook/Cargo.toml",
@@ -249,16 +250,8 @@ async function main() {
   prepareBrainPetBundledMarketplace(options);
   const nsisDir = findCachedTool("nsis-3.0.4.1", join("Bin", "makensis.exe"));
   const nsisResourcesDir = findCachedTool("nsis-resources-3.4.1", join("plugins", "x86-unicode"));
-  await new Promise((resolvePromise, reject) => {
-    const child = spawn(invocation.command, invocation.args, {
-      cwd: invocation.cwd,
-      env: { ...process.env, ...(nsisDir ? { ELECTRON_BUILDER_NSIS_DIR: nsisDir } : {}), ...(nsisResourcesDir ? { ELECTRON_BUILDER_NSIS_RESOURCES_DIR: nsisResourcesDir } : {}) },
-      stdio: "inherit",
-      windowsHide: true,
-    });
-    child.once("error", reject);
-    child.once("exit", (code, signal) => signal ? reject(new Error(`electron-builder terminated by ${signal}`)) : code === 0 ? resolvePromise() : reject(new Error(`electron-builder exited with ${code ?? "unknown"}`)));
-  });
+  const builderEnvironment = { ...process.env, ...(nsisDir ? { ELECTRON_BUILDER_NSIS_DIR: nsisDir } : {}), ...(nsisResourcesDir ? { ELECTRON_BUILDER_NSIS_RESOURCES_DIR: nsisResourcesDir } : {}) };
+  await runBrainPetElectronBuilder(options, invocation, () => runCommand(invocation.command, invocation.args, invocation.cwd, builderEnvironment, "electron-builder"));
   const receipt = validateBrainPetPackage({
     outputRoot: options.outputRoot,
     targetId: options.releaseTarget.id,
@@ -266,6 +259,25 @@ async function main() {
     packageTarget: options.target,
   });
   console.log(`BrainPet package and automatic validation passed (${receipt.target}, publicReleaseReady=${receipt.publicReleaseReady}).`);
+}
+
+export async function runBrainPetElectronBuilder(options, invocation, runOnce, wait = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds))) {
+  const attempts = options.releaseTarget.platform === "macos" ? 2 : 1;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await runOnce(invocation);
+      return;
+    } catch (error) {
+      lastError = error;
+      const transientMacosDmgFailure = /resource busy|couldn'?t eject|unable to detach device cleanly/i.test(error instanceof Error ? error.message : String(error));
+      if (attempt === attempts || !transientMacosDmgFailure) break;
+      console.warn(`BrainPet macOS packaging attempt ${attempt} failed; retrying once after a clean output reset.`);
+      rmSync(options.outputRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      await wait(5_000);
+    }
+  }
+  throw lastError;
 }
 
 function runCommand(command, args, cwd, env, label) {

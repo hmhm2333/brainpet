@@ -9,9 +9,11 @@ import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { createServer } from "node:net";
 
 import { brainPetDistributionContract, brainPetReleaseTargets } from "../../../scripts/brainpet-release-contract.mjs";
+import { materializeLifecycleHelper, removeOwnedLifecycleDiscovery, stageLifecycleAppImageForExtraction } from "./brainpet-package-lifecycle-support.mjs";
 
 const appDir = resolve(import.meta.dirname, "..");
 const maxReceiptBytes = 2 * 1024 * 1024;
+let debPackageIndexReady = false;
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
@@ -66,11 +68,11 @@ async function main() {
     }
 
     runHelper(previousHelper, fixture.environment, "PreToolUse", "cold-wake");
-    await waitForFile(paths.discovery, 10_000);
+    const coldDiscovery = await waitForJson(paths.discovery, (value) => value.product === "brainpet" && value.appId === brainPetDistributionContract.identity.appId, 10_000);
     const coldState = await waitForInstallationState(paths.userData, (state) => state.lifecycleVerifiedAt > coldWakeBefore, 10_000);
     coldWakeAfter = coldState.lifecycleVerifiedAt;
-    await terminateInstalledRuntime(paths.executable);
-    await waitForMissing(paths.discovery, 10_000);
+    await terminateDiscoveredRuntime(coldDiscovery, paths.executable);
+    await cleanupTerminatedRuntimeDiscovery(paths.discovery, coldDiscovery);
 
     installArtifact(currentPackage.artifact.path, target, options.artifactKind, paths, scratch);
     currentHelper = materializePackagedHelper(currentPackage, target, options.artifactKind, paths, scratch, "current");
@@ -239,7 +241,11 @@ function installArtifact(path, target, kind, paths, scratch) {
     chmodSync(paths.executable, 0o755);
     return;
   }
-  runRequired("sudo", ["dpkg", "-i", path], { timeout: 120_000 });
+  if (!debPackageIndexReady) {
+    runRequired("sudo", ["env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "update"], { timeout: 120_000 });
+    debPackageIndexReady = true;
+  }
+  runRequired("sudo", ["env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "--yes", "--no-install-recommends", path], { timeout: 180_000 });
 }
 
 function uninstallArtifact(path, target, kind, paths) {
@@ -263,20 +269,15 @@ function uninstallArtifact(path, target, kind, paths) {
 }
 
 function materializePackagedHelper(packageInfo, target, kind, paths, scratch, label) {
-  if (kind !== "appimage") {
-    const helper = join(paths.resources, "integrations", "codex", "brainpet-marketplace", "plugins", "brainpet-codex-bridge", "bin", target.id, target.helperName);
-    assertRegularFile(helper, "Installed packaged helper");
-    assert.equal(hashFile(helper), packageInfo.receipt.nativeBridgeHelperSha256);
-    return helper;
+  let helperSource;
+  if (kind === "appimage") {
+    const staged = stageLifecycleAppImageForExtraction(packageInfo.artifact.path, scratch, label);
+    runRequired(staged.stagedArtifact, ["--appimage-extract"], { cwd: staged.extractRoot, env: { ...process.env, APPIMAGE_EXTRACT_AND_RUN: "1" }, timeout: 120_000 });
+    helperSource = join(staged.extractRoot, "squashfs-root", "resources", "integrations", "codex", "brainpet-marketplace", "plugins", "brainpet-codex-bridge", "bin", target.id, target.helperName);
+  } else {
+    helperSource = join(paths.resources, "integrations", "codex", "brainpet-marketplace", "plugins", "brainpet-codex-bridge", "bin", target.id, target.helperName);
   }
-  const extractRoot = join(scratch, `appimage-${label}`);
-  mkdirSync(extractRoot, { recursive: true });
-  runRequired(packageInfo.artifact.path, ["--appimage-extract"], { cwd: extractRoot, env: { ...process.env, APPIMAGE_EXTRACT_AND_RUN: "1" }, timeout: 120_000 });
-  const helper = join(extractRoot, "squashfs-root", "resources", "integrations", "codex", "brainpet-marketplace", "plugins", "brainpet-codex-bridge", "bin", target.id, target.helperName);
-  assertRegularFile(helper, "AppImage packaged helper");
-  assert.equal(hashFile(helper), packageInfo.receipt.nativeBridgeHelperSha256);
-  chmodSync(helper, 0o755);
-  return helper;
+  return materializeLifecycleHelper(helperSource, scratch, label, target.helperName, packageInfo.receipt.nativeBridgeHelperSha256);
 }
 
 async function launchRuntime(executable, paths, fixture, options) {
@@ -288,17 +289,20 @@ async function launchRuntime(executable, paths, fixture, options) {
   let command = executable;
   let commandArgs = args;
   if (options.target.platform === "linux") {
-    command = "xvfb-run";
-    commandArgs = ["-a", executable, ...args, "--no-sandbox"];
+    commandArgs = [...args, "--no-sandbox"];
+    if (!environment.DISPLAY) {
+      command = "xvfb-run";
+      commandArgs = ["-a", executable, ...commandArgs];
+    }
   }
   const logs = [];
   const child = spawn(command, commandArgs, { env: environment, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   child.stdout?.on("data", (chunk) => logs.push(String(chunk)));
   child.stderr?.on("data", (chunk) => logs.push(String(chunk)));
   try {
-    await waitForJson(paths.discovery, (value) => value.product === "brainpet" && value.appId === brainPetDistributionContract.identity.appId, 20_000);
+    const discovery = await waitForJson(paths.discovery, (value) => value.product === "brainpet" && value.appId === brainPetDistributionContract.identity.appId, 20_000);
     if (options.openSetup) await waitForTarget(debugPort, (target) => target.url.includes("brainpet-setup.html"), 20_000);
-    return { child, debugPort, logs };
+    return { child, debugPort, logs, discovery };
   } catch (error) {
     await terminateInstalledRuntime(executable).catch(() => undefined);
     throw new Error(`${error instanceof Error ? error.message : String(error)}\n${logs.join("")}`);
@@ -306,10 +310,39 @@ async function launchRuntime(executable, paths, fixture, options) {
 }
 
 async function stopRuntime(runtime, executable, discovery) {
-  runtime.child.kill();
-  await waitForExit(runtime.child, 5_000);
-  await terminateInstalledRuntime(executable);
-  await waitForMissing(discovery, 10_000);
+  let exited = false;
+  try {
+    await requestRuntimeQuit(runtime.debugPort);
+    exited = await waitForExit(runtime.child, 10_000);
+  } catch {
+    // Browser.close is a best-effort graceful path; exact process and discovery
+    // ownership checks below keep the fallback fail closed.
+  }
+  if (!exited) {
+    runtime.child.kill();
+    await waitForExit(runtime.child, 5_000);
+  }
+  await terminateDiscoveredRuntime(runtime.discovery, executable);
+  await cleanupTerminatedRuntimeDiscovery(discovery, runtime.discovery);
+}
+
+async function requestRuntimeQuit(debugPort) {
+  const response = await fetch(`http://127.0.0.1:${debugPort}/json/version`, { signal: AbortSignal.timeout(2_000) });
+  assert.equal(response.ok, true, "Packaged BrainPet browser endpoint rejected the graceful quit request.");
+  const version = await response.json();
+  assert.equal(typeof version.webSocketDebuggerUrl, "string", "Packaged BrainPet did not expose its browser CDP endpoint.");
+  await sendCdp(version.webSocketDebuggerUrl, "Browser.close", {});
+}
+
+async function cleanupTerminatedRuntimeDiscovery(path, expected) {
+  assert.equal(isProcessAlive(expected.pid), false, `BrainPet discovery PID ${expected.pid} is still alive during cleanup.`);
+  try {
+    await waitForMissing(path, 2_000);
+    return;
+  } catch {
+    removeOwnedLifecycleDiscovery(path, expected);
+  }
+  await waitForMissing(path, 2_000);
 }
 
 async function connectAdapter(debugPort) {
@@ -395,19 +428,58 @@ async function waitForInstallationState(userData, predicate, timeoutMs) {
 
 async function terminateInstalledRuntime(executable) {
   if (process.platform === "win32") {
-    const script = "$target = [System.IO.Path]::GetFullPath($env:BRAINPET_CI_EXECUTABLE); Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and [System.IO.Path]::GetFullPath($_.ExecutablePath) -eq $target } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop }";
-    spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { env: { ...process.env, BRAINPET_CI_EXECUTABLE: executable }, encoding: "utf8", timeout: 20_000, windowsHide: true });
+    const script = "$target = [System.IO.Path]::GetFullPath($env:BRAINPET_CI_EXECUTABLE); $matches = { @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and [StringComparer]::OrdinalIgnoreCase.Equals([System.IO.Path]::GetFullPath($_.ExecutablePath), $target) }) }; & $matches | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; $deadline = [DateTime]::UtcNow.AddSeconds(10); do { $remaining = & $matches; if ($remaining.Count -eq 0) { exit 0 }; Start-Sleep -Milliseconds 100 } while ([DateTime]::UtcNow -lt $deadline); Write-Error \"BrainPet process tree remained after termination: $($remaining.ProcessId -join ',')\"; exit 1";
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { env: { ...process.env, BRAINPET_CI_EXECUTABLE: executable }, encoding: "utf8", timeout: 20_000, windowsHide: true });
+    assert.equal(result.status, 0, result.error?.message || result.stderr || "Unable to terminate the installed BrainPet process tree.");
     return;
   }
+  for (const pid of listUnixInstalledRuntimePids(executable)) { try { process.kill(pid, "SIGTERM"); } catch { /* already exited */ } }
+  let deadline = Date.now() + 5_000;
+  while (Date.now() < deadline && listUnixInstalledRuntimePids(executable).length > 0) await delay(100);
+  for (const pid of listUnixInstalledRuntimePids(executable)) { try { process.kill(pid, "SIGKILL"); } catch { /* already exited */ } }
+  deadline = Date.now() + 5_000;
+  let remaining = listUnixInstalledRuntimePids(executable);
+  while (Date.now() < deadline && remaining.length > 0) {
+    await delay(100);
+    remaining = listUnixInstalledRuntimePids(executable);
+  }
+  assert.deepEqual(remaining, [], `BrainPet process tree remained after termination: ${remaining.join(",")}`);
+}
+
+async function terminateDiscoveredRuntime(discovery, executable) {
+  assert.ok(Number.isSafeInteger(discovery.pid) && discovery.pid > 0, "BrainPet discovery PID is invalid.");
+  if (process.platform !== "win32" && isProcessAlive(discovery.pid)) {
+    try { process.kill(discovery.pid, "SIGTERM"); } catch { /* already exited */ }
+    let deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && isProcessAlive(discovery.pid)) await delay(100);
+    if (isProcessAlive(discovery.pid)) {
+      try { process.kill(discovery.pid, "SIGKILL"); } catch { /* already exited */ }
+      deadline = Date.now() + 5_000;
+      while (Date.now() < deadline && isProcessAlive(discovery.pid)) await delay(100);
+    }
+  }
+  await terminateInstalledRuntime(executable);
+  assert.equal(isProcessAlive(discovery.pid), false, `BrainPet discovery PID ${discovery.pid} remained after termination.`);
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    if (process.platform === "win32" && error?.code === "EINVAL") return false;
+    throw error;
+  }
+}
+
+function listUnixInstalledRuntimePids(executable) {
   const listed = spawnSync("ps", ["-ax", "-o", "pid=,command="], { encoding: "utf8" });
-  if (listed.status !== 0) return;
-  const pids = listed.stdout.split(/\r?\n/).flatMap((line) => {
+  assert.equal(listed.status, 0, listed.error?.message || listed.stderr || "Unable to inspect the installed BrainPet process tree.");
+  return listed.stdout.split(/\r?\n/).flatMap((line) => {
     const match = /^\s*(\d+)\s+(.+)$/.exec(line);
     return match && match[2].includes(executable) ? [Number(match[1])] : [];
   }).filter((pid) => pid !== process.pid);
-  for (const pid of pids) { try { process.kill(pid, "SIGTERM"); } catch { /* already exited */ } }
-  await delay(1_000);
-  for (const pid of pids) { try { process.kill(pid, "SIGKILL"); } catch { /* already exited */ } }
 }
 
 function runRequired(command, args, options = {}) {
@@ -512,8 +584,18 @@ async function waitForMissing(path, timeoutMs) {
 }
 
 function waitForExit(child, timeoutMs) {
-  if (child.exitCode !== null) return Promise.resolve();
-  return Promise.race([new Promise((resolvePromise) => child.once("exit", resolvePromise)), delay(timeoutMs)]);
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolvePromise) => {
+    const onExit = () => {
+      clearTimeout(timeout);
+      resolvePromise(true);
+    };
+    const timeout = setTimeout(() => {
+      child.off("exit", onExit);
+      resolvePromise(false);
+    }, timeoutMs);
+    child.once("exit", onExit);
+  });
 }
 
 function readJson(path) {

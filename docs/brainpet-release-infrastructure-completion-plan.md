@@ -1,6 +1,6 @@
 # BrainPet Release 基础设施收工计划
 
-> 状态：实施中。RC-0～RC-5 已通过对应退出门，RC-6 本地门已完成并等待获准推送后执行真实跨平台 CI；2026-08-16 经产品所有者确认，发行路线修订为全平台未签名直装，不进商店且不注册平台发行者。本文定义从当前实现收敛到可发行版本的工作，
+> 状态：实施中。RC-0～RC-5 已通过对应退出门；RC-6 已进入真实跨平台 CI 整改，首轮公开候选尚未全绿，因此不能标完成。2026-08-16 经产品所有者确认，发行路线修订为全平台未签名直装，不进商店且不注册平台发行者。本文定义从当前实现收敛到可发行版本的工作，
 > 不代表相关能力已经完成，也不命名为新的产品里程碑。当前冻结新游戏、积分、
 > 天梯、商业化和未经验证的新 Agent，直到本文全部退出门通过。
 
@@ -12,7 +12,7 @@
 | RC-1～RC-2 | 已通过 | `80dc0a3`、`36083ce`；Audit A 整改与独立复审在 `a23270e`、`6cf53bd` 通过 |
 | RC-3～RC-4 | 已通过 | `6464fe3`、`b8d87fa`；Audit B 整改与独立复审在 `73ffb47`、`9e6a691` 通过 |
 | RC-5 | 已通过 | `f9802a9`；Windows x64 native-only 包、一次点击 Codex、single-instance、冷唤醒恢复与真实 packaged UI smoke 通过 |
-| RC-6 | 进行中 | 默认 package 自动 validator、真实 installer lifecycle、未签名直装合同、可信 provenance、候选→physical/performance intake→finalize 聚合回执已完成本地门；Windows x64 未签名公开包已通过本机结构/Authenticode 缺席验证；远端六目标/四格式/Stable 实机回执未通过前不标完成 |
+| RC-6 | 进行中 | 默认 package 自动 validator、真实 installer lifecycle、未签名直装合同、可信 provenance、候选→physical/performance intake→finalize 聚合回执已完成本地门；远端 CI 已验证 source contract 与六目标 native helper，并暴露 macOS 未签名封装及四格式生命周期问题，正在逐项 fail-closed 整改；六目标/四格式、正式性能门和 Stable 实机回执未通过前不标完成 |
 | RC-7 | 进行中 | 正式性能 runner、公开 NSIS 同字节候选准备、原始证据重算、跨会话租约和 release 聚合已实现；30 分钟/24 小时正式证据及最终独立审核未通过前不标完成 |
 
 ## 1. 最终目标
@@ -74,6 +74,13 @@ workspace 路径、全局 Node、开发环境变量或人工缓存都不能成�
 - 用户必须看见系统安全警告并主动确认后才能继续，产品文档提供系统原生确认路径；
 - CI 使用 GitHub OIDC 的 Sigstore keyless provenance 绑定仓库、workflow、提交和 SHA-256；这证明来源与完整性，不等同于 Authenticode、Developer ID 或 notarization；
 - `publicReleaseReady=true` 仅表示“可诚实发布的未签名直装候选”完成全部自动门和 Stable 实机验收，不表示操作系统信任发布者。
+
+### 2.6 分支与发布拓扑
+
+- 远端公开发布只认 `main`，GitHub Actions 候选与最终 Release 都必须绑定 `main` 的精确 commit；
+- 基础设施与游戏任务在本地独立开发分支演进，互不要求彼此全量合并；
+- 只有通过对应测试、审核且属于生产闭包的提交才择取进入 `main`，不得把开发分支的临时产物、私测证据或无关历史整支并入；
+- 游戏分支不会因为基础设施发布而公开；确需远端协作时另行授权并明确可见性，不改变 `main` 是唯一发行主线。
 
 ### 2.3 能力诚实
 

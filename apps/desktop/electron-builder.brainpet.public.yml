@@ -1,5 +1,7 @@
 extends: ./electron-builder.brainpet.base.yml
 
+afterPack: scripts/brainpet-strip-macos-signatures.cjs
+
 directories:
   output: dist-brainpet/public-release
 
