@@ -10,11 +10,18 @@ import test from "node:test";
 import { createBrainPetRuntimeTree } from "../apps/desktop/scripts/brainpet-runtime-tree.mjs";
 import { validateBrainPetPreparedPerformanceCandidate } from "../apps/desktop/scripts/brainpet-performance-receipt.mjs";
 import { brainPetDistributionContract, brainPetReleaseTargets } from "./brainpet-release-contract.mjs";
-import { extractNsisWithWindowsTar, prepareBrainPetPublicPerformanceCandidate } from "./prepare-brainpet-public-performance-candidate.mjs";
+import { extractNsisWithWindowsTar, parseBrainPetPerformanceCandidateArgs, prepareBrainPetPublicPerformanceCandidate } from "./prepare-brainpet-public-performance-candidate.mjs";
 
 const roots = [];
 test.after(() => {
   for (const root of roots) rmSync(root, { recursive: true, force: true });
+});
+
+test("the documented pnpm separator reaches the performance candidate CLI", () => {
+  assert.deepEqual(
+    parseBrainPetPerformanceCandidateArgs(["--", "--run-id", "32033677540", "--commit", "c".repeat(40)]),
+    { runId: "32033677540", sourceCommit: "c".repeat(40) },
+  );
 });
 
 test("public performance preparation binds successful run, aggregate, package, provenance, installer and extracted runtime", () => {

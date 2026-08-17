@@ -137,7 +137,7 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
    本机绝对路径、Agent 内容或配置正文。
 3. 在 Windows x64 上先执行
    `pnpm brainpet:performance:candidate:prepare -- --run-id <candidate-run-id> --commit <40-char-sha>`。
-   维护机必须可调用已认证的 `gh`、`cosign` 3.1.3 和系统 `tar.exe`。该事务只下载上述成功 run 的 Windows x64 package closure、候选聚合回执与 Sigstore bundle；本地准备阶段会对候选回执、package receipt 和 NSIS 逐项执行 `cosign verify-blob`，重新校验 Fulcio/Rekor bundle 的 repository、workflow 名称与路径、触发事件、精确 commit 和 subject bytes，而不是信任任意 JSON bundle 或仅复用 workflow 的自报结论。随后继续绑定
+   干净维护 checkout 须先完成锁文件安装并运行 `pnpm --filter @open-pets/desktop build`，生成同一提交的本地验证脚本；该 build 不生成或替换待验收的公开 runtime。维护机必须可调用已认证的 `gh`、`cosign` 3.1.3 和系统 `tar.exe`。该事务只下载上述成功 run 的 Windows x64 package closure、候选聚合回执与 Sigstore bundle；本地准备阶段会对候选回执、package receipt 和 NSIS 逐项执行 `cosign verify-blob`，重新校验 Fulcio/Rekor bundle 的 repository、workflow 名称与路径、触发事件、精确 commit 和 subject bytes，而不是信任任意 JSON bundle 或仅复用 workflow 的自报结论。随后继续绑定
    workflow、run/attempt、commit、receipt/installer hash；在解包前拒绝绝对路径、遍历和冲突路径，再用系统 `tar.exe`
    从原始 NSIS 无安装解出 runtime，并以 package receipt 的完整 runtime tree 复验。随后在同一干净 commit 上分别运行
    `node apps/desktop/scripts/brainpet-performance-gate-runner.mjs start active-30m --candidate <prepared-manifest>` 与

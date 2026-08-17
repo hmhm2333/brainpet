@@ -300,9 +300,10 @@ function sha256Bytes(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function parseArgs(argv) {
+export function parseBrainPetPerformanceCandidateArgs(argv) {
   const options = {};
   for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === "--") continue;
     if (argv[index] === "--run-id") options.runId = argv[++index];
     else if (argv[index] === "--output") options.outputRoot = argv[++index];
     else if (argv[index] === "--commit") options.sourceCommit = argv[++index];
@@ -314,7 +315,7 @@ function parseArgs(argv) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const prepared = prepareBrainPetPublicPerformanceCandidate(parseArgs(process.argv.slice(2)));
+    const prepared = prepareBrainPetPublicPerformanceCandidate(parseBrainPetPerformanceCandidateArgs(process.argv.slice(2)));
     console.log(`BrainPet public performance candidate prepared (${prepared.candidate.commit}, run ${prepared.candidate.sourceRunId}).`);
     console.log(prepared.manifestPath);
   } catch (error) {
