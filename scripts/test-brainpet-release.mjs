@@ -20,6 +20,7 @@ import { downloadBrainPetPerformanceReceipts } from "./download-brainpet-perform
 import { validateBrainPetPerformanceReceiptSet } from "./brainpet-performance-release-contract.mjs";
 import { brainPetPerformanceReceiptWorkflow, brainPetPhysicalReceiptWorkflow, brainPetPublicReleaseFinalizeWorkflow, brainPetPublicReleaseWorkflow, brainPetSigstoreBundlePath, signBrainPetReleaseEvidence, signBrainPetSubjects, verifyBrainPetSigstoreSubject } from "./brainpet-sigstore-provenance.mjs";
 import { stageBrainPetPackageArtifacts, validateBrainPetPackageArtifactClosure } from "./stage-brainpet-package-artifacts.mjs";
+import { createBrainPetCiRuntimeArchive, extractAllBrainPetCiRuntimeArchives, extractBrainPetCiRuntimeArchive, validateBrainPetCiRuntimeArchiveListing } from "./brainpet-ci-runtime-archive.mjs";
 import { createBrainPetBuilderInvocation, parseBrainPetPackageArgs, prepareBrainPetBundledMarketplace, resolveBrainPetElectronDist, runBrainPetElectronBuilder, validatePublicReleaseEnvironment } from "../apps/desktop/scripts/brainpet-package.mjs";
 import { assertBrainPetAsarWorkspaceClosure, assertMacosAppUsesAdhocOnly, assertMacosCodeObjectIsUnsigned, matchesBrainPetArtifactArchitecture, resolveBrainPetResourcesRoot, validateUnsignedLinuxArtifacts } from "../apps/desktop/scripts/validate-brainpet-package.mjs";
 import { createBrainPetRuntimeTree } from "../apps/desktop/scripts/brainpet-runtime-tree.mjs";
@@ -123,6 +124,32 @@ try {
     symlinkSync(outsideTarget, join(runtimeLinkRoot, "escape"), "dir");
     assert.throws(() => createBrainPetRuntimeTree(runtimeLinkRoot), /invalid target|not portable|unsafe|escapes/i);
   }
+  const archiveSource = join(testRoot, "ci-runtime-archive-source");
+  const archiveHiddenRoot = join(archiveSource, ".codex-plugin");
+  mkdirSync(archiveHiddenRoot, { recursive: true });
+  writeFileSync(join(archiveHiddenRoot, "plugin.json"), "{\"name\":\"brainpet\"}\n");
+  writeFileSync(join(archiveSource, "runtime.bin"), "runtime\n");
+  if (process.platform !== "win32") chmodSync(join(archiveSource, "runtime.bin"), 0o755);
+  let archiveSymlinkCreated = false;
+  try {
+    symlinkSync("runtime.bin", join(archiveSource, "runtime-current"), "file");
+    archiveSymlinkCreated = true;
+  } catch (error) {
+    if (error?.code !== "EPERM") throw error;
+  }
+  const archivePath = join(testRoot, "brainpet-runtime-current-fixture.tar");
+  const archiveOutput = join(testRoot, "ci-runtime-archive-output");
+  createBrainPetCiRuntimeArchive({ sourceRoot: archiveSource, archivePath });
+  extractBrainPetCiRuntimeArchive({ archivePath, outputRoot: archiveOutput });
+  assert.deepEqual(createBrainPetRuntimeTree(archiveOutput), createBrainPetRuntimeTree(archiveSource), "CI tar transport must preserve the exact runtime tree.");
+  if (archiveSymlinkCreated) assert.deepEqual(createBrainPetRuntimeTree(archiveOutput).entries.find((entry) => entry.path === "runtime-current"), { path: "runtime-current", type: "symlink", target: "runtime.bin" });
+  assert.throws(() => validateBrainPetCiRuntimeArchiveListing("./safe\n../escape\n"), /unsafe/i);
+  const archiveSetRoot = join(testRoot, "ci-runtime-archive-set");
+  const archiveSetOutput = join(testRoot, "ci-runtime-archive-set-output");
+  for (const target of brainPetReleaseTargets) createBrainPetCiRuntimeArchive({ sourceRoot: archiveSource, archivePath: join(archiveSetRoot, `brainpet-runtime-current-${target.id}.tar`) });
+  const extractedArchiveSet = extractAllBrainPetCiRuntimeArchives({ archivesRoot: archiveSetRoot, outputRoot: archiveSetOutput });
+  assert.equal(extractedArchiveSet.length, brainPetReleaseTargets.length);
+  for (const target of brainPetReleaseTargets) assert.deepEqual(createBrainPetRuntimeTree(join(archiveSetOutput, `brainpet-runtime-current-${target.id}`)), createBrainPetRuntimeTree(archiveSource));
   const dryRunFixture = parseBrainPetPackageArgs(["--platform", "linux", "--arch", "x64", "--target", "installer", "--mode", "private-test", "--dry-run"]);
   const fakeElectronPackage = join(root, "node_modules", ".pnpm", "electron@42.0.0", "node_modules", "electron", "package.json");
   assert.equal(

@@ -85,18 +85,18 @@ jobs:
           path: output/brainpet-helper
       - run: pnpm --filter @open-pets/desktop build
       - run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode private-test --helper output/brainpet-helper/${{ matrix.file }}
+      - run: node scripts/brainpet-ci-runtime-archive.mjs create --source apps/desktop/dist-brainpet/private-test --archive output/brainpet-runtime-current-${{ matrix.id }}.tar
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: brainpet-runtime-current-${{ matrix.id }}
-          path: apps/desktop/dist-brainpet/private-test/
-          include-hidden-files: true
+          path: output/brainpet-runtime-current-${{ matrix.id }}.tar
           if-no-files-found: error
       - run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode private-test --helper output/brainpet-helper/${{ matrix.file }} --app-version 3.3.999 --output apps/desktop/dist-brainpet/upgrade-fixture-${{ matrix.id }}
+      - run: node scripts/brainpet-ci-runtime-archive.mjs create --source apps/desktop/dist-brainpet/upgrade-fixture-${{ matrix.id }} --archive output/brainpet-upgrade-fixture-${{ matrix.id }}.tar
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: brainpet-upgrade-fixture-${{ matrix.id }}
-          path: apps/desktop/dist-brainpet/upgrade-fixture-${{ matrix.id }}/
-          include-hidden-files: true
+          path: output/brainpet-upgrade-fixture-${{ matrix.id }}.tar
           if-no-files-found: error
 
   installer-lifecycle:
@@ -115,11 +115,13 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: brainpet-runtime-current-${{ matrix.id }}
-          path: output/current
+          path: output/current-archive
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: brainpet-upgrade-fixture-${{ matrix.id }}
-          path: output/previous
+          path: output/previous-archive
+      - run: node scripts/brainpet-ci-runtime-archive.mjs extract --archive output/current-archive/brainpet-runtime-current-${{ matrix.id }}.tar --output output/current
+      - run: node scripts/brainpet-ci-runtime-archive.mjs extract --archive output/previous-archive/brainpet-upgrade-fixture-${{ matrix.id }}.tar --output output/previous
       - if: runner.os == 'Linux'
         run: which xvfb-run
       - if: runner.os == 'Linux'
@@ -156,7 +158,9 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: brainpet-runtime-current-*
-          path: output/packages
+          path: output/package-archives
+          merge-multiple: true
+      - run: node scripts/brainpet-ci-runtime-archive.mjs extract-all --archives output/package-archives --output output/packages
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: brainpet-lifecycle-*
