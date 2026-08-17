@@ -74,6 +74,7 @@ jobs:
         with:
           name: brainpet-public-runtime-current-${{ matrix.id }}
           path: output/public-runtime-current-${{ matrix.id }}/
+          include-hidden-files: true
           if-no-files-found: error
       - run: node apps/desktop/scripts/brainpet-package.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target installer --mode public-release --helper output/helper/${{ matrix.file }} --app-version 3.3.999 --output apps/desktop/dist-brainpet/public-upgrade-${{ matrix.id }}
       - run: node scripts/stage-brainpet-package-artifacts.mjs --source apps/desktop/dist-brainpet/public-upgrade-${{ matrix.id }} --target ${{ matrix.id }} --output output/lifecycle-fixture-${{ matrix.id }}
@@ -81,6 +82,7 @@ jobs:
         with:
           name: brainpet-lifecycle-fixture-${{ matrix.id }}
           path: output/lifecycle-fixture-${{ matrix.id }}/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
 
@@ -107,7 +109,10 @@ jobs:
           path: output/previous
       - if: runner.os == 'Linux'
         run: which xvfb-run
-      - run: node apps/desktop/scripts/brainpet-package-lifecycle.mjs --target ${{ matrix.id }} --artifact-kind ${{ matrix.kind }} --current-output output/current --previous-output output/previous --receipt output/lifecycle/brainpet-install-lifecycle-receipt-${{ matrix.id }}-${{ matrix.kind }}.json
+      - if: runner.os == 'Linux'
+        run: xvfb-run -a node apps/desktop/scripts/brainpet-package-lifecycle.mjs --target ${{ matrix.id }} --artifact-kind ${{ matrix.kind }} --current-output output/current --previous-output output/previous --receipt output/lifecycle/brainpet-install-lifecycle-receipt-${{ matrix.id }}-${{ matrix.kind }}.json
+      - if: runner.os != 'Linux'
+        run: node apps/desktop/scripts/brainpet-package-lifecycle.mjs --target ${{ matrix.id }} --artifact-kind ${{ matrix.kind }} --current-output output/current --previous-output output/previous --receipt output/lifecycle/brainpet-install-lifecycle-receipt-${{ matrix.id }}-${{ matrix.kind }}.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: brainpet-public-lifecycle-${{ matrix.id }}-${{ matrix.kind }}

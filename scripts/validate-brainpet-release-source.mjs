@@ -154,6 +154,12 @@ for (const [name, source] of [["portability", portabilityWorkflow], ["public rel
 assert.match(portabilityWorkflow, /source-contract:[\s\S]*?pnpm install --frozen-lockfile[\s\S]*?pnpm brainpet:release:test/, "The portability source-contract job must still install and test the complete workspace.");
 assert.match(portabilityWorkflow, /runner\.os == 'Linux'[\s\S]*?xvfb-run -a node apps\/desktop\/scripts\/brainpet-package-lifecycle\.mjs/, "Linux installer lifecycle and helper cold wake must share one Xvfb session.");
 assert.match(portabilityWorkflow, /runner\.os != 'Linux'[\s\S]*?node apps\/desktop\/scripts\/brainpet-package-lifecycle\.mjs/, "Windows and macOS installer lifecycle must run the same production script without Xvfb.");
+assert.match(publicReleaseWorkflow, /runner\.os == 'Linux'[\s\S]*?xvfb-run -a node apps\/desktop\/scripts\/brainpet-package-lifecycle\.mjs/, "Public Linux installer lifecycle and helper cold wake must share one Xvfb session.");
+assert.match(publicReleaseWorkflow, /runner\.os != 'Linux'[\s\S]*?node apps\/desktop\/scripts\/brainpet-package-lifecycle\.mjs/, "Public Windows and macOS installer lifecycle must run the same production script without Xvfb.");
+assert.match(portabilityWorkflow, /path: apps\/desktop\/dist-brainpet\/private-test\/\r?\n\s+include-hidden-files: true/, "Private current runtime artifacts must preserve hidden marketplace files.");
+assert.match(portabilityWorkflow, /path: apps\/desktop\/dist-brainpet\/upgrade-fixture-\$\{\{ matrix\.id \}\}\/\r?\n\s+include-hidden-files: true/, "Private upgrade runtime artifacts must preserve hidden marketplace files.");
+assert.match(publicReleaseWorkflow, /path: output\/public-runtime-current-\$\{\{ matrix\.id \}\}\/\r?\n\s+include-hidden-files: true/, "Public current runtime artifacts must preserve hidden marketplace files.");
+assert.match(publicReleaseWorkflow, /path: output\/lifecycle-fixture-\$\{\{ matrix\.id \}\}\/\r?\n\s+include-hidden-files: true/, "Public upgrade runtime artifacts must preserve hidden marketplace files.");
 for (const [name, source] of [["portability", portabilityWorkflow], ["public release", publicReleaseWorkflow]]) {
   const pnpmSetupCount = source.match(/pnpm\/action-setup@[a-f0-9]{40}/g)?.length ?? 0;
   const compatibleNodeSetupCount = source.match(/node-version:\s*22\b/g)?.length ?? 0;
