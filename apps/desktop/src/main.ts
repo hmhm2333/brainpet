@@ -11,12 +11,13 @@ const distribution = resolveDesktopDistributionSettings(app.getName(), process.e
 const brainPetFeatureEnabled = isBrainPetFeatureEnabled(distribution, process.env.BRAINPET_ENABLED);
 const composition = resolveDesktopComposition(distribution, brainPetFeatureEnabled);
 
-// BrainPet renders only bundled local surfaces and keeps renderer sandboxing,
-// but Electron's separate GPU process duplicates enough shared Chromium pages
-// to miss the frozen 400 MiB total-working-set budget on the Windows reference
-// machine. Keep hardware acceleration enabled while hosting Chromium's GPU
-// service as a browser-process thread for the BrainPet Windows product only.
-if (distribution.profile === "brainpet" && process.platform === "win32") app.commandLine.appendSwitch("in-process-gpu");
+// BrainPet's small pixel-art surfaces do not need hardware acceleration on
+// Windows. Prefer software composition over moving the GPU service into the
+// unsandboxed browser process: this keeps Chromium's process/crash boundary
+// intact while avoiding the driver's larger resident working set. OpenPets
+// retains Electron's default hardware-accelerated composition.
+const brainPetSoftwareComposition = distribution.profile === "brainpet" && process.platform === "win32";
+if (brainPetSoftwareComposition) app.disableHardwareAcceleration();
 
 const performanceDebugPort = process.env.BRAINPET_PERFORMANCE_REMOTE_DEBUGGING_PORT;
 if (process.env.BRAINPET_GATE_RUN_ID && performanceDebugPort) {
@@ -71,7 +72,7 @@ if (!gotSingleInstanceLock) {
       arch: process.arch,
       packaged: app.isPackaged,
       pid: process.pid,
-      gpuProcessMode: app.commandLine.hasSwitch("in-process-gpu") ? "browser-thread" : "isolated-process",
+      graphicsMode: brainPetSoftwareComposition ? "software-composition" : "hardware-accelerated",
       ozonePlatform: app.commandLine.getSwitchValue("ozone-platform") || null,
       explicitOzonePlatformArg: hasExplicitOzonePlatformArg,
     });

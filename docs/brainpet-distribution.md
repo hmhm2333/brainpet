@@ -94,9 +94,9 @@ Helper 从 stdin 读取 Agent hook、提取允许字段，并向 BrainPet discov
 
 - `brainpet-package.mjs` 是默认打包入口；builder 成功后会直接调用
   `validate-brainpet-package.mjs`。不能再通过只运行 builder 绕过产物校验。
-- Windows BrainPet 保留硬件加速和 renderer sandbox，但因其只加载打包内本地 surface，GPU service
-  采用 browser-process thread 以满足冻结的总工作集预算；这会让 GPU service 故障影响主进程。OpenPets
-  继续使用 Electron 默认的独立 GPU process，二者的差异由 composition/source contract 与真实 smoke 固定。
+- Windows BrainPet 的小型本地像素 surface 使用 Electron 软件合成；renderer sandbox 与 Chromium 独立的
+  GPU/crash 边界仍保留，不再使用会把 GPU service 移入未沙箱 browser 主进程的 `in-process-gpu`。
+  OpenPets 继续使用 Electron 默认硬件加速路径，二者差异由 composition/source contract 与真实 smoke 固定。
 - package receipt 记录支持等级、app 版本、精确 source commit、CI 身份、完整 unpacked runtime
   file/directory tree（含每个文件大小与 SHA-256）、包内 native helper 和每个 installer 的 SHA-256。单目标回执固定写
   `publicReleaseReady=false`，不能越权代替聚合门。

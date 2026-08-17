@@ -102,6 +102,6 @@ V1 使用 Electron sandbox renderer + DOM/CSS 像素舞台，不引入 PixiJS。
 
 这不是把网页卡片搬到桌面：用户版本没有浏览器导航、默认 HTML 控件或任意网络能力；窗口、沙箱和生命周期均由 Host 管理，UI 只是 Stage 的渲染实现。
 
-当前体验测试优先使用 `scripts/brainpet-package-unpacked.mjs`。BrainPet distribution profile 默认启用 BrainPet，OpenPets profile 默认不启用；BrainPet 不自动 seed OpenPets 的三个默认插件，使用独立 user-data、`dev.brainpet.app` 身份和 `hmhm2333/brainpet` 更新源，普通 OpenPets 行为不变。2026-08-16 Windows x64 `active-30m` 正式门禁实测通过：40 次冷启动 p95 513 ms、首次 Agent 冷唤醒 p95 524 ms、热反馈 p95 3.9 ms、舞台打开 p95 149 ms、renderer 关闭最大 121 ms、交互帧率 p95/最低均为 60 FPS；冷 idle 4 进程、私有工作集约 180 MiB（含共享页总工作集约 456 MiB），30 分钟活动峰值 6 进程、私有工作集约 254 MiB（含共享页总工作集约 703 MiB），私有工作集增长约 0.1 MiB、句柄峰值 3297/增长 28，连续进程身份、崩溃隔离与恢复均通过。该结果只证明 Windows active gate，不代替仍需独立完成的 24 小时 idle 与 macOS arm64 实机门禁。
+当前体验测试优先使用 `package:brainpet:unpacked`。BrainPet distribution profile 默认启用 BrainPet，OpenPets profile 默认不启用；BrainPet 不自动 seed OpenPets 的三个默认插件，使用独立 user-data、`dev.brainpet.app` 身份和 `hmhm2333/brainpet` 更新源，普通 OpenPets 行为不变。2026-08-16 的旧 Windows x64 `active-30m` 结果只按私有工作集判门，且冷唤醒没有证明精确 Agent session/turn 已成为用户可见状态；它不满足当前“完整进程树总工作集 + 原始指标重算 + 精确可见事件 + receipt wall-clock”合同，已明确作废。软件合成整改后的单次短测为冷 idle 总工作集约 356.6 MiB、活动约 624.8 MiB、热 idle 相对冷 idle约 +81.4 MiB，renderer crash 隔离与恢复通过；这些仅是短探针，不是正式回执。当前 commit 的 30 分钟 active、24 小时 idle 与 macOS arm64 实机门禁均仍待独立完成。
 
 这仍不是动态第三方游戏插件或正式发布完成：新增内置任务目前还要同时登记 metadata/evaluator 与 Renderer factory；历史私测产物没有可信 CI provenance，公开未签名直装候选及其 Stable 实机回执仍待通过。这些属于下一阶段扩展/发布门槛，不应被 runtime smoke 的通过掩盖。

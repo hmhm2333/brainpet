@@ -332,6 +332,18 @@ try {
   delete tamperedPerformanceCore.evidenceDigest;
   tamperedPerformanceReceipts[0].evidenceDigest = sha256(Buffer.from(JSON.stringify(tamperedPerformanceCore)));
   assert.throws(() => validateBrainPetPerformanceReceiptSet(tamperedPerformanceReceipts, { sourceCommit: receipt.source.commit }), /strictly equal|summary does not match|raw timeline/i);
+  const forgedInstantReceipts = structuredClone(performanceReceipts);
+  forgedInstantReceipts[0].gateResult.idleProcessMetrics.totalWorkingSetBytes = 10 * 1024 * 1024 * 1024;
+  const forgedInstantCore = { ...forgedInstantReceipts[0] };
+  delete forgedInstantCore.evidenceDigest;
+  forgedInstantReceipts[0].evidenceDigest = sha256(Buffer.from(JSON.stringify(forgedInstantCore)));
+  assert.throws(() => validateBrainPetPerformanceReceiptSet(forgedInstantReceipts, { sourceCommit: receipt.source.commit }), /does not match its process details|working set exceeds/i);
+  const shortWallClockReceipts = structuredClone(performanceReceipts);
+  shortWallClockReceipts[1].completedAt = "2026-08-17T23:59:59.999Z";
+  const shortWallClockCore = { ...shortWallClockReceipts[1] };
+  delete shortWallClockCore.evidenceDigest;
+  shortWallClockReceipts[1].evidenceDigest = sha256(Buffer.from(JSON.stringify(shortWallClockCore)));
+  assert.throws(() => validateBrainPetPerformanceReceiptSet(shortWallClockReceipts, { sourceCommit: receipt.source.commit }), /wall-clock span is shorter/i);
   const performancePayload = createCompressedPayload(performanceReceipts);
   const performanceCandidate = { runId: "123", receiptSha256: sha256(readFileSync(publicCandidatePath)), challenge: publicCandidate.physicalChallenge };
   const performanceApprovalHistoryPath = join(testRoot, "performance-approval-history.json");
@@ -672,7 +684,7 @@ function createPerformanceReceiptFixture(profile, candidate) {
     heapTimeline,
     process,
   };
-  const idleProcessMetrics = processTimeline[0];
+  const idleProcessMetrics = toInstantProcessSample(processTimeline[0]);
   const gateResult = active
     ? {
         ok: true,
@@ -690,9 +702,9 @@ function createPerformanceReceiptFixture(profile, candidate) {
           interactionFrameRate: summarizeFixtureMetric(60),
         },
         idleProcessMetrics,
-        activeProcessMetrics: createProcessSample({ elapsedMs: 0, totalWorkingSetBytes, workingSetBytes, privateBytes, handleCount: 650, cpuTime100ns: 1_000_000 }),
-        hotIdleProcessMetrics: createProcessSample({ elapsedMs: 0, totalWorkingSetBytes: 250 * 1024 * 1024, workingSetBytes: 220 * 1024 * 1024, privateBytes: 190 * 1024 * 1024, handleCount: 620, cpuTime100ns: 2_000_000 }),
-        recoveredIdleProcessMetrics: createProcessSample({ elapsedMs: 0, totalWorkingSetBytes: 210 * 1024 * 1024, workingSetBytes: 180 * 1024 * 1024, privateBytes: 150 * 1024 * 1024, handleCount: 610, cpuTime100ns: 3_000_000 }),
+        activeProcessMetrics: toInstantProcessSample(createProcessSample({ elapsedMs: 0, totalWorkingSetBytes, workingSetBytes, privateBytes, handleCount: 650, cpuTime100ns: 1_000_000 })),
+        hotIdleProcessMetrics: toInstantProcessSample(createProcessSample({ elapsedMs: 0, totalWorkingSetBytes: 250 * 1024 * 1024, workingSetBytes: 220 * 1024 * 1024, privateBytes: 190 * 1024 * 1024, handleCount: 620, cpuTime100ns: 2_000_000 })),
+        recoveredIdleProcessMetrics: toInstantProcessSample(createProcessSample({ elapsedMs: 0, totalWorkingSetBytes: 210 * 1024 * 1024, workingSetBytes: 180 * 1024 * 1024, privateBytes: 150 * 1024 * 1024, handleCount: 610, cpuTime100ns: 3_000_000 })),
         companionVerified: true,
         petToggleCloseVerified: true,
         soak,
@@ -736,7 +748,7 @@ function createProcessSample({ elapsedMs, totalWorkingSetBytes, workingSetBytes,
     pid: 1200,
     parentPid: 0,
     role: "browser",
-    creationTime: "20260817000000.000000+480",
+    creationTime: "2026-08-17T00:00:00.000Z",
     totalWorkingSetBytes: Math.floor(totalWorkingSetBytes * 0.6),
     workingSetBytes: Math.floor(workingSetBytes * 0.6),
     privateBytes: Math.floor(privateBytes * 0.6),
@@ -747,7 +759,7 @@ function createProcessSample({ elapsedMs, totalWorkingSetBytes, workingSetBytes,
     pid: 1201,
     parentPid: 1200,
     role: "renderer",
-    creationTime: "20260817000001.000000+480",
+    creationTime: "2026-08-17T00:00:01.000Z",
     totalWorkingSetBytes: totalWorkingSetBytes - browser.totalWorkingSetBytes,
     workingSetBytes: workingSetBytes - browser.workingSetBytes,
     privateBytes: privateBytes - browser.privateBytes,
@@ -755,6 +767,11 @@ function createProcessSample({ elapsedMs, totalWorkingSetBytes, workingSetBytes,
     cpuTime100ns: cpuTime100ns - browser.cpuTime100ns,
   };
   return { elapsedMs, rootPid: 1200, processCount: 2, totalWorkingSetBytes, workingSetBytes, privateBytes, handleCount, cpuTime100ns, processes: [browser, renderer] };
+}
+
+function toInstantProcessSample(sample) {
+  const { elapsedMs: _elapsedMs, ...instant } = sample;
+  return instant;
 }
 
 function summarizeFixtureProcessTimeline(timeline, logicalProcessorCount) {
@@ -784,7 +801,7 @@ function summarizeFixtureProcessTimeline(timeline, logicalProcessorCount) {
     maximumHandleGrowth: Math.max(0, maximumHandleCount - first.handleCount),
     averageCpuPercent: ((last.cpuTime100ns - first.cpuTime100ns) / ((last.elapsedMs - first.elapsedMs) * 10_000 * logicalProcessorCount)) * 100,
     maximumIntervalCpuPercent: Math.max(...intervals.map((entry) => entry.cpuPercent)),
-    processIdentity: "1200@20260817000000.000000+480,1201@20260817000001.000000+480",
+    processIdentity: "1200@2026-08-17T00:00:00.000Z,1201@2026-08-17T00:00:01.000Z",
     timeline,
   };
 }

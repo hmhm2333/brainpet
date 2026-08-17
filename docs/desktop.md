@@ -347,12 +347,12 @@ ports, drains pending work, then releases any resource that reached a started
 state. HostCore's display-change path calls a narrow LAN reclamp port and never
 statically imports the LAN pet implementation.
 
-BrainPet retains Electron's default hardware acceleration. Formal packaged
-measurements showed that forcing software composition missed the cold-start,
-Stage-open, and minimum-FPS budgets, so the release source contract rejects
-software, WARP, SwiftShader, and custom GPU backend overrides. The Windows
-memory gate uses per-process private working set while retaining total working
-set, including duplicated Chromium/DLL shared pages, in the raw evidence.
+Windows BrainPet uses Electron software composition for its small local pixel
+surfaces while retaining the renderer sandbox and Chromium's separate GPU/crash
+boundary. It does not use `in-process-gpu`, WARP, SwiftShader, or a custom GPU
+backend. OpenPets retains Electron's default hardware-accelerated path. The
+Windows memory gate enforces the complete process-tree total working set and
+also retains per-process private working set/private bytes in the raw evidence.
 Stage WebGL and spellcheck are disabled, its isolated cache is released at app
 shutdown, and the short Web Audio
 context is closed after each tone. A normal Stage close also performs one

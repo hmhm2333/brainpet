@@ -84,12 +84,8 @@ const brainPetControllerSources = Object.fromEntries([
 const distributionSource = readFileSync(join(desktop, "src", "distribution-profile.ts"), "utf8");
 assert.match(compositionSource, /layers: enabled \? \["hostCore", "brainPetFeature"\] : \["hostCore"\]/, "BrainPet must not compose OptionalOpenPetsServices.");
 assert.match(mainSource, /import\("\.\/composition\/openpets-runtime\.js"\)/, "Optional OpenPets services must be dynamically loaded.");
-assert.doesNotMatch(
-  mainSource,
-  /disableHardwareAcceleration|appendSwitch\("(?:use-angle|use-gl|disable-gpu|disable-gpu-rasterization|enable-gpu-rasterization|use-vulkan)"|swiftshader/i,
-  "BrainPet must retain Electron's default hardware acceleration and must not force a software, WARP, SwiftShader, or custom GPU backend.",
-);
-assert.match(mainSource, /distribution\.profile === "brainpet" && process\.platform === "win32"[\s\S]*appendSwitch\("in-process-gpu"\)/, "Windows BrainPet must avoid a duplicated GPU-process working set without disabling hardware acceleration or changing OpenPets.");
+assert.match(mainSource, /distribution\.profile === "brainpet" && process\.platform === "win32"[\s\S]*app\.disableHardwareAcceleration\(\)/, "Windows BrainPet must use software composition without moving the GPU service into the browser process.");
+assert.doesNotMatch(mainSource, /in-process-gpu|appendSwitch\("(?:use-angle|use-gl|disable-gpu-rasterization|enable-gpu-rasterization|use-vulkan)"|swiftshader/i, "BrainPet must retain Chromium's separate GPU crash boundary and must not select a custom GPU backend.");
 assert.doesNotMatch(lifecycleSource, /plugin-service|brainpet\/host|remote-control-service|lan-controller|local-ipc|windows\.js/, "App lifecycle must only call the composition disposer.");
 assert.match(managedServiceSource, /#disposeRequested/, "Composition lifecycle must stop factory creation once disposal begins.");
 assert.match(optionalServicesSource, /AsyncOperationGate/, "Optional OpenPets services must drain lazy work before disposal completes.");
@@ -173,6 +169,9 @@ assert.match(physicalIntakeWorkflow, /brainpet-sigstore-provenance\.mjs/);
 assert.match(physicalIntakeWorkflow, /output\/sealed\/provenance/);
 assert.match(publicFinalizeWorkflow, /--physical-provenance output\/physical\/provenance/);
 assert.match(performanceIntakeWorkflow, /environment: brainpet-physical-acceptance/);
+assert.match(performanceIntakeWorkflow, /actions\/checkout@11bd71901bbe5b1630ceea73d27597364c9af683/);
+assert.match(performanceIntakeWorkflow, /actions\/upload-artifact@ea165f8d65b6e470a52e1e3f4d1a8a2b7c0859/);
+assert.doesNotMatch(performanceIntakeWorkflow, /actions\/(?:checkout|upload-artifact)@v\d/);
 assert.match(performanceIntakeWorkflow, /BRAINPET_PERFORMANCE_RECEIPTS_GZIP_BASE64: \$\{\{ inputs\.receipts_gzip_base64 \}\}/);
 assert.match(performanceIntakeWorkflow, /actions\/runs\/\$\{GITHUB_RUN_ID\}\/approvals/);
 assert.match(performanceIntakeWorkflow, /brainpet-active-30m\.json[\s\S]*brainpet-idle-24h\.json[\s\S]*brainpet-performance-intake\.json/);
@@ -205,7 +204,10 @@ assert.match(performanceRunnerSource, /maximumTotalWorkingSetBytes|validateBrain
 const desktopPackage = JSON.parse(readFileSync(join(desktop, "package.json"), "utf8"));
 assert.equal(desktopPackage.scripts["test:brainpet-soak"], "pnpm brainpet:active-gate:start");
 assert.equal(desktopPackage.scripts["test:brainpet-idle-soak"], "pnpm brainpet:idle-gate:start");
-for (const scriptName of ["package:brainpet", "package:brainpet:portable", "package:brainpet:unpacked"]) assert.match(desktopPackage.scripts[scriptName], /^node scripts\/clean-brainpet-build-output\.cjs/, `${scriptName} must begin from clean BrainPet build output.`);
+for (const scriptName of ["package:brainpet", "package:brainpet:portable", "package:brainpet:unpacked"]) assert.match(desktopPackage.scripts[scriptName], /^node scripts\/brainpet-package\.mjs/, `${scriptName} must use the self-contained fresh package entrypoint.`);
+const packageSource = readFileSync(join(desktop, "scripts", "brainpet-package.mjs"), "utf8");
+assert.match(packageSource, /assertCanonicalPackageInputsTracked\(\)[\s\S]*\["dist", "\.brainpet-package"\][\s\S]*"pnpm\.cmd"[\s\S]*"@open-pets\/desktop", "build"/);
+assert.match(packageSource, /cargo(?:\.exe)?"[\s\S]*"build", "--locked", "--release"/);
 assert.deepEqual(Object.fromEntries(brainPetDistributionContract.releaseTargets.map((target) => [target.id, target.supportLevel])), {
   "windows-x64": "stable",
   "windows-arm64": "preview",

@@ -391,9 +391,9 @@ intake 必须经过 protected Environment 的非触发者 reviewer，审批评�
 | 冷启动到宠物可用 | p95 ≤ 1.0s | 当前约 639ms，不允许退化 |
 | 已运行事件反馈 | p95 ≤ 200ms | Adapter 到可见状态 |
 | 冷唤醒到反馈 | p95 ≤ 1.5s | Agent 首次事件启动 runtime |
-| 冷 idle 总工作集 | ≤ 400MiB，目标 300MiB | 最近短测约 422MiB，仍未通过正式门 |
-| 游戏中总工作集 | ≤ 650MiB | 最近短测约 706MiB，仍未通过正式门 |
-| 热 idle 相对冷 idle | +100MiB 内 | 当前约 +126MiB |
+| 冷 idle 总工作集 | ≤ 400MiB，目标 300MiB | 软件合成整改后的单次短测约 356.6MiB；正式门待跑 |
+| 游戏中总工作集 | ≤ 650MiB | 软件合成整改后的单次短测约 624.8MiB；正式门待跑 |
+| 热 idle 相对冷 idle | +100MiB 内 | 单次短测约 +81.4MiB；正式门待跑 |
 | idle CPU | 5 分钟均值 < 1% | 无窗口移动/动画风暴 |
 | 交互帧率 | p95 ≥ 50fps，最低 30fps | 暂停/拖动单独计 |
 | 游戏关闭 | renderer 5s 内退出 | 音频 utility 可识别且有界 |
@@ -403,9 +403,9 @@ intake 必须经过 protected Environment 的非触发者 reviewer，审批评�
 不能只提高阈值使测试通过。
 
 Windows 参考机的整改保持 400/650MiB 阈值不变：BrainPet 仅加载打包内本地 surface，
-保留 renderer sandbox 与硬件加速，但将 GPU service 作为 browser-process thread 运行，避免独立 GPU
-进程重复计入共享 Chromium 工作集。代价是 GPU service 故障会扩大到 BrainPet 主进程；OpenPets 不采用该策略，
-仍使用 Electron 默认的独立 GPU process。该取舍必须由真实 renderer crash、全流程 smoke 与长时门共同复核。
+保留 renderer sandbox，并使用 Electron 软件合成；不再把 GPU service 移入未沙箱 browser 主进程，
+Chromium 独立 GPU/crash 边界仍保留。OpenPets 不采用该策略，继续使用 Electron 默认硬件加速路径。
+该取舍必须由真实 renderer crash、全流程 smoke 与长时门共同复核。
 
 ## 9. 测试体系
 

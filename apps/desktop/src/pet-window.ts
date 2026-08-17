@@ -1209,7 +1209,7 @@ function createPrimaryCompanionMarkup(summary: AgentCompanionActivitySummary | n
   const badgeLabel = t("companion.badge.label", { status: statusLabel, count: view.badgeCount });
   const badge = `<button class="primary-companion-badge status-${view.status}" type="button" data-companion-toggle aria-expanded="${trayOpen}" aria-label="${escapeHtml(badgeLabel)}" title="${escapeHtml(statusLabel)}"><span class="primary-companion-status-mark" aria-hidden="true"></span><span class="primary-companion-count">${view.badgeCount}</span></button>`;
   if (!trayOpen) return badge;
-  const items = view.items.map((item) => `<li class="primary-companion-item status-${item.status}">
+  const items = view.items.map((item) => `<li class="primary-companion-item status-${item.status}" data-provider="${escapeHtml(item.provider)}" data-session="${escapeHtml(item.sessionId)}" data-turn="${escapeHtml(item.turnId ?? "")}">
     <span class="primary-companion-item-mark" aria-hidden="true"></span>
     <span class="primary-companion-provider">${escapeHtml(item.providerLabel)}</span>
     <span class="primary-companion-age">${escapeHtml(item.ageLabel === "now" ? t("companion.age.now") : item.ageLabel)}</span>

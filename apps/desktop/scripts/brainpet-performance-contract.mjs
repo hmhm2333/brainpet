@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 
+import { normalizeBrainPetInstantProcessMetrics } from "../../../scripts/brainpet-performance-metrics-contract.mjs";
 import {
   evaluateBrainPetProcessSoakBudget,
   evaluateBrainPetResponsivenessBudget,
@@ -43,7 +44,7 @@ export function validateBrainPetFormalGateResult(gateResult, gateProfile) {
 function normalizeIdleResult(result) {
   assertFinitePositive(result.petReadyMs, "idle pet-ready latency");
   assert.deepEqual(result.rendererTargetTitles, ["BrainPet Default Pet"], "Idle gate must retain exactly the default pet renderer.");
-  validateInstantProcessMetrics(result.idleProcessMetrics, "idle baseline");
+  const idleProcessMetrics = normalizeBrainPetInstantProcessMetrics(result.idleProcessMetrics, "idle baseline", instantBudget({ maximumProcessCount: 5, maximumMiB: 400, maximumHandleCount: 2_750 }));
   const idleSoak = normalizeSoak(result.idleSoak, "idle-24h");
   assert.ok(idleSoak.heapGrowthBytes <= 32 * 1024 * 1024, "Idle renderer heap growth exceeds 32 MiB.");
   return {
@@ -53,7 +54,7 @@ function normalizeIdleResult(result) {
     resourceBudgetEnforced: true,
     petReadyMs: result.petReadyMs,
     rendererTargetTitles: ["BrainPet Default Pet"],
-    idleProcessMetrics: result.idleProcessMetrics,
+    idleProcessMetrics,
     idleSoak,
   };
 }
@@ -65,10 +66,14 @@ function normalizeActiveResult(result) {
   assert.equal(result.crashRecovered, true, "Active performance gate did not recover from the intentional renderer crash.");
   assert.equal(result.companionVerified, true, "Active performance gate did not verify companion rendering.");
   assert.equal(result.petToggleCloseVerified, true, "Active performance gate did not verify renderer close/replacement.");
-  for (const [label, metrics] of [["cold idle", result.idleProcessMetrics], ["active", result.activeProcessMetrics], ["hot idle", result.hotIdleProcessMetrics], ["recovered idle", result.recoveredIdleProcessMetrics]]) validateInstantProcessMetrics(metrics, label);
-  assert.ok(result.hotIdleProcessMetrics.totalWorkingSetBytes - result.idleProcessMetrics.totalWorkingSetBytes <= 100 * 1024 * 1024, "Active performance gate retained more than 100 MiB total working set above cold idle.");
+  const idleProcessMetrics = normalizeBrainPetInstantProcessMetrics(result.idleProcessMetrics, "cold idle", instantBudget({ maximumProcessCount: 5, maximumMiB: 400, maximumHandleCount: 2_750 }));
+  const activeProcessMetrics = normalizeBrainPetInstantProcessMetrics(result.activeProcessMetrics, "active", instantBudget({ maximumProcessCount: idleProcessMetrics.processCount + 2, maximumMiB: 650, maximumHandleCount: 3_500 }));
+  const hotIdleProcessMetrics = normalizeBrainPetInstantProcessMetrics(result.hotIdleProcessMetrics, "hot idle", instantBudget({ maximumProcessCount: idleProcessMetrics.processCount + 1, maximumMiB: 500, maximumHandleCount: 3_500 }));
+  const recoveredIdleProcessMetrics = normalizeBrainPetInstantProcessMetrics(result.recoveredIdleProcessMetrics, "recovered idle", instantBudget({ maximumProcessCount: idleProcessMetrics.processCount + 1, maximumMiB: 500, maximumHandleCount: 3_500 }));
+  assert.ok(hotIdleProcessMetrics.totalWorkingSetBytes - idleProcessMetrics.totalWorkingSetBytes <= 100 * 1024 * 1024, "Active performance gate retained more than 100 MiB total working set above cold idle.");
+  assert.ok(recoveredIdleProcessMetrics.totalWorkingSetBytes - idleProcessMetrics.totalWorkingSetBytes <= 100 * 1024 * 1024, "Recovered performance gate retained more than 100 MiB total working set above cold idle.");
   const responsiveness = normalizeResponsiveness(result.responsiveness);
-  const soak = normalizeSoak(result.soak, "active-30m", result.idleProcessMetrics.processCount);
+  const soak = normalizeSoak(result.soak, "active-30m", idleProcessMetrics.processCount);
   assert.ok(soak.heapGrowthBytes <= 32 * 1024 * 1024, "Active renderer heap growth exceeds 32 MiB.");
   return {
     ok: true,
@@ -78,10 +83,10 @@ function normalizeActiveResult(result) {
     resourceBudgetEnforced: true,
     petReadyMs: result.petReadyMs,
     responsiveness,
-    idleProcessMetrics: result.idleProcessMetrics,
-    activeProcessMetrics: result.activeProcessMetrics,
-    hotIdleProcessMetrics: result.hotIdleProcessMetrics,
-    recoveredIdleProcessMetrics: result.recoveredIdleProcessMetrics,
+    idleProcessMetrics,
+    activeProcessMetrics,
+    hotIdleProcessMetrics,
+    recoveredIdleProcessMetrics,
     companionVerified: true,
     petToggleCloseVerified: true,
     soak,
@@ -155,11 +160,14 @@ function normalizeSoak(soak, profile, coldIdleProcessCount = null) {
   };
 }
 
-function validateInstantProcessMetrics(metrics, label) {
-  assert.ok(metrics && typeof metrics === "object" && !Array.isArray(metrics), `BrainPet ${label} process metrics are missing.`);
-  for (const key of ["rootPid", "processCount", "totalWorkingSetBytes", "workingSetBytes", "privateBytes", "handleCount"]) assertFinitePositive(metrics[key], `${label} ${key}`);
-  assertFiniteNonNegative(metrics.cpuTime100ns, `${label} cpuTime100ns`);
-  assert.ok(Array.isArray(metrics.processes) && metrics.processes.length === metrics.processCount, `BrainPet ${label} process detail count is invalid.`);
+function instantBudget({ maximumProcessCount, maximumMiB, maximumHandleCount }) {
+  return {
+    maximumProcessCount,
+    maximumTotalWorkingSetBytes: maximumMiB * 1024 * 1024,
+    maximumWorkingSetBytes: maximumMiB * 1024 * 1024,
+    maximumPrivateBytes: maximumMiB * 1024 * 1024,
+    maximumHandleCount,
+  };
 }
 
 function activeHeapGrowth(samples) {

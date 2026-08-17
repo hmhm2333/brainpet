@@ -89,7 +89,7 @@ test("canonical package commands and the Windows collector stay bound to the fai
   const packageJson = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8"));
   assert.equal(packageJson.scripts["test:brainpet-soak"], "pnpm brainpet:active-gate:start");
   assert.equal(packageJson.scripts["test:brainpet-idle-soak"], "pnpm brainpet:idle-gate:start");
-  assert.match(packageJson.scripts["package:brainpet:unpacked"], /^node scripts\/clean-brainpet-build-output\.cjs/);
+  assert.equal(packageJson.scripts["package:brainpet:unpacked"], "node scripts/brainpet-package.mjs --target dir --mode private-test");
   const smokeSource = await readFile(new URL("../../scripts/brainpet-electron-smoke.mjs", import.meta.url), "utf8");
   assert.match(smokeSource, /BRAINPET_METRICS_ROOT_PID/);
   assert.match(smokeSource, /Win32_PerfRawData_PerfProc_Process[\s\S]*WorkingSetPrivate/);
@@ -106,6 +106,9 @@ test("canonical package commands and the Windows collector stay bound to the fai
   assert.match(smokeSource, /await delay\(10_000\)/);
   assert.match(smokeSource, /cleanup become quiescent[\s\S]*await delay\(2_000\)/);
   assert.match(smokeSource, /spawnSync\(stagedHelper, \["--agent", "codex"\][\s\S]*hook_event_name: "UserPromptSubmit"/);
+  assert.match(smokeSource, /data-session="\$\{wakeSessionId\}"\]\[data-turn="\$\{wakeTurnId\}"\]/);
+  assert.match(smokeSource, /listProcessIdentitiesForExactRootPid\(wakeDiscovery\.pid, stagedExecutable, wakeStartedEpochMs\)/);
+  assert.match(smokeSource, /stopProcessesForUserDataDir\(join\(wakeRoaming, "BrainPet"\), wakeIdentities, stagedExecutable\)/);
   assert.match(smokeSource, /coldWakeMs\.push\(performance\.now\(\) - wakeStartedAt\)/);
   assert.match(smokeSource, /maximumTotalWorkingSetBytes/);
   assert.match(smokeSource, /minimumInteractionFrameRateP95Fps: 50/);

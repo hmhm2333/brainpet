@@ -58,12 +58,13 @@ test("performance receipt is digest-checked and cannot overwrite an existing suc
   assertBrainPetPerformanceReceiptAvailable(receiptPath);
   const gateResult = createIdleGateResult();
   const runEvidence = createRunEvidence(candidate.commit, "idle-24h");
-  const written = await writeBrainPetPerformanceReceipt({ receiptPath, candidate, gateProfile: "idle-24h", startedAt: "2026-08-17T00:00:00.000Z", gateResult, runEvidence });
+  const startedAt = new Date(Date.now() - 86_400_001).toISOString();
+  const written = await writeBrainPetPerformanceReceipt({ receiptPath, candidate, gateProfile: "idle-24h", startedAt, gateResult, runEvidence });
   assert.equal(written.receipt.candidate.packageReceiptSha256, candidate.packageReceiptSha256);
   assert.equal(validateBrainPetPerformanceReceipt(receiptPath, { candidate, gateProfile: "idle-24h" }).gatePassed, true);
   assert.throws(() => assertBrainPetPerformanceReceiptAvailable(receiptPath), /already exists/i);
   await assert.rejects(
-    writeBrainPetPerformanceReceipt({ receiptPath, candidate, gateProfile: "idle-24h", startedAt: "2026-08-17T00:00:00.000Z", gateResult, runEvidence }),
+    writeBrainPetPerformanceReceipt({ receiptPath, candidate, gateProfile: "idle-24h", startedAt, gateResult, runEvidence }),
     /EEXIST|exists/i,
   );
 
@@ -145,6 +146,6 @@ function createIdleGateResult() {
   });
   const process = summarizeBrainPetProcessSoak(timeline, 8);
   const heapTimeline = Array.from({ length: 289 }, () => 16 * MiB);
-  const idleProcessMetrics = { ...timeline[0], names: ["brainpet.exe:2"] };
+  const { elapsedMs: _elapsedMs, ...idleProcessMetrics } = timeline[0];
   return { ok: true, gateProfile: "idle-24h", gatePassed: true, resourceBudgetEnforced: true, petReadyMs: 500, rendererTargetTitles: ["BrainPet Default Pet"], idleProcessMetrics, idleSoak: { durationMs: 86_400_001, samples: heapTimeline.length, heapGrowthBytes: 0, maxHeapBytes: 16 * MiB, heapTimeline, process } };
 }

@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract } from "../../../scripts/brainpet-release-contract.mjs";
 import { sha256Bytes, sha256File } from "./brainpet-performance-receipt.mjs";
-import { createCleanPerformanceEnvironment, readBrainPetPerformanceGateStatus } from "./brainpet-performance-gate-runner.mjs";
+import { createCleanPerformanceEnvironment, readBrainPetPerformanceGateStatus, recoverOrRejectPerformanceLease } from "./brainpet-performance-gate-runner.mjs";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(appDir, "..", "..");
@@ -72,6 +72,46 @@ test("formal runner environment drops inherited BrainPet/OpenPets bypass control
   }
 });
 
+test("startup lease handoff cannot be stolen before its manifest is published", () => {
+  mkdirSync(performanceRoot, { recursive: true });
+  const leasePath = join(performanceRoot, "brainpet-performance-gate.lease.json");
+  const runId = `active-30m-${"c".repeat(40)}-1786900000000-${randomUUID()}`;
+  const owner = { pid: 5151, creationDate: "2026-08-17T00:00:00.000Z", executable: process.execPath, commandNeedles: ["brainpet-performance-gate-runner.mjs", "start"] };
+  writeFileSync(leasePath, `${JSON.stringify({ runId, profile: "active-30m", manifest: toRepoRelative(join(runsRoot, `${runId}.manifest.json`)), owner, phase: "starting", activeChild: null })}\n`);
+  createdPaths.push(leasePath);
+  const identity = { processId: owner.pid, creationDate: owner.creationDate, executablePath: owner.executable, commandLine: `node brainpet-performance-gate-runner.mjs start active-30m` };
+  assert.throws(() => recoverOrRejectPerformanceLease(() => identity, () => assert.fail("active startup must not be terminated")), /already owned/i);
+  assert.equal(readFileSync(leasePath, "utf8").includes(runId), true);
+  rmSync(leasePath, { force: true });
+  createdPaths.pop();
+});
+
+test("interrupted worker recovery terminates its exact leased child tree before removing the lease", () => {
+  mkdirSync(performanceRoot, { recursive: true });
+  const leasePath = join(performanceRoot, "brainpet-performance-gate.lease.json");
+  const runId = `idle-24h-${"d".repeat(40)}-1786900000000-${randomUUID()}`;
+  const activeChild = { pid: 6262, creationDate: "2026-08-17T00:00:00.000Z", executable: process.execPath, commandNeedles: ["brainpet-performance-gate-runner.mjs", "child", runId] };
+  writeFileSync(leasePath, `${JSON.stringify({ runId, profile: "idle-24h", owner: { pid: 1 }, phase: "child-running", activeChild })}\n`);
+  createdPaths.push(leasePath);
+  let terminated = null;
+  const query = (pid) => pid === activeChild.pid ? { processId: pid, creationDate: activeChild.creationDate, executablePath: activeChild.executable, commandLine: `node brainpet-performance-gate-runner.mjs child --run-id ${runId}` } : null;
+  assert.equal(recoverOrRejectPerformanceLease(query, (identity) => { terminated = identity; }), true);
+  assert.deepEqual(terminated, activeChild);
+  assert.equal(existsSyncForTest(leasePath), false);
+  createdPaths.pop();
+});
+
+test("a corrupt performance lease fails closed and is not discarded", () => {
+  mkdirSync(performanceRoot, { recursive: true });
+  const leasePath = join(performanceRoot, "brainpet-performance-gate.lease.json");
+  writeFileSync(leasePath, "{not-json\n");
+  createdPaths.push(leasePath);
+  assert.throws(() => recoverOrRejectPerformanceLease(() => null, () => {}), /JSON|Unexpected token|property name/i);
+  assert.equal(readFileSync(leasePath, "utf8"), "{not-json\n");
+  rmSync(leasePath, { force: true });
+  createdPaths.pop();
+});
+
 function createRunFixture() {
   mkdirSync(runsRoot, { recursive: true });
   const commit = "b".repeat(40);
@@ -124,4 +164,8 @@ function createCompletion(fixture, succeeded, resultSha256 = null) {
 
 function toRepoRelative(path) {
   return relative(repoRoot, path).replaceAll("\\", "/");
+}
+
+function existsSyncForTest(path) {
+  try { readFileSync(path); return true; } catch (error) { if (error?.code === "ENOENT") return false; throw error; }
 }

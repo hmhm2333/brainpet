@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -156,6 +156,45 @@ export function prepareBrainPetBundledMarketplace(options) {
   return { stagingMarketplaceRoot, helperPath, receipt };
 }
 
+export function assertCanonicalPackageInputsTracked() {
+  const inputs = [
+    "apps/desktop/assets",
+    "apps/desktop/pet-preload.cjs",
+    "apps/desktop/brainpet-preload.cjs",
+    "apps/desktop/brainpet-setup-preload.cjs",
+    "apps/desktop/package.json",
+    "apps/desktop/electron-builder.brainpet.base.yml",
+    "apps/desktop/electron-builder.brainpet.private.yml",
+    "apps/desktop/electron-builder.brainpet.public.yml",
+    "integrations/codex",
+    "native/brainpet-hook/src",
+    "native/brainpet-hook/Cargo.toml",
+    "native/brainpet-hook/Cargo.lock",
+  ];
+  for (const ignored of [false, true]) {
+    const args = ["ls-files", "--others", ...(ignored ? ["--ignored"] : []), "--exclude-standard", "--", ...inputs];
+    const result = spawnSync("git", args, { cwd: repoRoot, encoding: "utf8", windowsHide: true });
+    if (result.status !== 0) throw new Error(result.stderr || "Unable to inspect canonical BrainPet package inputs.");
+    const unexpected = result.stdout.split(/\r?\n/).filter(Boolean);
+    if (unexpected.length > 0) throw new Error(`BrainPet package inputs contain untracked${ignored ? " ignored" : ""} files: ${unexpected.join(", ")}`);
+  }
+}
+
+async function prepareFreshPackageInputs(options) {
+  assertCanonicalPackageInputsTracked();
+  for (const name of ["dist", ".brainpet-package"]) rmSync(join(appDir, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await runCommand(
+    process.platform === "win32" ? "cmd.exe" : "pnpm",
+    process.platform === "win32" ? ["/d", "/s", "/c", "pnpm.cmd", "--filter", "@open-pets/desktop", "build"] : ["--filter", "@open-pets/desktop", "build"],
+    repoRoot,
+    process.env,
+    "BrainPet desktop build",
+  );
+  if (!options.helperPath) {
+    await runCommand(process.platform === "win32" ? "cargo.exe" : "cargo", ["build", "--locked", "--release", "--manifest-path", join(repoRoot, "native", "brainpet-hook", "Cargo.toml"), "--target", options.releaseTarget.rustTarget], repoRoot, process.env, `BrainPet native helper build (${options.releaseTarget.id})`);
+  }
+}
+
 function findCachedTool(cacheName, marker) {
   const localAppData = process.env.LOCALAPPDATA;
   if (!localAppData) return undefined;
@@ -175,6 +214,7 @@ async function main() {
     return;
   }
   if (options.mode === "public-release") validatePublicReleaseEnvironment(options.releaseTarget);
+  await prepareFreshPackageInputs(options);
   rmSync(options.outputRoot, { recursive: true, force: true });
   prepareBrainPetBundledMarketplace(options);
   const nsisDir = findCachedTool("nsis-3.0.4.1", join("Bin", "makensis.exe"));
@@ -196,6 +236,14 @@ async function main() {
     packageTarget: options.target,
   });
   console.log(`BrainPet package and automatic validation passed (${receipt.target}, publicReleaseReady=${receipt.publicReleaseReady}).`);
+}
+
+function runCommand(command, args, cwd, env, label) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(command, args, { cwd, env, stdio: "inherit", windowsHide: true });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => signal ? reject(new Error(`${label} terminated by ${signal}.`)) : code === 0 ? resolvePromise() : reject(new Error(`${label} exited with ${code ?? "unknown"}.`)));
+  });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

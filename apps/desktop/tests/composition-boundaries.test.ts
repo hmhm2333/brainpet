@@ -27,7 +27,8 @@ test("BrainPet HostCore has no reverse dependency on product or optional service
   assert.match(optionalRuntime, /stopPluginService\(service\)/);
   assert.match(main, /import\("\.\/composition\/openpets-runtime\.js"\)/);
   assert.match(main, /import\("\.\/composition\/brainpet-feature\.js"\)/);
-  assert.match(main, /distribution\.profile === "brainpet" && process\.platform === "win32"[\s\S]*appendSwitch\("in-process-gpu"\)/);
+  assert.match(main, /distribution\.profile === "brainpet" && process\.platform === "win32"[\s\S]*app\.disableHardwareAcceleration\(\)/);
+  assert.doesNotMatch(main, /in-process-gpu/);
   assert.doesNotMatch(main, /^import .*composition\/(?:openpets-runtime|brainpet-feature)\.js/m);
 });
 

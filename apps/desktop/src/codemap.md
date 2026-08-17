@@ -208,7 +208,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 ## Key Modules
 
 **Core**:
-- `main.ts`: Single composition root, single-instance lock, platform switches, default hardware acceleration, and dynamic service factories
+- `main.ts`: Single composition root, single-instance lock, product-scoped Windows software composition, platform switches, and dynamic service factories
 - `distribution-profile.ts`: Pure OpenPets/BrainPet identity and OpenPets-only bundled-plugin seeding policy
 - `composition/desktop-composition.ts`: Pure capability/layer plan for OpenPets, enabled BrainPet, and BrainPet rollback
 - `composition/managed-service.ts`: Start/dispose/diagnostics lifecycle shared by every composition service; disposal requested during an async start stops later factories and drains each created service exactly once
@@ -231,7 +231,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `brainpet-adapter-manager.ts`: Codex CLI detection plus serialized install/upgrade/uninstall transactions, config backup/rollback, bundle hash verification, and redacted receipts
 - `brainpet-setup-guide.ts`: Sender-bound setup IPC that exposes adapter status and explicit one-click connect/remove actions to the sandboxed setup renderer
 - `lifecycle.ts`: Generic app event handlers (quit, window-all-closed, second-instance); delegates focus and one composed disposer without importing concrete services
-- `main.ts`: Composition root and product-scoped Chromium policy; Windows BrainPet retains hardware acceleration but runs the bundled-local-surface GPU service as a browser thread to avoid duplicated shared Chromium working-set pages, while OpenPets keeps Electron's isolated GPU process
+- `main.ts`: Composition root and product-scoped Chromium policy; Windows BrainPet disables hardware acceleration for its small local pixel surfaces while retaining Chromium's separate GPU/crash boundary, and OpenPets keeps Electron's default hardware-accelerated path
 - `state.ts`: Simple shell pause state
 - `app-state.ts`: Persistent JSON state with V1 normalization, unknown-field preservation, last-known-good recovery, atomic writes, reaction animation overrides, and the validated waiting animation duration preference
 - `app-state-core.ts`: Pet scale options, waiting-duration options/normalization, onboarding normalization

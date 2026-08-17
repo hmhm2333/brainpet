@@ -67,6 +67,7 @@ const port = await reservePort();
 const logs = [];
 const spawnedAt = Date.now();
 let finalResult = null;
+let primarySmokeError = null;
 
 const exerciserMode = !forcedTask || forcedTask === "foundation-probe";
 const petWindowTitle = verifyOpenPetsIsolation ? "OpenPets Default Pet" : "BrainPet Default Pet";
@@ -290,6 +291,10 @@ try {
   let nativeReactionClickVerified = false;
   let petThrowVerified = false;
   if (forcedTask === "foundation-probe") {
+    await evaluate(stageTarget, `(() => {
+      const nativeSetTimeout = window.setTimeout.bind(window);
+      window.setTimeout = (handler, timeout, ...args) => nativeSetTimeout(handler, timeout === 4000 ? 60000 : timeout, ...args);
+    })()`);
     await evaluate(stageTarget, `document.querySelector('[data-scene-input="primary"]')?.click()`);
     await waitForEvaluation(stageTarget, `document.body.innerText.includes('0010')`, 2_000);
     await evaluate(stageTarget, `document.querySelector('[data-scene-input="secondary"]')?.click()`);
@@ -531,15 +536,7 @@ try {
   }
   assert.doesNotMatch(logs.join(""), /invalid stage event rejected|stage event transition rejected/, "host must accept every validated session event during smoke and soak");
 
-  let togglePetTarget = await waitForTarget(port, (target) => target.title === petWindowTitle, 5_000);
-  if ((await listTargets(port)).some((target) => target.id === stageTarget.id)) {
-    await evaluate(togglePetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
-    await waitForTargetToDisappear(port, stageTarget.id, 10_000);
-    const closedPetTargetId = togglePetTarget.id;
-    togglePetTarget = await waitForTarget(port, (target) => target.title === petWindowTitle && target.id !== closedPetTargetId, 5_000);
-  } else {
-    togglePetTarget = await waitForTarget(port, (target) => target.title === petWindowTitle, 5_000);
-  }
+  let togglePetTarget = await closeStageToStablePet(port, petWindowTitle);
   await waitForEvaluation(togglePetTarget, `document.documentElement.dataset.brainpetStageOpen !== 'true'`, 2_000);
   const postTrainingIdle = await evaluate(togglePetTarget, `(() => {
     const sprite = document.querySelector('.sprite');
@@ -562,8 +559,7 @@ try {
       assert.equal(hotIdleGrowthBytes <= 100 * 1024 * 1024, true, `normal stage close retained ${formatMiB(hotIdleGrowthBytes)} above cold idle: cold=${JSON.stringify(idleProcessMetrics.processes)} hot=${JSON.stringify(hotIdleProcessMetrics.processes)}`);
     }
   }
-  await evaluate(togglePetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
-  stageTarget = await waitForTarget(port, (target) => target.title === "BrainPet", 10_000);
+  ({ petTarget: togglePetTarget, stageTarget } = await openStageFromStablePet(port, petWindowTitle));
   await waitForEvaluation(stageTarget, stageIdentityExpression, 5_000);
   await waitForEvaluation(togglePetTarget, `(() => {
     const sprite = document.querySelector('.sprite');
@@ -603,25 +599,27 @@ try {
   finalResult = { ok: true, ...(smokeMode.performanceKind === "active" ? { gateProfile: smokeMode.gateProfile, gatePassed: smokeMode.gatePassedEligible, taskId: forcedTask, resourceBudgetEnforced: enforceResourceBudget } : {}), outputPath, introOutputPath, companionOutputPath, pixelUiOutputPath, resultOutputPath, videoPath, petReadyMs, responsiveness, idleProcessMetrics, activeProcessMetrics, hotIdleProcessMetrics, recoveredIdleProcessMetrics, companionVerified: true, pixelUiVerified: true, trigger, stage: { width: welcome.width, height: welcome.height, desktopOverlay: true }, prompt: welcome.prompt, introBufferMs, openingMs, petIndependentMove, rigIndependentDrag, trialVisualHiddenDuringDrag, restartedTrialProgress, rigAutoResume, focusPause, nativeReactionClickVerified, petThrowVerified, petToggleCloseVerified, completionVerified: Boolean(completion), completionQuality: completion?.quality ?? null, foundationInputVerified, lifecycleCycles, soak, crashIsolated: true, crashRecovered: true };
   }
 } catch (error) {
+  primarySmokeError = error;
   process.stderr.write(`${logs.join("")}\n`);
   throw error;
 } finally {
-  const cleanupProcessIdentities = process.platform === "win32"
-    ? smokeMode.gatePassedEligible
-      ? await listProcessIdentitiesForRootPid(child.pid, userDataDir)
-      : await listProcessIdentitiesForRootPid(child.pid, userDataDir).catch(() => [])
-    : [];
-  await closeElectronApp(port);
-  child.kill();
-  let exitError = null;
+  const cleanupErrors = [];
+  let cleanupProcessIdentities = [];
   try {
-    await waitForExit(child, 5_000);
+    if (process.platform === "win32") cleanupProcessIdentities = await listProcessIdentitiesForRootPid(child.pid, userDataDir);
   } catch (error) {
-    exitError = error;
+    cleanupErrors.push(error);
   }
-  if (process.platform === "win32") await stopProcessesForUserDataDir(userDataDir, cleanupProcessIdentities);
-  await rm(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  if (exitError) throw exitError;
+  try { await closeElectronApp(port); } catch (error) { cleanupErrors.push(error); }
+  try { child.kill(); } catch (error) { cleanupErrors.push(error); }
+  try { await waitForExit(child, 5_000); } catch (error) { cleanupErrors.push(error); }
+  try {
+    if (process.platform === "win32") await stopProcessesForUserDataDir(userDataDir, cleanupProcessIdentities);
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  try { await rm(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch (error) { cleanupErrors.push(error); }
+  if (cleanupErrors.length > 0) throw new AggregateError(primarySmokeError ? [primarySmokeError, ...cleanupErrors] : cleanupErrors, "BrainPet smoke cleanup failed.");
 }
 
 assert.ok(finalResult, "BrainPet smoke completed without a result.");
@@ -686,25 +684,28 @@ async function runColdPerformancePreflight(samples) {
         stdio: "ignore",
         windowsHide: true,
       });
+      let samplePrimaryError = null;
       try {
         assert.ok(Number.isInteger(sampleChild.pid) && sampleChild.pid > 0, `cold performance sample ${index + 1} lacks an Electron browser PID`);
         const samplePetTarget = await waitForTarget(samplePort, (target) => target.title === "BrainPet Default Pet", startupTimeoutMs);
         await waitForEvaluation(samplePetTarget, `document.readyState === 'complete' && Boolean(document.querySelector('[data-brainpet-trigger]'))`, 5_000);
         coldStartupMs.push(performance.now() - sampleStartedAt);
+      } catch (error) {
+        samplePrimaryError = error;
+        throw error;
       } finally {
-        const sampleCleanupIdentities = process.platform === "win32"
-          ? await listProcessIdentitiesForRootPid(sampleChild.pid, sampleUserDataDir)
-          : [];
-        sampleChild.kill();
-        let sampleExitError = null;
+        const sampleCleanupErrors = [];
+        let sampleCleanupIdentities = [];
         try {
-          await waitForExit(sampleChild, 5_000);
-        } catch (error) {
-          sampleExitError = error;
-        }
-        if (process.platform === "win32") await stopProcessesForUserDataDir(sampleUserDataDir, sampleCleanupIdentities);
-        await rm(sampleUserDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-        if (sampleExitError) throw sampleExitError;
+          if (process.platform === "win32") sampleCleanupIdentities = await listProcessIdentitiesForRootPid(sampleChild.pid, sampleUserDataDir);
+        } catch (error) { sampleCleanupErrors.push(error); }
+        try { sampleChild.kill(); } catch (error) { sampleCleanupErrors.push(error); }
+        try { await waitForExit(sampleChild, 5_000); } catch (error) { sampleCleanupErrors.push(error); }
+        try {
+          if (process.platform === "win32") await stopProcessesForUserDataDir(sampleUserDataDir, sampleCleanupIdentities, stagedExecutable);
+        } catch (error) { sampleCleanupErrors.push(error); }
+        try { await rm(sampleUserDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch (error) { sampleCleanupErrors.push(error); }
+        if (sampleCleanupErrors.length > 0) throw new AggregateError(samplePrimaryError ? [samplePrimaryError, ...sampleCleanupErrors] : sampleCleanupErrors, `BrainPet cold-start sample ${index + 1} cleanup failed.`);
         // Let process teardown, the PowerShell descendant check, and filesystem
         // cleanup become quiescent before the next independent cold sample.
         // Without this separation, the harness measures its own cleanup tail.
@@ -720,24 +721,43 @@ async function runColdPerformancePreflight(samples) {
       await mkdir(dirname(wakeMarkerPath), { recursive: true });
       await writeFile(wakeMarkerPath, `${JSON.stringify({ schemaVersion: 1, product: "brainpet", executablePath: stagedExecutable, appVersion: formalCandidate.appVersion, channel: "stable", platform: "win32", arch: process.arch, writtenAt: Date.now() }, null, 2)}\n`, "utf8");
       const wakeStartedAt = performance.now();
-      const helperResult = spawnSync(stagedHelper, ["--agent", "codex"], {
-        input: JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: `cold-wake-${index}`, turn_id: `cold-wake-turn-${index}` }),
-        encoding: "utf8",
-        timeout: 5_000,
-        windowsHide: true,
-        env: { ...process.env, APPDATA: wakeRoaming, LOCALAPPDATA: wakeLocal, BRAINPET_INSTALL_MARKER_FILE: wakeMarkerPath, BRAINPET_PERFORMANCE_REMOTE_DEBUGGING_PORT: String(wakePort), OPENPETS_DISTRIBUTION_PROFILE: "brainpet", OPENPETS_DISABLE_PLUGIN_CATALOG: "1", OPENPETS_LOG_CONSOLE: "0" },
-      });
-      assert.equal(helperResult.status, 0, helperResult.error?.message || helperResult.stderr || "Packaged BrainPet helper failed during cold wake.");
-      const wakeDiscovery = await waitForJsonFile(wakeDiscoveryPath, (value) => Number.isInteger(value?.pid) && value.pid > 0, startupTimeoutMs);
+      const wakeStartedEpochMs = Date.now();
+      const wakeSessionId = `cold-wake-${index}`;
+      const wakeTurnId = `cold-wake-turn-${index}`;
+      let wakeDiscovery = null;
+      let wakePrimaryError = null;
       try {
+        const helperResult = spawnSync(stagedHelper, ["--agent", "codex"], {
+          input: JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: wakeSessionId, turn_id: wakeTurnId }),
+          encoding: "utf8",
+          timeout: 5_000,
+          windowsHide: true,
+          env: { ...process.env, APPDATA: wakeRoaming, LOCALAPPDATA: wakeLocal, BRAINPET_INSTALL_MARKER_FILE: wakeMarkerPath, BRAINPET_PERFORMANCE_REMOTE_DEBUGGING_PORT: String(wakePort), OPENPETS_DISTRIBUTION_PROFILE: "brainpet", OPENPETS_DISABLE_PLUGIN_CATALOG: "1", OPENPETS_LOG_CONSOLE: "0" },
+        });
+        assert.equal(helperResult.status, 0, helperResult.error?.message || helperResult.stderr || "Packaged BrainPet helper failed during cold wake.");
+        wakeDiscovery = await waitForJsonFile(wakeDiscoveryPath, (value) => Number.isInteger(value?.pid) && value.pid > 0, startupTimeoutMs);
         const wakePetTarget = await waitForTarget(wakePort, (target) => target.title === "BrainPet Default Pet", startupTimeoutMs);
         await waitForEvaluation(wakePetTarget, `document.readyState === 'complete' && Boolean(document.querySelector('[data-companion-toggle]'))`, 5_000);
+        await evaluate(wakePetTarget, `document.querySelector('[data-companion-toggle]')?.click()`);
+        await waitForEvaluation(wakePetTarget, `(() => {
+          const toggle = document.querySelector('[data-companion-toggle]');
+          const item = document.querySelector('.primary-companion-item.status-working[data-provider="codex"][data-session="${wakeSessionId}"][data-turn="${wakeTurnId}"]');
+          return toggle?.getAttribute('aria-expanded') === 'true' && item instanceof HTMLElement && item.getClientRects().length > 0;
+        })()`, 5_000);
         coldWakeMs.push(performance.now() - wakeStartedAt);
+      } catch (error) {
+        wakePrimaryError = error;
+        throw error;
       } finally {
-        const wakeIdentities = await listProcessIdentitiesForExactRootPid(wakeDiscovery.pid);
-        await stopProcessesForUserDataDir(join(wakeRoaming, "BrainPet"), wakeIdentities);
-        await rm(wakeRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-        await delay(2_000);
+        const wakeCleanupErrors = [];
+        let wakeIdentities = [];
+        try {
+          if (wakeDiscovery) wakeIdentities = await listProcessIdentitiesForExactRootPid(wakeDiscovery.pid, stagedExecutable, wakeStartedEpochMs);
+        } catch (error) { wakeCleanupErrors.push(error); }
+        try { await stopProcessesForUserDataDir(join(wakeRoaming, "BrainPet"), wakeIdentities, stagedExecutable); } catch (error) { wakeCleanupErrors.push(error); }
+        try { await rm(wakeRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch (error) { wakeCleanupErrors.push(error); }
+        try { await delay(2_000); } catch (error) { wakeCleanupErrors.push(error); }
+        if (wakeCleanupErrors.length > 0) throw new AggregateError(wakePrimaryError ? [wakePrimaryError, ...wakeCleanupErrors] : wakeCleanupErrors, `BrainPet cold-wake sample ${index + 1} cleanup failed.`);
       }
     }
   } finally {
@@ -951,12 +971,16 @@ async function closeElectronApp(debugPort) {
   }
 }
 
-async function stopProcessesForUserDataDir(directory, preservedIdentities = []) {
+async function stopProcessesForUserDataDir(directory, preservedIdentities = [], exactExecutable = null) {
   const script = String.raw`
 $needle = '--user-data-dir=' + $env:BRAINPET_CLEANUP_USER_DATA
+$exactExecutable = $env:BRAINPET_CLEANUP_EXECUTABLE
 $preserved = @($env:BRAINPET_CLEANUP_IDENTITIES | ConvertFrom-Json)
-$all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine, CreationDate)
-$roots = @($all | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+$all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine, CreationDate, ExecutablePath)
+$roots = @($all | Where-Object {
+  ($_.CommandLine -and $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0) -or
+  ($exactExecutable -and $_.ExecutablePath -and [string]::Equals($_.ExecutablePath, $exactExecutable, [StringComparison]::OrdinalIgnoreCase))
+})
 $ids = [System.Collections.Generic.HashSet[uint32]]::new()
 foreach ($root in $roots) { [void]$ids.Add([uint32]$root.ProcessId) }
 foreach ($identity in $preserved) {
@@ -971,7 +995,10 @@ do {
 } while ($changed)
 foreach ($id in @($ids) | Sort-Object -Descending) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Milliseconds 300
-$remaining = @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+$remaining = @(Get-CimInstance Win32_Process | Where-Object {
+  ($_.CommandLine -and $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0) -or
+  ($exactExecutable -and $_.ExecutablePath -and [string]::Equals($_.ExecutablePath, $exactExecutable, [StringComparison]::OrdinalIgnoreCase))
+})
 if ($remaining.Count -gt 0) { throw "BrainPet smoke cleanup left $($remaining.Count) process roots running." }
 $currentAll = @(Get-CimInstance Win32_Process | Select-Object ProcessId, CreationDate)
 foreach ($identity in $preserved) {
@@ -979,7 +1006,7 @@ foreach ($identity in $preserved) {
   if ($null -ne $same) { throw "BrainPet smoke cleanup left preserved process identity $($identity.pid) running." }
 }
 `;
-  await runPowerShell(script, { BRAINPET_CLEANUP_USER_DATA: directory, BRAINPET_CLEANUP_IDENTITIES: JSON.stringify(preservedIdentities) });
+  await runPowerShell(script, { BRAINPET_CLEANUP_USER_DATA: directory, BRAINPET_CLEANUP_IDENTITIES: JSON.stringify(preservedIdentities), BRAINPET_CLEANUP_EXECUTABLE: exactExecutable ?? "" });
 }
 
 async function listProcessIdentitiesForRootPid(rootPid, directory) {
@@ -1002,12 +1029,16 @@ do {
   return Array.isArray(parsed) ? parsed : [parsed];
 }
 
-async function listProcessIdentitiesForExactRootPid(rootPid) {
+async function listProcessIdentitiesForExactRootPid(rootPid, expectedExecutable, notBeforeEpochMs) {
   const script = String.raw`
 $rootPid = [uint32]$env:BRAINPET_IDENTITY_ROOT_PID
-$all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CreationDate)
+$expectedExecutable = $env:BRAINPET_IDENTITY_EXECUTABLE
+$notBefore = [DateTimeOffset]::FromUnixTimeMilliseconds([int64]$env:BRAINPET_IDENTITY_NOT_BEFORE).UtcDateTime.AddSeconds(-2)
+$all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CreationDate, ExecutablePath)
 $root = $all | Where-Object { [uint32]$_.ProcessId -eq $rootPid } | Select-Object -First 1
 if ($null -eq $root) { throw "BrainPet cleanup identity root is missing." }
+if (-not $root.ExecutablePath -or -not [string]::Equals($root.ExecutablePath, $expectedExecutable, [StringComparison]::OrdinalIgnoreCase)) { throw "BrainPet cleanup identity root executable does not match the staged candidate." }
+if ($root.CreationDate.ToUniversalTime() -lt $notBefore) { throw "BrainPet cleanup identity root predates this cold-wake sample." }
 $ids = [System.Collections.Generic.HashSet[uint32]]::new()
 [void]$ids.Add($rootPid)
 do {
@@ -1016,7 +1047,7 @@ do {
 } while ($changed)
 @($all | Where-Object { $ids.Contains([uint32]$_.ProcessId) } | ForEach-Object { [pscustomobject]@{ pid = [uint32]$_.ProcessId; creationTime = $_.CreationDate.ToUniversalTime().ToString('o') } }) | ConvertTo-Json -Compress
 `;
-  const output = await runPowerShell(script, { BRAINPET_IDENTITY_ROOT_PID: String(rootPid) });
+  const output = await runPowerShell(script, { BRAINPET_IDENTITY_ROOT_PID: String(rootPid), BRAINPET_IDENTITY_EXECUTABLE: expectedExecutable, BRAINPET_IDENTITY_NOT_BEFORE: String(notBeforeEpochMs) });
   const parsed = JSON.parse(output.trim());
   return Array.isArray(parsed) ? parsed : [parsed];
 }
@@ -1057,7 +1088,7 @@ $workingSet = ($selected | ForEach-Object { $privateWorkingSetByPid[[uint32]$_.P
 $privateBytes = ($selected | Measure-Object PrivatePageCount -Sum).Sum
 $handles = ($selected | Measure-Object HandleCount -Sum).Sum
 $cpuTime100ns = ($selected | ForEach-Object { [uint64]$_.KernelModeTime + [uint64]$_.UserModeTime } | Measure-Object -Sum).Sum
-$processes = @($selected | ForEach-Object {
+$processes = @($selected | Sort-Object ProcessId | ForEach-Object {
   $role = if ($_.CommandLine -match '--type=([^\s"]+)') { $Matches[1] } else { 'browser' }
   [pscustomobject]@{
     pid = [uint32]$_.ProcessId
@@ -1079,7 +1110,6 @@ $processes = @($selected | ForEach-Object {
   privateBytes = [int64]$privateBytes
   handleCount = [int64]$handles
   cpuTime100ns = [int64]$cpuTime100ns
-  names = @($selected | Group-Object Name | ForEach-Object { $_.Name + ':' + $_.Count })
   processes = $processes
 } | ConvertTo-Json -Depth 4 -Compress
 `;
@@ -1124,8 +1154,8 @@ async function waitForColdIdleSettlement(debugPort, title, rootPid, directory, t
 }
 
 function assertProcessBudget(label, metrics, budget) {
-  assert.equal(metrics.processCount <= budget.processCount, true, `${label} process count ${metrics.processCount} exceeds ${budget.processCount}: ${metrics.names.join(", ")} ${JSON.stringify(metrics.processes)}`);
-  const details = `${metrics.names.join(", ")} ${JSON.stringify(metrics.processes)}`;
+  const details = JSON.stringify(metrics.processes);
+  assert.equal(metrics.processCount <= budget.processCount, true, `${label} process count ${metrics.processCount} exceeds ${budget.processCount}: ${details}`);
   assert.equal(metrics.totalWorkingSetBytes <= budget.totalWorkingSetBytes, true, `${label} total working set ${formatMiB(metrics.totalWorkingSetBytes)} exceeds ${formatMiB(budget.totalWorkingSetBytes)}: ${details}`);
   assert.equal(metrics.workingSetBytes <= budget.workingSetBytes, true, `${label} private working set ${formatMiB(metrics.workingSetBytes)} exceeds ${formatMiB(budget.workingSetBytes)} (total including shared pages ${formatMiB(metrics.totalWorkingSetBytes)}): ${details}`);
   assert.equal(metrics.privateBytes <= budget.privateBytes, true, `${label} private bytes ${formatMiB(metrics.privateBytes)} exceeds ${formatMiB(budget.privateBytes)}: ${details}`);
@@ -1149,6 +1179,53 @@ function runPowerShell(script, extraEnv) {
     powershell.once("error", reject);
     powershell.once("exit", (code) => code === 0 ? resolvePromise(output.join("")) : reject(new Error(`PowerShell helper failed (${code}).\n${output.join("")}`)));
   });
+}
+
+async function closeStageToStablePet(debugPort, petTitle) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const targets = await listTargets(debugPort);
+    const stage = targets.find((target) => target.type === "page" && target.title === "BrainPet");
+    if (!stage) {
+      const petTarget = await waitForTarget(debugPort, (target) => target.title === petTitle, 5_000);
+      try {
+        if (await evaluate(petTarget, `document.documentElement.dataset.brainpetStageOpen !== 'true'`)) return petTarget;
+      } catch (error) {
+        lastError = error;
+      }
+      await delay(100);
+      continue;
+    }
+    try {
+      const petTarget = await waitForTarget(debugPort, (target) => target.title === petTitle, 5_000);
+      await evaluate(petTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
+      await waitForTargetToDisappear(debugPort, stage.id, 10_000);
+    } catch (error) {
+      // The result auto-close may win after discovery. Re-observe the final
+      // stage/pet state instead of trusting a stale CDP target.
+      lastError = error;
+    }
+    await delay(100);
+  }
+  throw new Error(`BrainPet stage did not converge to a closed state.${lastError ? ` ${lastError instanceof Error ? lastError.message : String(lastError)}` : ""}`);
+}
+
+async function openStageFromStablePet(debugPort, petTitle) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const existing = (await listTargets(debugPort)).find((target) => target.type === "page" && target.title === "BrainPet");
+    if (existing) return { petTarget: await waitForTarget(debugPort, (target) => target.title === petTitle, 5_000), stageTarget: existing };
+    const petTarget = await waitForTarget(debugPort, (target) => target.title === petTitle, 5_000);
+    try {
+      await evaluate(petTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
+      const stageTarget = await waitForTarget(debugPort, (target) => target.type === "page" && target.title === "BrainPet", 10_000);
+      return { petTarget, stageTarget };
+    } catch (error) {
+      lastError = error;
+      await delay(100);
+    }
+  }
+  throw new Error(`BrainPet stage did not open from a stable pet target.${lastError ? ` ${lastError instanceof Error ? lastError.message : String(lastError)}` : ""}`);
 }
 
 

@@ -9,7 +9,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { fileURLToPath } from "node:url";
 
 import { brainPetDistributionContract } from "../../../scripts/brainpet-release-contract.mjs";
-import { normalizeBrainPetFormalGateResult, validateBrainPetFormalGateResult } from "./brainpet-performance-contract.mjs";
+import { assertBrainPetPerformanceWallClock } from "../../../scripts/brainpet-performance-metrics-contract.mjs";
+import { brainPetFormalPerformanceContract, normalizeBrainPetFormalGateResult, validateBrainPetFormalGateResult } from "./brainpet-performance-contract.mjs";
 import { validateBrainPetRuntimeTree, validateBrainPetRuntimeTreeShape } from "./brainpet-runtime-tree.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -163,6 +164,7 @@ export function validateBrainPetPerformanceReceipt(receiptPath, { candidate, gat
   const startedAt = Date.parse(receipt.startedAt);
   const completedAt = Date.parse(receipt.completedAt);
   assert.equal(Number.isFinite(startedAt) && Number.isFinite(completedAt) && completedAt >= startedAt, true, "BrainPet performance receipt timestamps are invalid.");
+  assertBrainPetPerformanceWallClock(receipt.startedAt, receipt.completedAt, brainPetFormalPerformanceContract[receipt.gateProfile].durationMs);
   if (gateProfile !== undefined) assert.equal(receipt.gateProfile, gateProfile, "BrainPet performance receipt profile mismatch.");
   if (candidate !== undefined) assert.deepEqual(receipt.candidate, candidate, "BrainPet performance receipt candidate mismatch.");
   return receipt;

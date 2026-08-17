@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
 import { brainPetDistributionContract } from "./brainpet-release-contract.mjs";
+import { assertBrainPetPerformanceWallClock, normalizeBrainPetInstantProcessMetrics } from "./brainpet-performance-metrics-contract.mjs";
 
 const MiB = 1024 * 1024;
 export const brainPetPerformanceProfiles = Object.freeze(["active-30m", "idle-24h"]);
@@ -19,6 +20,7 @@ export function validateBrainPetPerformanceReceiptObject(receipt) {
   const startedAt = Date.parse(receipt.startedAt);
   const completedAt = Date.parse(receipt.completedAt);
   assert.ok(Number.isFinite(startedAt) && Number.isFinite(completedAt) && completedAt >= startedAt, "BrainPet performance receipt timestamps are invalid.");
+  assertBrainPetPerformanceWallClock(receipt.startedAt, receipt.completedAt, receipt.gateProfile === "idle-24h" ? 86_400_000 : 1_800_000);
   validateCandidate(receipt.candidate);
   validateRunEvidence(receipt.runEvidence, receipt.candidate.commit, receipt.gateProfile);
   validateGateResult(receipt.gateResult, receipt.gateProfile);
@@ -69,20 +71,25 @@ function validateGateResult(result, profile) {
   assert.equal(result.gateProfile, profile);
   assert.equal(result.gatePassed, true);
   assert.equal(result.resourceBudgetEnforced, true);
+  assert.ok(Number.isFinite(result.petReadyMs) && result.petReadyMs > 0, "BrainPet pet-ready latency is invalid.");
   if (profile === "idle-24h") {
     assert.deepEqual(Object.keys(result).sort(), ["gatePassed", "gateProfile", "idleProcessMetrics", "idleSoak", "ok", "petReadyMs", "rendererTargetTitles", "resourceBudgetEnforced"].sort(), "Idle performance result has unexpected fields.");
     assert.deepEqual(result.rendererTargetTitles, ["BrainPet Default Pet"]);
-    validateInstantMetrics(result.idleProcessMetrics);
+    normalizeBrainPetInstantProcessMetrics(result.idleProcessMetrics, "idle baseline", instantBudget(5, 400, 2_750));
     validateSoak(result.idleSoak, profile, null);
     return;
   }
   assert.deepEqual(Object.keys(result).sort(), ["activeProcessMetrics", "companionVerified", "crashIsolated", "crashRecovered", "gatePassed", "gateProfile", "hotIdleProcessMetrics", "idleProcessMetrics", "ok", "petReadyMs", "petToggleCloseVerified", "recoveredIdleProcessMetrics", "resourceBudgetEnforced", "responsiveness", "soak", "taskId"].sort(), "Active performance result has unexpected fields.");
   assert.equal(result.taskId, "cargo-signal");
   for (const key of ["companionVerified", "crashIsolated", "crashRecovered", "petToggleCloseVerified"]) assert.equal(result[key], true);
-  for (const metrics of [result.idleProcessMetrics, result.activeProcessMetrics, result.hotIdleProcessMetrics, result.recoveredIdleProcessMetrics]) validateInstantMetrics(metrics);
-  assert.ok(result.hotIdleProcessMetrics.totalWorkingSetBytes - result.idleProcessMetrics.totalWorkingSetBytes <= 100 * MiB, "BrainPet hot idle exceeds the total-working-set delta budget.");
+  const idleProcessMetrics = normalizeBrainPetInstantProcessMetrics(result.idleProcessMetrics, "cold idle", instantBudget(5, 400, 2_750));
+  normalizeBrainPetInstantProcessMetrics(result.activeProcessMetrics, "active", instantBudget(idleProcessMetrics.processCount + 2, 650, 3_500));
+  const hotIdleProcessMetrics = normalizeBrainPetInstantProcessMetrics(result.hotIdleProcessMetrics, "hot idle", instantBudget(idleProcessMetrics.processCount + 1, 500, 3_500));
+  const recoveredIdleProcessMetrics = normalizeBrainPetInstantProcessMetrics(result.recoveredIdleProcessMetrics, "recovered idle", instantBudget(idleProcessMetrics.processCount + 1, 500, 3_500));
+  assert.ok(hotIdleProcessMetrics.totalWorkingSetBytes - idleProcessMetrics.totalWorkingSetBytes <= 100 * MiB, "BrainPet hot idle exceeds the total-working-set delta budget.");
+  assert.ok(recoveredIdleProcessMetrics.totalWorkingSetBytes - idleProcessMetrics.totalWorkingSetBytes <= 100 * MiB, "BrainPet recovered idle exceeds the total-working-set delta budget.");
   validateResponsiveness(result.responsiveness);
-  validateSoak(result.soak, profile, result.idleProcessMetrics.processCount);
+  validateSoak(result.soak, profile, idleProcessMetrics.processCount);
 }
 
 function validateSoak(soak, profile, coldProcessCount) {
@@ -166,10 +173,14 @@ function validateResponsiveness(summary) {
   assert.ok(summary.interactionFrameRate.minimum >= 30);
 }
 
-function validateInstantMetrics(metrics) {
-  assert.ok(isRecord(metrics) && Number.isInteger(metrics.processCount) && metrics.processCount > 0 && Array.isArray(metrics.processes) && metrics.processes.length === metrics.processCount);
-  for (const key of ["rootPid", "totalWorkingSetBytes", "workingSetBytes", "privateBytes", "handleCount"]) assert.ok(Number.isFinite(metrics[key]) && metrics[key] > 0);
-  assert.ok(isFiniteNonNegative(metrics.cpuTime100ns));
+function instantBudget(maximumProcessCount, maximumMiB, maximumHandleCount) {
+  return {
+    maximumProcessCount,
+    maximumTotalWorkingSetBytes: maximumMiB * MiB,
+    maximumWorkingSetBytes: maximumMiB * MiB,
+    maximumPrivateBytes: maximumMiB * MiB,
+    maximumHandleCount,
+  };
 }
 
 function assertPortableRelative(value, label) { assert.ok(typeof value === "string" && value.length > 0 && value.length <= 4096 && !/^(?:[A-Za-z]:[\\/]|[\\/])/.test(value) && !value.split(/[\\/]/).includes(".."), `${label} path is invalid.`); }
