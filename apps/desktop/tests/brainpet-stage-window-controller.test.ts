@@ -115,9 +115,11 @@ test("StageWindowController owns secure stage lifecycle, sender identity, and di
   await Promise.resolve();
   assert.equal(controller.isOpen, false);
   assert.deepEqual(lifecycle.slice(-4), ["begin-close", "rig-dispose", "stage-closed", "recycle-pet-renderer"]);
-  assert.equal(stage.webContents.session.cacheClears, 1);
+  assert.equal(stage.webContents.session.cacheClears, 0, "warm stage assets stay cached between training sessions");
 
   controller.dispose();
+  await Promise.resolve();
+  assert.equal(stage.webContents.session.cacheClears, 1, "stage cache is released when the Host is disposed");
   controller.dispose();
 
   const shutdownStage = new FakeWindow(3, rig.overlayBoundsScreen);

@@ -100,6 +100,8 @@ export function validateBrainPetPackage({ outputRoot, targetId, mode = "private-
     source: buildIdentity,
     executable: relative(resolvedOutput, executable).replaceAll("\\", "/"),
     sha256: createHash("sha256").update(readFileSync(executable)).digest("hex"),
+    appAsar: relative(resolvedOutput, appAsar).replaceAll("\\", "/"),
+    appAsarSha256: createHash("sha256").update(readFileSync(appAsar)).digest("hex"),
     bridgeSourceBundled: true,
     bridgeMarketplaceBundled: true,
     nativeBridgeHelpersBundled: true,

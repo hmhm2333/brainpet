@@ -432,6 +432,9 @@ function createAggregateFixture(sourceCommit) {
     mkdirSync(packageRoot, { recursive: true });
     const executable = join(packageRoot, target.platform === "windows" ? "brainpet.exe" : "brainpet");
     writeFileSync(executable, createExecutableFixture(target, 24 * 1024 + targetIndex));
+    const appAsar = join(packageRoot, "resources", "app.asar");
+    mkdirSync(dirname(appAsar), { recursive: true });
+    writeFileSync(appAsar, Buffer.from(`brainpet-app-asar-${target.id}`));
     const artifactRecords = artifactKinds[target.platform].map((kind, kindIndex) => {
       const path = join(packageRoot, `brainpet-${target.id}.${artifactExtension(kind)}`);
       const bytes = createInstallerFixture(target, kind, 28 * 1024 + targetIndex + kindIndex);
@@ -451,6 +454,8 @@ function createAggregateFixture(sourceCommit) {
       source: { repository: brainPetDistributionContract.identity.repository, commit: sourceCommit },
       executable: executable.slice(packageRoot.length + 1).replaceAll("\\", "/"),
       sha256: sha256(readFileSync(executable)),
+      appAsar: appAsar.slice(packageRoot.length + 1).replaceAll("\\", "/"),
+      appAsarSha256: sha256(readFileSync(appAsar)),
       bridgeMarketplaceBundled: true,
       nativeBridgeHelpersBundled: true,
       artifacts: artifactRecords,

@@ -34,6 +34,7 @@ let sessionAuthority: BrainPetSessionAuthority | null = null;
 let trainingEntry: BrainPetTrainingEntry | null = null;
 let interactionRigController: BrainPetInteractionRigController | null = null;
 let stageWindowController: BrainPetStageWindowController | null = null;
+let trainingPreparationTimer: NodeJS.Timeout | null = null;
 let brainPetHostEnabled = false;
 
 export function initializeBrainPetHost(): void {
@@ -72,7 +73,10 @@ export function initializeBrainPetHost(): void {
   });
   trainingEntry = new BrainPetTrainingEntry({
     register: (handler) => setBrainPetTrainingRequestHandler(handler),
-    open: (sourceWindow) => { prepareDefaultPetWindowForTraining(); openBrainPetStage(sourceWindow); },
+    // The stage is the user-visible critical path. The post-training pet
+    // thumbnail is restored only after this stage renderer reports ready so two
+    // renderer loads cannot contend during the opening budget.
+    open: (sourceWindow) => openBrainPetStage(sourceWindow),
     close: (reason) => closeBrainPetStage(reason),
     isOpen: () => stageWindowController?.isOpen ?? false,
   });
@@ -94,6 +98,8 @@ export function closeBrainPetStage(reason = "requested"): void {
 
 export async function shutdownBrainPetHost(): Promise<void> {
   brainPetHostEnabled = false;
+  if (trainingPreparationTimer) clearTimeout(trainingPreparationTimer);
+  trainingPreparationTimer = null;
   trainingEntry?.dispose();
   trainingEntry = null;
   setBrainPetDragLifecycleHandler(null);
@@ -175,6 +181,7 @@ function installBrainPetIpc(): void {
   ipcMain.on(STAGE_READY_CHANNEL, (event) => {
     if (!stageWindowController?.isSender(event)) return;
     sessionAuthority?.stageReady();
+    scheduleDefaultPetTrainingPreparation(stageWindowController.window);
   });
   ipcMain.on(STAGE_CLOSE_CHANNEL, (event) => {
     if (!stageWindowController?.isSender(event)) return;
@@ -204,6 +211,17 @@ function installBrainPetIpc(): void {
     if (!stageWindowController?.isSender(event)) return;
     sessionAuthority?.handleStageEvent(value);
   });
+}
+
+function scheduleDefaultPetTrainingPreparation(stageWindow: BrowserWindow | null): void {
+  if (!stageWindow) return;
+  if (trainingPreparationTimer) clearTimeout(trainingPreparationTimer);
+  trainingPreparationTimer = setTimeout(() => {
+    trainingPreparationTimer = null;
+    if (stageWindowController?.window !== stageWindow || !stageWindowController.isOpen) return;
+    prepareDefaultPetWindowForTraining();
+  }, 500);
+  trainingPreparationTimer.unref?.();
 }
 
 function handlePetDragLifecycle(sourceWindow: BrowserWindow, phase: "start" | "end"): void {

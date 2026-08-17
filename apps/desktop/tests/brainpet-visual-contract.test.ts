@@ -89,7 +89,9 @@ test("post-training idle releases the animated spritesheet without changing live
   assert.match(petWindow, /animation: none !important/);
   assert.match(defaultPetController, /postTrainingStaticIdle = canUsePostTrainingStaticIdle\(\)/);
   assert.match(defaultPetController, /prepareDefaultPetWindowForTraining[\s\S]*postTrainingStaticIdle = false[\s\S]*refreshDefaultPetContent/);
-  assert.match(stageHost, /prepareDefaultPetWindowForTraining\(\); openBrainPetStage\(sourceWindow\)/);
+  assert.match(stageHost, /open: \(sourceWindow\) => openBrainPetStage\(sourceWindow\)/);
+  assert.match(stageHost, /STAGE_READY_CHANNEL[\s\S]*scheduleDefaultPetTrainingPreparation\(stageWindowController\.window\)/);
+  assert.match(stageHost, /setTimeout\([\s\S]*prepareDefaultPetWindowForTraining\(\)[\s\S]*500\)/);
 });
 
 test("BrainPet stage permits only the internal custom-pet image schemes", () => {

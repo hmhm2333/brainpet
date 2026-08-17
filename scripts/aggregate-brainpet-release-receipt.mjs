@@ -156,6 +156,8 @@ function validatePackageReceipt(paths, packagesRoot, target, releaseMode, proven
   assert.equal(receipt.bridgeMarketplaceBundled, true);
   assert.match(receipt.appVersion, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/, `Package receipt ${target.id} has an invalid app version.`);
   assert.equal(typeof receipt.runtimeReleaseReady, "boolean", `Package receipt ${target.id} lacks a runtime trust result.`);
+  assert.ok(typeof receipt.appAsar === "string" && receipt.appAsar.endsWith("app.asar"), `Package receipt ${target.id} lacks its packaged application path.`);
+  assert.match(receipt.appAsarSha256 ?? "", /^[a-f0-9]{64}$/i, `Package receipt ${target.id} lacks its packaged application hash.`);
   assert.ok(Array.isArray(receipt.artifacts) && receipt.artifacts.length > 0);
   const receiptRoot = dirname(path);
   if (releaseMode === "public-release") validateBrainPetPackageArtifactClosure(receiptRoot, target.id);
@@ -166,6 +168,8 @@ function validatePackageReceipt(paths, packagesRoot, target, releaseMode, proven
     const executablePath = resolveSafeRelative(receiptRoot, receipt.executable);
     assert.equal(sha256(executablePath), receipt.sha256, `Runtime executable hash mismatch for ${target.id}.`);
     assertBrainPetBinary(readFileSync(executablePath), target, `Aggregate runtime ${target.id}`);
+    const appAsarPath = resolveSafeRelative(receiptRoot, receipt.appAsar);
+    assert.equal(sha256(appAsarPath), receipt.appAsarSha256, `Packaged application hash mismatch for ${target.id}.`);
   }
   assert.ok(isRecord(receipt.source) && /^[a-f0-9]{40}$/i.test(receipt.source.commit), `Package receipt ${target.id} lacks an exact source commit.`);
   if (releaseMode === "public-release") {

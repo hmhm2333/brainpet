@@ -23,8 +23,6 @@ extraResources:
       - "**/*"
 
 asar: true
-asarUnpack:
-  - node_modules/**
 npmRebuild: false
 publish: null
 

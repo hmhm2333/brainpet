@@ -26,6 +26,7 @@ export class BrainPetStageWindowController {
   private rendererRequestedInteractive = false;
   private mouseInteractive: boolean | null = null;
   private readonly hardenedSessions = new WeakSet<Session>();
+  private readonly stageSessions = new Set<Session>();
   private readonly createWindow: (options: Electron.BrowserWindowConstructorOptions) => BrowserWindow;
   private readonly getAppPath: () => string;
   private readonly getCursorScreenPoint: () => Electron.Point;
@@ -90,7 +91,6 @@ export class BrainPetStageWindowController {
       this.options.rigController.disposeStage();
       this.stopHitTestTimer();
       this.options.authority.stageClosed();
-      if (stageSession) void stageSession.clearCache().catch((error: unknown) => debug("brainpet.host", "stage cache release failed", { error: error instanceof Error ? error.message : String(error) }));
       if (!this.disposed && normalCloseEligible) void this.options.onClosed?.();
       info("brainpet.host", "stage closed", { openingFailed: !normalCloseEligible });
     };
@@ -126,6 +126,7 @@ export class BrainPetStageWindowController {
       });
 
       stageSession = window.webContents.session;
+      this.stageSessions.add(stageSession);
       this.stageWindow = window;
       window.on("closed", handleClosed);
       resolvedAnchor.webContents.send("openpets:brainpet-stage-state", { open: true });
@@ -218,6 +219,10 @@ export class BrainPetStageWindowController {
     this.disposed = true;
     this.close("controller-disposed");
     this.stopHitTestTimer();
+    for (const stageSession of this.stageSessions) {
+      void stageSession.clearCache().catch((error: unknown) => debug("brainpet.host", "stage cache release failed", { error: error instanceof Error ? error.message : String(error) }));
+    }
+    this.stageSessions.clear();
   }
 
   private getMode(): "stage-exerciser" | "training" {

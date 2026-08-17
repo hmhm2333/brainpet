@@ -2,14 +2,17 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { availableParallelism, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
 import { createOpenPetsClient } from "../../../packages/client/dist/index.js";
-import { evaluateBrainPetProcessSoakBudget, summarizeBrainPetProcessSoak } from "../dist/brainpet/performance-budget.js";
+import { evaluateBrainPetProcessSoakBudget, evaluateBrainPetResponsivenessBudget, summarizeBrainPetProcessSoak, summarizeBrainPetResponsiveness } from "../dist/brainpet/performance-budget.js";
+import { advanceBrainPetIdleSettlement, resolveBrainPetSmokeMode, retryBrainPetHeapSample } from "../dist/brainpet/smoke-mode.js";
+import { assertBrainPetPerformanceReceiptAvailable, resolveBrainPetPerformanceReceiptPath, validateBrainPetPerformanceCandidate, writeBrainPetPerformanceReceipt } from "./brainpet-performance-receipt.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(scriptDir, "..");
@@ -17,12 +20,7 @@ const repoRoot = resolve(appDir, "..", "..");
 const outputPath = resolve(process.argv[2] ?? join(repoRoot, "output", "playwright", "brainpet-electron-stage.png"));
 const require = createRequire(import.meta.url);
 const electronPath = process.env.BRAINPET_ELECTRON_EXECUTABLE || require("electron");
-const userDataDir = await mkdtemp(join(tmpdir(), "brainpet-electron-smoke-"));
-const discoveryPath = join(userDataDir, "brainpet-ipc.json");
-const installMarkerPath = join(userDataDir, "runtime-install.json");
-const port = await reservePort();
-const logs = [];
-const spawnedAt = Date.now();
+const performanceExecutable = process.env.BRAINPET_PERFORMANCE_EXECUTABLE ? resolve(process.env.BRAINPET_PERFORMANCE_EXECUTABLE) : null;
 const lifecycleCycles = parsePositiveInteger(process.env.BRAINPET_LIFECYCLE_CYCLES, 1);
 const soakMs = parseNonNegativeInteger(process.env.BRAINPET_SOAK_MS, 0);
 const idleSoakMs = parseNonNegativeInteger(process.env.BRAINPET_IDLE_SOAK_MS, 0);
@@ -36,16 +34,39 @@ const enforceResourceBudget = !verifyOpenPetsIsolation && process.env.BRAINPET_E
 const videoPath = process.env.BRAINPET_VIDEO_PATH ? resolve(process.env.BRAINPET_VIDEO_PATH) : null;
 if (forcedTask && forcedTask !== "cargo-signal" && forcedTask !== "pack-refresh" && forcedTask !== "foundation-probe") throw new Error("BRAINPET_SMOKE_TASK must be cargo-signal, pack-refresh, or foundation-probe.");
 if (expectDisabled && verifyOpenPetsIsolation) throw new Error("Rollback and OpenPets isolation smoke modes are mutually exclusive.");
-if (soakMs > 0 && idleSoakMs > 0) throw new Error("BrainPet active and idle soak modes are mutually exclusive.");
-if (soakMs >= 60_000 && process.platform !== "win32") throw new Error("BrainPet long-soak process-tree evidence currently requires Windows; macOS arm64 needs an independent physical receipt.");
 if (verifyOpenPetsIsolation && process.env.OPENPETS_DISTRIBUTION_PROFILE !== "openpets") throw new Error("OpenPets isolation smoke requires OPENPETS_DISTRIBUTION_PROFILE=openpets.");
+const smokeMode = resolveBrainPetSmokeMode({ activeSoakMs: soakMs, idleSoakMs, gateProfile: process.env.BRAINPET_PERFORMANCE_GATE, expectDisabled, verifyOpenPetsIsolation, platform: process.platform });
+const smokeConsoleLogging = smokeMode.performanceKind !== "none" ? "0" : (process.env.OPENPETS_LOG_CONSOLE ?? "1");
+const gateStartedAt = new Date();
+const formalCandidate = smokeMode.gatePassedEligible
+  ? validateBrainPetPerformanceCandidate({
+    packageReceiptPath: process.env.BRAINPET_PACKAGE_RECEIPT ? resolve(appDir, process.env.BRAINPET_PACKAGE_RECEIPT) : "",
+    executablePath: resolve(appDir, electronPath),
+    repoRoot,
+  })
+  : null;
+const formalReceiptPath = formalCandidate ? resolveBrainPetPerformanceReceiptPath(formalCandidate, smokeMode.gateProfile) : null;
+if (formalReceiptPath) assertBrainPetPerformanceReceiptAvailable(formalReceiptPath);
+if (smokeMode.gateProfile === "active-30m") assert.equal(resolve(performanceExecutable ?? ""), resolve(appDir, electronPath), "Formal responsiveness and soak evidence must execute the same packaged BrainPet bytes.");
+const responsivenessEvidence = smokeMode.gateProfile === "active-30m"
+  ? { ...(await runColdPerformancePreflight(40)), hotFeedbackMs: [], warmStageOpeningMs: [], rendererCloseMs: [], interactionFrameRateFps: [] }
+  : null;
+if (responsivenessEvidence) process.stdout.write(`BRAINPET_COLD_PERFORMANCE ${JSON.stringify({ coldStartupMs: responsivenessEvidence.coldStartupMs, coldWakeMs: responsivenessEvidence.coldWakeMs })}\n`);
+
+const userDataDir = await mkdtemp(join(tmpdir(), "brainpet-electron-smoke-"));
+const discoveryPath = join(userDataDir, "brainpet-ipc.json");
+const installMarkerPath = join(userDataDir, "runtime-install.json");
+const port = await reservePort();
+const logs = [];
+const spawnedAt = Date.now();
+let finalResult = null;
 
 const exerciserMode = !forcedTask || forcedTask === "foundation-probe";
 const petWindowTitle = verifyOpenPetsIsolation ? "OpenPets Default Pet" : "BrainPet Default Pet";
 
 const child = spawn(electronPath, [".", `--user-data-dir=${userDataDir}`, `--remote-debugging-port=${port}`], {
   cwd: appDir,
-  env: { ...process.env, ...(exerciserMode ? { OPENPETS_BRAINPET_EXERCISER: "1" } : {}), ...(forcedTask ? { OPENPETS_BRAINPET_FORCE_TASK: forcedTask } : {}), OPENPETS_DISTRIBUTION_PROFILE: process.env.OPENPETS_DISTRIBUTION_PROFILE ?? "brainpet", OPENPETS_DISCOVERY_FILE: discoveryPath, BRAINPET_INSTALL_MARKER_FILE: installMarkerPath, OPENPETS_DISABLE_PLUGIN_CATALOG: "1", OPENPETS_LOG_CONSOLE: "1", ...(expectDisabled ? { BRAINPET_ENABLED: "0" } : {}) },
+  env: { ...process.env, ...(exerciserMode ? { OPENPETS_BRAINPET_EXERCISER: "1" } : {}), ...(forcedTask ? { OPENPETS_BRAINPET_FORCE_TASK: forcedTask } : {}), OPENPETS_DISTRIBUTION_PROFILE: process.env.OPENPETS_DISTRIBUTION_PROFILE ?? "brainpet", OPENPETS_DISCOVERY_FILE: discoveryPath, BRAINPET_INSTALL_MARKER_FILE: installMarkerPath, OPENPETS_DISABLE_PLUGIN_CATALOG: "1", OPENPETS_LOG_CONSOLE: smokeConsoleLogging, ...(expectDisabled ? { BRAINPET_ENABLED: "0" } : {}) },
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true,
 });
@@ -53,6 +74,8 @@ child.stdout?.on("data", (chunk) => logs.push(String(chunk)));
 child.stderr?.on("data", (chunk) => logs.push(String(chunk)));
 
 try {
+  assert.ok(Number.isInteger(child.pid) && child.pid > 0, "BrainPet Electron browser process lacks a root PID.");
+  const electronRootPid = child.pid;
   let petTarget = await waitForTarget(port, (target) => target.title === petWindowTitle, startupTimeoutMs);
   const petReadyMs = Date.now() - spawnedAt;
   await delay(500);
@@ -63,12 +86,17 @@ try {
   // fault in its animation/font pages before taking the baseline used by the
   // later hot-idle delta; startup latency remains the earlier petReadyMs.
   await delay(15_000);
-  const idleProcessMetrics = process.platform === "win32" ? await measureProcessesForUserDataDir(userDataDir) : null;
+  let idleProcessMetrics = process.platform === "win32" ? await measureProcessesForRootPid(electronRootPid, userDataDir) : null;
+  if (idleSoakMs > 0) {
+    const settledIdle = await waitForColdIdleSettlement(port, petWindowTitle, electronRootPid, userDataDir, 30_000);
+    petTarget = settledIdle.target;
+    idleProcessMetrics = settledIdle.metrics;
+  }
   if (idleProcessMetrics) process.stdout.write(`BRAINPET_RESOURCE_METRICS ${JSON.stringify({ phase: "cold-idle", metrics: idleProcessMetrics })}\n`);
-  if (enforceResourceBudget && idleProcessMetrics) assertProcessBudget("idle", idleProcessMetrics, { processCount: 5, workingSetBytes: 400 * 1024 * 1024, privateBytes: 400 * 1024 * 1024 });
+  if (enforceResourceBudget && idleProcessMetrics) assertProcessBudget("idle", idleProcessMetrics, { processCount: 5, workingSetBytes: 400 * 1024 * 1024, privateBytes: 400 * 1024 * 1024, handleCount: 2_750 });
   if (idleSoakMs > 0) {
     assert.equal(process.platform, "win32", "BrainPet 24-hour idle soak currently requires Windows process-tree metrics.");
-    const idleSoak = await runIdleSoak(petTarget, idleSoakMs, userDataDir);
+    const idleSoak = await runIdleSoak(petTarget, idleSoakMs, electronRootPid, userDataDir);
     if (idleSoakMs >= 60_000) {
       assert.equal(idleSoak.heapGrowthBytes <= 32 * 1024 * 1024, true, `idle renderer heap grew by ${idleSoak.heapGrowthBytes} bytes`);
       assert.ok(idleSoak.process, "idle soak lacks process-tree evidence");
@@ -77,13 +105,17 @@ try {
         maximumWorkingSetBytes: 400 * 1024 * 1024,
         maximumPrivateBytes: 400 * 1024 * 1024,
         maximumWorkingSetGrowthBytes: 64 * 1024 * 1024,
+        maximumHandleCount: 2_750,
+        maximumHandleGrowth: 128,
+        minimumSamples: smokeMode.gatePassedEligible ? 289 : 2,
+        minimumDurationMs: smokeMode.gatePassedEligible ? 86_400_000 : Math.max(0, idleSoakMs - 2_000),
+        maximumSampleIntervalMs: smokeMode.gatePassedEligible ? 310_000 : Math.min(300_000, Math.max(1_000, Math.floor(idleSoakMs / 20))) + 10_000,
         maximumIntervalCpuPercent: 1,
       }), [], `idle process budget failed: ${JSON.stringify(idleSoak.process)}`);
     }
     const idleTargets = (await listTargets(port)).filter((target) => target.type === "page");
     assert.deepEqual(idleTargets.map((target) => target.title), [petWindowTitle], "idle soak must not create another renderer");
-    process.stdout.write(`${JSON.stringify({ ok: true, petReadyMs, idleProcessMetrics, idleSoak })}\n`);
-    process.exitCode = 0;
+    finalResult = { ok: true, gateProfile: smokeMode.gateProfile, gatePassed: smokeMode.gatePassedEligible, petReadyMs, idleProcessMetrics, idleSoak };
   } else if (verifyOpenPetsIsolation) {
     const openPetsRender = await evaluate(petTarget, `(() => {
       const sprite = document.querySelector('.sprite');
@@ -98,8 +130,7 @@ try {
     const openPetsTargets = await listTargets(port);
     assert.equal(openPetsTargets.some((target) => target.id === petTarget.id && target.title === petWindowTitle), true, "OpenPets pet renderer must not be replaced by BrainPet recovery behavior");
     assert.equal(openPetsTargets.some((target) => target.title === "BrainPet"), false, "OpenPets must not create a BrainPet stage renderer");
-    process.stdout.write(`${JSON.stringify({ ok: true, openPetsProfileIsolation: true, animatedPetPreserved: true, rendererId: petTarget.id })}\n`);
-    process.exitCode = 0;
+    finalResult = { ok: true, openPetsProfileIsolation: true, animatedPetPreserved: true, rendererId: petTarget.id };
   } else if (expectDisabled) {
     const disabledState = await evaluate(petTarget, `({ triggerFound: Boolean(document.querySelector('[data-brainpet-trigger]')) })`);
     assert.equal(disabledState.triggerFound, false, "feature flag must remove the BrainPet trigger");
@@ -112,8 +143,7 @@ try {
     );
     assert.equal(await evaluate(petTarget, `Boolean(document.querySelector('[data-companion-toggle]'))`), false, "feature flag rollback must not render Agent lifecycle UI");
     await assert.rejects(readFile(installMarkerPath), /ENOENT/, "feature flag rollback must not refresh the packaged install marker");
-    process.stdout.write(`${JSON.stringify({ ok: true, featureFlagRollback: true, lifecycleRejected: true })}\n`);
-    process.exitCode = 0;
+    finalResult = { ok: true, featureFlagRollback: true, lifecycleRejected: true };
   } else {
   const companionClient = createOpenPetsClient({ target: "brainpet", discoveryPath });
   const companionNow = Date.now();
@@ -153,6 +183,7 @@ try {
   await companionClient.reportAgentActivity({ schemaVersion: 1, agent: "codex", sessionId: "smoke-working", turnId: "turn-working", state: "idle", occurredAt: companionNow + 2, capabilities: ["observeLifecycle"] });
   await companionClient.reportAgentActivity({ schemaVersion: 1, agent: "claude", sessionId: "smoke-review", turnId: "turn-cleanup", state: "idle", occurredAt: companionNow + 3, capabilities: ["observeLifecycle"] });
   await waitForEvaluation(petTarget, `!document.querySelector('[data-companion-toggle]')`, 2_000);
+  if (responsivenessEvidence) responsivenessEvidence.hotFeedbackMs.push(...await measureHotFeedbackLatency(companionClient, petTarget, 20));
   await companionClient.say("PIXEL UI", { reaction: "working" });
   await waitForEvaluation(petTarget, `Boolean(document.querySelector('.bubble'))`, 2_000);
   await waitForEvaluation(petTarget, `document.fonts.status === 'loaded'`, 5_000);
@@ -198,7 +229,6 @@ try {
   await waitForEvaluation(stageTarget, stageIdentityExpression, 5_000);
   await waitForEvaluation(stageTarget, `document.fonts.status === 'loaded'`, 5_000);
   const openingMs = Date.now() - clickedAtMs;
-  assert.equal(openingMs <= 500, true, `warm stage opening must stay under 500ms; received ${openingMs}ms`);
   const welcome = await evaluate(stageTarget, `(async () => {
     const loadedFaces = await document.fonts.load('12px "Fusion Pixel 12px Proportional SC"', '点击 SPACE');
     const card = document.querySelector('.stage-card');
@@ -449,7 +479,29 @@ try {
     await waitForEvaluation(stageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
   }
 
-  const soak = await runSoak(stageTarget, soakMs, userDataDir);
+  let responsiveness = null;
+  if (responsivenessEvidence) {
+    responsivenessEvidence.warmStageOpeningMs.push(openingMs);
+    const lifecycleEvidence = await measureWarmStageLifecycle({ stageTarget, port, petWindowTitle, stageIdentityExpression, closeStageExpression, samples: 20 });
+    stageTarget = lifecycleEvidence.stageTarget;
+    responsivenessEvidence.warmStageOpeningMs.push(...lifecycleEvidence.openingMs);
+    responsivenessEvidence.rendererCloseMs.push(...lifecycleEvidence.closeMs);
+    responsivenessEvidence.interactionFrameRateFps.push(...await measureInteractionFrameRate(stageTarget, 20));
+    responsiveness = summarizeBrainPetResponsiveness(responsivenessEvidence);
+    process.stdout.write(`BRAINPET_RESPONSIVENESS ${JSON.stringify(responsiveness)}\n`);
+    assert.deepEqual(evaluateBrainPetResponsivenessBudget(responsiveness, {
+      minimumSamples: 20,
+      maximumColdStartupP95Ms: 1_000,
+      maximumHotFeedbackP95Ms: 200,
+      maximumColdWakeP95Ms: 1_500,
+      maximumWarmStageOpeningP95Ms: 500,
+      maximumRendererCloseMs: 5_000,
+      minimumInteractionFrameRateP95Fps: 50,
+      minimumInteractionFrameRateFps: 30,
+    }), [], `responsiveness budget failed: ${JSON.stringify(responsiveness)}`);
+  }
+
+  const soak = await runSoak(stageTarget, soakMs, electronRootPid, userDataDir);
   if (soakMs >= 60_000) assert.equal(soak.heapGrowthBytes <= 32 * 1024 * 1024, true, `renderer heap grew by ${soak.heapGrowthBytes} bytes during soak`);
   if (soakMs >= 60_000 && soak.process) {
     assert.deepEqual(evaluateBrainPetProcessSoakBudget(soak.process, {
@@ -457,9 +509,14 @@ try {
       maximumWorkingSetBytes: 650 * 1024 * 1024,
       maximumPrivateBytes: 650 * 1024 * 1024,
       maximumWorkingSetGrowthBytes: 64 * 1024 * 1024,
+      maximumHandleCount: 3_500,
+      maximumHandleGrowth: 256,
+      minimumSamples: smokeMode.gatePassedEligible ? 31 : 2,
+      minimumDurationMs: smokeMode.gatePassedEligible ? 1_800_000 : Math.max(0, soakMs - 2_000),
+      maximumSampleIntervalMs: smokeMode.gatePassedEligible ? 70_000 : Math.min(60_000, Math.max(1_000, Math.floor(soakMs / 10))) + 10_000,
     }), [], `long-soak process budget failed: ${JSON.stringify(soak.process)}`);
   }
-  const activeProcessMetrics = process.platform === "win32" ? await measureProcessesForUserDataDir(userDataDir) : null;
+  const activeProcessMetrics = process.platform === "win32" ? await measureProcessesForRootPid(electronRootPid, userDataDir) : null;
   if (enforceResourceBudget && activeProcessMetrics) {
     assertProcessBudget("active", activeProcessMetrics, { processCount: (idleProcessMetrics?.processCount ?? 4) + 2, workingSetBytes: 650 * 1024 * 1024, privateBytes: 650 * 1024 * 1024 });
   }
@@ -482,7 +539,7 @@ try {
   petToggleCloseVerified = true;
   await delay(15_000);
   const hotIdleProcessMetrics = process.platform === "win32"
-    ? await waitForProcessCount(userDataDir, (idleProcessMetrics?.processCount ?? 5) + 1, 5_000)
+    ? await waitForProcessCount(electronRootPid, userDataDir, (idleProcessMetrics?.processCount ?? 5) + 1, 5_000)
     : null;
   if (hotIdleProcessMetrics) process.stdout.write(`BRAINPET_RESOURCE_METRICS ${JSON.stringify({ phase: "hot-idle", metrics: hotIdleProcessMetrics })}\n`);
   if (enforceResourceBudget && hotIdleProcessMetrics) {
@@ -523,14 +580,14 @@ try {
   await waitForTargetToDisappear(port, recoveredStageTarget.id, 10_000);
   await delay(2_000);
   const recoveredIdleProcessMetrics = process.platform === "win32"
-    ? await waitForProcessCount(userDataDir, (idleProcessMetrics?.processCount ?? 5) + 1, 5_000)
+    ? await waitForProcessCount(electronRootPid, userDataDir, (idleProcessMetrics?.processCount ?? 5) + 1, 5_000)
     : null;
   if (enforceResourceBudget && recoveredIdleProcessMetrics) {
     assert.equal(recoveredIdleProcessMetrics.processCount <= (idleProcessMetrics?.processCount ?? 5) + 1, true, `crash recovery left too many processes: ${JSON.stringify(recoveredIdleProcessMetrics.processes)}`);
   }
   assert.doesNotMatch(logs.join(""), /invalid stage event rejected|stage event transition rejected/, "crash recovery must leave the Host lifecycle valid");
 
-  process.stdout.write(`${JSON.stringify({ ok: true, outputPath, introOutputPath, companionOutputPath, pixelUiOutputPath, resultOutputPath, videoPath, petReadyMs, idleProcessMetrics, activeProcessMetrics, hotIdleProcessMetrics, recoveredIdleProcessMetrics, companionVerified: true, pixelUiVerified: true, trigger, stage: { width: welcome.width, height: welcome.height, desktopOverlay: true }, prompt: welcome.prompt, introBufferMs, openingMs, petIndependentMove, rigIndependentDrag, trialVisualHiddenDuringDrag, restartedTrialProgress, rigAutoResume, focusPause, nativeReactionClickVerified, petThrowVerified, petToggleCloseVerified, completionVerified: Boolean(completion), completionQuality: completion?.quality ?? null, foundationInputVerified, lifecycleCycles, soak, crashIsolated: true, crashRecovered: true })}\n`);
+  finalResult = { ok: true, ...(smokeMode.performanceKind === "active" ? { gateProfile: smokeMode.gateProfile, gatePassed: smokeMode.gatePassedEligible } : {}), outputPath, introOutputPath, companionOutputPath, pixelUiOutputPath, resultOutputPath, videoPath, petReadyMs, responsiveness, idleProcessMetrics, activeProcessMetrics, hotIdleProcessMetrics, recoveredIdleProcessMetrics, companionVerified: true, pixelUiVerified: true, trigger, stage: { width: welcome.width, height: welcome.height, desktopOverlay: true }, prompt: welcome.prompt, introBufferMs, openingMs, petIndependentMove, rigIndependentDrag, trialVisualHiddenDuringDrag, restartedTrialProgress, rigAutoResume, focusPause, nativeReactionClickVerified, petThrowVerified, petToggleCloseVerified, completionVerified: Boolean(completion), completionQuality: completion?.quality ?? null, foundationInputVerified, lifecycleCycles, soak, crashIsolated: true, crashRecovered: true };
   }
 } catch (error) {
   process.stderr.write(`${logs.join("")}\n`);
@@ -542,6 +599,27 @@ try {
   if (process.platform === "win32") await stopProcessesForUserDataDir(userDataDir);
   await rm(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
+
+assert.ok(finalResult, "BrainPet smoke completed without a result.");
+if (formalCandidate && formalReceiptPath) {
+  const writtenReceipt = await writeBrainPetPerformanceReceipt({
+    receiptPath: formalReceiptPath,
+    candidate: formalCandidate,
+    gateProfile: smokeMode.gateProfile,
+    startedAt: gateStartedAt,
+    gateResult: finalResult,
+  });
+  finalResult = {
+    ...finalResult,
+    performanceReceipt: {
+      path: relative(repoRoot, writtenReceipt.path).replaceAll("\\", "/"),
+      sha256: writtenReceipt.sha256,
+      candidate: formalCandidate,
+    },
+  };
+}
+process.stdout.write(`${JSON.stringify(finalResult)}\n`);
+process.exitCode = 0;
 
 async function reservePort() {
   const server = createServer();
@@ -556,8 +634,119 @@ async function reservePort() {
   return selected;
 }
 
+async function runColdPerformancePreflight(samples) {
+  const coldStartupMs = [];
+  const coldWakeMs = [];
+  assert.ok(performanceExecutable, "formal responsiveness evidence requires the packaged BrainPet executable");
+  const stagedInstallRoot = await mkdtemp(join(tmpdir(), "brainpet-performance-install-"));
+  const stagedAppDir = join(stagedInstallRoot, "BrainPet");
+  try {
+    await cp(dirname(performanceExecutable), stagedAppDir, { recursive: true, force: true });
+    const stagedExecutable = join(stagedAppDir, basename(performanceExecutable));
+    // Keep package-copy and antivirus/indexer contention out of the process cold-
+    // start metric without launching or pre-warming the candidate itself.
+    await delay(10_000);
+    for (let index = 0; index < samples; index += 1) {
+      const sampleUserDataDir = await mkdtemp(join(tmpdir(), "brainpet-performance-cold-"));
+      const sampleDiscoveryPath = join(sampleUserDataDir, "brainpet-ipc.json");
+      const sampleInstallMarkerPath = join(sampleUserDataDir, "runtime-install.json");
+      const samplePort = await reservePort();
+      const sampleStartedAt = performance.now();
+      const sampleChild = spawn(stagedExecutable, [`--user-data-dir=${sampleUserDataDir}`, `--remote-debugging-port=${samplePort}`], {
+        cwd: stagedAppDir,
+        env: { ...process.env, OPENPETS_BRAINPET_EXERCISER: "1", OPENPETS_DISTRIBUTION_PROFILE: "brainpet", OPENPETS_DISCOVERY_FILE: sampleDiscoveryPath, BRAINPET_INSTALL_MARKER_FILE: sampleInstallMarkerPath, OPENPETS_DISABLE_PLUGIN_CATALOG: "1", OPENPETS_LOG_CONSOLE: "0" },
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      try {
+        assert.ok(Number.isInteger(sampleChild.pid) && sampleChild.pid > 0, `cold performance sample ${index + 1} lacks an Electron browser PID`);
+        const samplePetTarget = await waitForTarget(samplePort, (target) => target.title === "BrainPet Default Pet", startupTimeoutMs);
+        await waitForEvaluation(samplePetTarget, `document.readyState === 'complete' && Boolean(document.querySelector('[data-brainpet-trigger]'))`, 5_000);
+        coldStartupMs.push(performance.now() - sampleStartedAt);
+        const coldClient = createOpenPetsClient({ target: "brainpet", discoveryPath: sampleDiscoveryPath });
+        await coldClient.reportAgentActivity({ schemaVersion: 1, agent: "codex", sessionId: `cold-wake-${index}`, turnId: `cold-wake-turn-${index}`, state: "working", occurredAt: Date.now(), capabilities: ["observeLifecycle"] });
+        await waitForEvaluation(samplePetTarget, `Boolean(document.querySelector('[data-companion-toggle]'))`, 2_000);
+        // Count from the fresh process launch, not from the later IPC send. The
+        // package lifecycle gate separately proves that the native Agent helper
+        // launches this installed runtime; delaying the event until the pet is
+        // ready makes this a conservative visible-feedback bound.
+        coldWakeMs.push(performance.now() - sampleStartedAt);
+      } finally {
+        sampleChild.kill();
+        await waitForExit(sampleChild, 5_000);
+        if (process.platform === "win32") await stopProcessesForUserDataDir(sampleUserDataDir).catch(() => {});
+        await rm(sampleUserDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+        // Let process teardown, the PowerShell descendant check, and filesystem
+        // cleanup become quiescent before the next independent cold sample.
+        // Without this separation, the harness measures its own cleanup tail.
+        await delay(2_000);
+      }
+    }
+  } finally {
+    await rm(stagedInstallRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
+  return { coldStartupMs, coldWakeMs };
+}
+
+async function measureHotFeedbackLatency(client, petTarget, samples) {
+  const latencyMs = [];
+  const occurredAt = Date.now();
+  for (let index = 0; index < samples; index += 1) {
+    const startedAt = performance.now();
+    await client.reportAgentActivity({ schemaVersion: 1, agent: "codex", sessionId: "hot-feedback", turnId: `hot-feedback-${index}`, state: "working", occurredAt: occurredAt + index * 2, capabilities: ["observeLifecycle"] });
+    await waitForEvaluation(petTarget, `Boolean(document.querySelector('[data-companion-toggle]'))`, 1_500);
+    latencyMs.push(performance.now() - startedAt);
+    await client.reportAgentActivity({ schemaVersion: 1, agent: "codex", sessionId: "hot-feedback", turnId: `hot-feedback-cleanup-${index}`, state: "idle", occurredAt: occurredAt + index * 2 + 1, capabilities: ["observeLifecycle"] });
+    await waitForEvaluation(petTarget, `!document.querySelector('[data-companion-toggle]')`, 1_500);
+  }
+  return latencyMs;
+}
+
+async function measureWarmStageLifecycle({ stageTarget: initialStageTarget, port: debugPort, petWindowTitle: title, stageIdentityExpression, closeStageExpression, samples }) {
+  let currentStageTarget = initialStageTarget;
+  const openingMs = [];
+  const closeMs = [];
+  for (let index = 0; index < samples; index += 1) {
+    const closeStartedAt = performance.now();
+    await evaluate(currentStageTarget, closeStageExpression);
+    await waitForTargetToDisappear(debugPort, currentStageTarget.id, 5_000);
+    closeMs.push(performance.now() - closeStartedAt);
+    await delay(1_000);
+    const currentPetTarget = await waitForTarget(debugPort, (target) => target.title === title, 5_000);
+    await waitForEvaluation(currentPetTarget, `Boolean(document.querySelector('[data-brainpet-trigger]'))`, 2_000);
+    const openingStartedAt = performance.now();
+    await evaluate(currentPetTarget, `document.querySelector('[data-brainpet-trigger]')?.click()`);
+    currentStageTarget = await waitForTarget(debugPort, (target) => target.title === "BrainPet", 5_000);
+    await waitForEvaluation(currentStageTarget, stageIdentityExpression, 5_000);
+    await waitForEvaluation(currentStageTarget, `document.fonts.status === 'loaded'`, 5_000);
+    openingMs.push(performance.now() - openingStartedAt);
+    await evaluate(currentStageTarget, `document.querySelector('[data-action="skip-intro"]')?.click()`);
+    await waitForEvaluation(currentStageTarget, `Boolean(document.querySelector('.task-card'))`, 5_000);
+  }
+  return { stageTarget: currentStageTarget, openingMs, closeMs };
+}
+
+async function measureInteractionFrameRate(target, seconds) {
+  await sendCdp(target.webSocketDebuggerUrl, "Page.bringToFront", {});
+  await waitForEvaluation(target, `!document.querySelector('.focus-pause') && !document.body.innerText.includes('PAUSED')`, 5_000);
+  const windows = await evaluate(target, `new Promise((resolve) => {
+    const counts = Array.from({ length: ${seconds} }, () => 0);
+    let startedAt = null;
+    const sample = (timestamp) => {
+      if (startedAt === null) startedAt = timestamp;
+      const index = Math.floor((timestamp - startedAt) / 1000);
+      if (index >= counts.length) { resolve(counts); return; }
+      counts[index] += 1;
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  })`, (seconds + 5) * 1_000);
+  assert.equal(Array.isArray(windows) && windows.length === seconds, true, "interaction frame-rate evidence is incomplete");
+  return windows;
+}
+
 async function listTargets(debugPort) {
-  const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`);
+  const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`, { signal: AbortSignal.timeout(1_000) });
   if (!response.ok) throw new Error(`Electron DevTools endpoint returned ${response.status}.`);
   return response.json();
 }
@@ -686,7 +875,7 @@ async function closeElectronApp(debugPort) {
     } catch {
       return;
     }
-    await delay(100);
+    await delay(10);
   }
 }
 
@@ -696,14 +885,12 @@ $needle = '--user-data-dir=' + $env:BRAINPET_CLEANUP_USER_DATA
 $all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine)
 $roots = @($all | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
 if ($roots.Count -eq 0) { exit 0 }
-$rootNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-foreach ($root in $roots) { [void]$rootNames.Add([string]$root.Name) }
 $ids = [System.Collections.Generic.HashSet[uint32]]::new()
 foreach ($root in $roots) { [void]$ids.Add([uint32]$root.ProcessId) }
 do {
   $changed = $false
   foreach ($process in $all) {
-    if ($rootNames.Contains([string]$process.Name) -and $ids.Contains([uint32]$process.ParentProcessId) -and $ids.Add([uint32]$process.ProcessId)) { $changed = $true }
+    if ($ids.Contains([uint32]$process.ParentProcessId) -and $ids.Add([uint32]$process.ProcessId)) { $changed = $true }
   }
 } while ($changed)
 foreach ($id in @($ids) | Sort-Object -Descending) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
@@ -714,59 +901,110 @@ if ($remaining.Count -gt 0) { throw "BrainPet smoke cleanup left $($remaining.Co
   await runPowerShell(script, { BRAINPET_CLEANUP_USER_DATA: directory });
 }
 
-async function measureProcessesForUserDataDir(directory) {
+async function measureProcessesForRootPid(rootPid, directory) {
   const script = String.raw`
 $needle = '--user-data-dir=' + $env:BRAINPET_METRICS_USER_DATA
-$all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine, WorkingSetSize, PrivatePageCount, HandleCount, KernelModeTime, UserModeTime)
-$roots = @($all | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
-$rootNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-foreach ($root in $roots) { [void]$rootNames.Add([string]$root.Name) }
-$ids = [System.Collections.Generic.HashSet[uint32]]::new()
-foreach ($root in $roots) { [void]$ids.Add([uint32]$root.ProcessId) }
-do {
-  $changed = $false
-  foreach ($process in $all) {
-    if ($rootNames.Contains([string]$process.Name) -and $ids.Contains([uint32]$process.ParentProcessId) -and $ids.Add([uint32]$process.ProcessId)) { $changed = $true }
-  }
-} while ($changed)
-$selected = @($all | Where-Object { $ids.Contains([uint32]$_.ProcessId) })
-$workingSet = ($selected | Measure-Object WorkingSetSize -Sum).Sum
+$rootPid = [uint32]$env:BRAINPET_METRICS_ROOT_PID
+$missingPrivateWorkingSet = @()
+for ($attempt = 1; $attempt -le 3; $attempt += 1) {
+  $all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine, CreationDate, WorkingSetSize, PrivatePageCount, HandleCount, KernelModeTime, UserModeTime)
+  $privateWorkingSetByPid = @{}
+  Get-CimInstance Win32_PerfRawData_PerfProc_Process | ForEach-Object { $privateWorkingSetByPid[[uint32]$_.IDProcess] = [int64]$_.WorkingSetPrivate }
+  $root = $all | Where-Object { [uint32]$_.ProcessId -eq $rootPid } | Select-Object -First 1
+  if ($null -eq $root) { throw "BrainPet metrics root PID $rootPid is missing." }
+  if (-not $root.CommandLine -or $root.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -lt 0) { throw "BrainPet metrics root PID does not match the isolated user-data directory." }
+  $ids = [System.Collections.Generic.HashSet[uint32]]::new()
+  [void]$ids.Add($rootPid)
+  do {
+    $changed = $false
+    foreach ($process in $all) {
+      if ($ids.Contains([uint32]$process.ParentProcessId) -and $ids.Add([uint32]$process.ProcessId)) { $changed = $true }
+    }
+  } while ($changed)
+  $selected = @($all | Where-Object { $ids.Contains([uint32]$_.ProcessId) })
+  if ($selected.Count -eq 0) { throw "BrainPet metrics process tree is empty." }
+  $missingPrivateWorkingSet = @($selected | Where-Object { -not $privateWorkingSetByPid.ContainsKey([uint32]$_.ProcessId) })
+  if ($missingPrivateWorkingSet.Count -eq 0) { break }
+  if ($attempt -lt 3) { Start-Sleep -Milliseconds 100 }
+}
+if ($missingPrivateWorkingSet.Count -gt 0) { throw "BrainPet private working-set counters are missing for $($missingPrivateWorkingSet.Count) processes." }
+$totalWorkingSet = ($selected | Measure-Object WorkingSetSize -Sum).Sum
+$workingSet = ($selected | ForEach-Object { $privateWorkingSetByPid[[uint32]$_.ProcessId] } | Measure-Object -Sum).Sum
 $privateBytes = ($selected | Measure-Object PrivatePageCount -Sum).Sum
 $handles = ($selected | Measure-Object HandleCount -Sum).Sum
 $cpuTime100ns = ($selected | ForEach-Object { [uint64]$_.KernelModeTime + [uint64]$_.UserModeTime } | Measure-Object -Sum).Sum
 $processes = @($selected | ForEach-Object {
   $role = if ($_.CommandLine -match '--type=([^\s"]+)') { $Matches[1] } else { 'browser' }
-  [pscustomobject]@{ pid = [uint32]$_.ProcessId; parentPid = [uint32]$_.ParentProcessId; role = $role; workingSetBytes = [int64]$_.WorkingSetSize; privateBytes = [int64]$_.PrivatePageCount }
+  [pscustomobject]@{
+    pid = [uint32]$_.ProcessId
+    parentPid = [uint32]$_.ParentProcessId
+    role = $role
+    creationTime = $_.CreationDate.ToUniversalTime().ToString('o')
+    totalWorkingSetBytes = [int64]$_.WorkingSetSize
+    workingSetBytes = [int64]$privateWorkingSetByPid[[uint32]$_.ProcessId]
+    privateBytes = [int64]$_.PrivatePageCount
+    handleCount = [int64]$_.HandleCount
+    cpuTime100ns = [int64]([uint64]$_.KernelModeTime + [uint64]$_.UserModeTime)
+  }
 })
 [pscustomobject]@{
+  rootPid = $rootPid
   processCount = $selected.Count
+  totalWorkingSetBytes = [int64]$totalWorkingSet
   workingSetBytes = [int64]$workingSet
   privateBytes = [int64]$privateBytes
   handleCount = [int64]$handles
   cpuTime100ns = [int64]$cpuTime100ns
   names = @($selected | Group-Object Name | ForEach-Object { $_.Name + ':' + $_.Count })
   processes = $processes
-} | ConvertTo-Json -Compress
+} | ConvertTo-Json -Depth 4 -Compress
 `;
-  const output = await runPowerShell(script, { BRAINPET_METRICS_USER_DATA: directory });
+  const output = await runPowerShell(script, { BRAINPET_METRICS_ROOT_PID: String(rootPid), BRAINPET_METRICS_USER_DATA: directory });
   return JSON.parse(output.trim());
 }
 
-async function waitForProcessCount(directory, maximum, timeoutMs) {
+async function waitForProcessCount(rootPid, directory, maximum, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
-  let metrics = await measureProcessesForUserDataDir(directory);
+  let metrics = await measureProcessesForRootPid(rootPid, directory);
   while (metrics.processCount > maximum && Date.now() < deadline) {
     await delay(250);
-    metrics = await measureProcessesForUserDataDir(directory);
+    metrics = await measureProcessesForRootPid(rootPid, directory);
   }
   return metrics;
+}
+
+async function waitForColdIdleSettlement(debugPort, title, rootPid, directory, timeoutMs) {
+  const deadline = performance.now() + timeoutMs;
+  let settlement = null;
+  let lastError = null;
+  while (performance.now() < deadline) {
+    try {
+      const targets = (await listTargets(debugPort)).filter((target) => target.type === "page" && target.title === title);
+      const metrics = await measureProcessesForRootPid(rootPid, directory);
+      const observation = advanceBrainPetIdleSettlement(settlement, {
+        observedAtMs: performance.now(),
+        targetIds: targets.map(({ id }) => id),
+        processes: metrics.processes,
+      });
+      settlement = observation.state;
+      if (observation.settled) return { target: targets[0], metrics };
+      lastError = null;
+    } catch (error) {
+      settlement = null;
+      lastError = error;
+    }
+    await delay(250);
+  }
+  const detail = lastError instanceof Error ? ` Last observation failed: ${lastError.message}` : "";
+  throw new Error(`BrainPet cold idle did not converge to one stable pet target, browser, and renderer within ${timeoutMs} ms.${detail}`);
 }
 
 function assertProcessBudget(label, metrics, budget) {
   assert.equal(metrics.processCount <= budget.processCount, true, `${label} process count ${metrics.processCount} exceeds ${budget.processCount}: ${metrics.names.join(", ")} ${JSON.stringify(metrics.processes)}`);
   const details = `${metrics.names.join(", ")} ${JSON.stringify(metrics.processes)}`;
-  assert.equal(metrics.workingSetBytes <= budget.workingSetBytes, true, `${label} working set ${formatMiB(metrics.workingSetBytes)} exceeds ${formatMiB(budget.workingSetBytes)}: ${details}`);
+  assert.equal(metrics.workingSetBytes <= budget.workingSetBytes, true, `${label} private working set ${formatMiB(metrics.workingSetBytes)} exceeds ${formatMiB(budget.workingSetBytes)} (total including shared pages ${formatMiB(metrics.totalWorkingSetBytes)}): ${details}`);
   assert.equal(metrics.privateBytes <= budget.privateBytes, true, `${label} private bytes ${formatMiB(metrics.privateBytes)} exceeds ${formatMiB(budget.privateBytes)}: ${details}`);
+  if (budget.handleCount !== undefined) assert.equal(metrics.handleCount <= budget.handleCount, true, `${label} handle count ${metrics.handleCount} exceeds ${budget.handleCount}: ${details}`);
 }
 
 function formatMiB(bytes) {
@@ -798,7 +1036,7 @@ async function waitForTarget(debugPort, predicate, timeoutMs) {
     } catch {
       // Electron has not opened its debugging endpoint yet.
     }
-    await delay(100);
+    await delay(10);
   }
   throw new Error("Timed out waiting for Electron target.");
 }
@@ -806,15 +1044,21 @@ async function waitForTarget(debugPort, predicate, timeoutMs) {
 async function waitForTargetToDisappear(debugPort, targetId, timeoutMs) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    if (!(await listTargets(debugPort)).some((target) => target.id === targetId)) return;
+    try {
+      if (!(await listTargets(debugPort)).some((target) => target.id === targetId)) return;
+    } catch {
+      // A transient DevTools HTTP timeout is not evidence that the renderer
+      // disappeared. Retry within the outer deadline and fail closed if the
+      // endpoint never becomes observable again.
+    }
     await delay(100);
   }
   throw new Error("Crashed BrainPet stage target did not close.");
 }
 
-async function runSoak(target, durationMs, processUserDataDir) {
+async function runSoak(target, durationMs, processRootPid, processUserDataDir) {
   if (durationMs === 0) return { durationMs: 0, samples: 0, sessions: 0, heapGrowthBytes: 0, maxHeapBytes: 0, process: null };
-  const startedAt = Date.now();
+  const startedAt = performance.now();
   let sessions = 1;
   const heapSamples = [];
   const processSamples = [];
@@ -822,19 +1066,22 @@ async function runSoak(target, durationMs, processUserDataDir) {
   let nextProcessSampleAt = startedAt;
   async function sampleProcesses() {
     if (process.platform !== "win32" || !processUserDataDir) return;
-    const metrics = await measureProcessesForUserDataDir(processUserDataDir);
+    const metrics = await measureProcessesForRootPid(processRootPid, processUserDataDir);
     processSamples.push({
-      elapsedMs: Date.now() - startedAt,
+      elapsedMs: performance.now() - startedAt,
+      rootPid: metrics.rootPid,
       processCount: metrics.processCount,
+      totalWorkingSetBytes: metrics.totalWorkingSetBytes,
       workingSetBytes: metrics.workingSetBytes,
       privateBytes: metrics.privateBytes,
       handleCount: metrics.handleCount,
       cpuTime100ns: metrics.cpuTime100ns,
+      processes: metrics.processes,
     });
     nextProcessSampleAt = startedAt + processSamples.length * processSampleIntervalMs;
   }
   await sampleProcesses();
-  while (Date.now() - startedAt < durationMs) {
+  while (performance.now() - startedAt < durationMs) {
     const page = await evaluate(target, `({ result: Boolean(document.querySelector('.result-card')), intro: Boolean(document.querySelector('.intro-card')) })`);
     if (page.result) {
       await evaluate(target, `document.querySelector('[data-action="again"]')?.click()`);
@@ -842,10 +1089,10 @@ async function runSoak(target, durationMs, processUserDataDir) {
     } else if (page.intro) {
       await evaluate(target, `document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', bubbles: true }))`);
     }
-    const heapUsage = await sendCdp(target.webSocketDebuggerUrl, "Runtime.getHeapUsage", {});
+    const heapUsage = await retryBrainPetHeapSample(() => sendCdp(target.webSocketDebuggerUrl, "Runtime.getHeapUsage", {}, 5_000));
     const heap = heapUsage.usedSize;
     if (Number.isFinite(heap)) heapSamples.push(heap);
-    if (Date.now() >= nextProcessSampleAt) await sampleProcesses();
+    if (performance.now() >= nextProcessSampleAt) await sampleProcesses();
     await delay(500);
   }
   await sampleProcesses();
@@ -854,7 +1101,7 @@ async function runSoak(target, durationMs, processUserDataDir) {
   const firstWindow = warmSamples.slice(0, Math.max(1, Math.floor(warmSamples.length / 5)));
   const lastWindow = warmSamples.slice(-Math.max(1, Math.floor(warmSamples.length / 5)));
   return {
-    durationMs: Date.now() - startedAt,
+    durationMs: performance.now() - startedAt,
     samples: heapSamples.length,
     sessions,
     heapGrowthBytes: Math.round(average(lastWindow) - average(firstWindow)),
@@ -863,32 +1110,35 @@ async function runSoak(target, durationMs, processUserDataDir) {
   };
 }
 
-async function runIdleSoak(target, durationMs, processUserDataDir) {
-  const startedAt = Date.now();
+async function runIdleSoak(target, durationMs, processRootPid, processUserDataDir) {
+  const startedAt = performance.now();
   const intervalMs = Math.min(300_000, Math.max(1_000, Math.floor(durationMs / 20)));
   const heapSamples = [];
   const processSamples = [];
   async function sample() {
-    const heapUsage = await sendCdp(target.webSocketDebuggerUrl, "Runtime.getHeapUsage", {});
+    const heapUsage = await retryBrainPetHeapSample(() => sendCdp(target.webSocketDebuggerUrl, "Runtime.getHeapUsage", {}, 5_000));
     if (Number.isFinite(heapUsage.usedSize)) heapSamples.push(heapUsage.usedSize);
-    const metrics = await measureProcessesForUserDataDir(processUserDataDir);
+    const metrics = await measureProcessesForRootPid(processRootPid, processUserDataDir);
     processSamples.push({
-      elapsedMs: Date.now() - startedAt,
+      elapsedMs: performance.now() - startedAt,
+      rootPid: metrics.rootPid,
       processCount: metrics.processCount,
+      totalWorkingSetBytes: metrics.totalWorkingSetBytes,
       workingSetBytes: metrics.workingSetBytes,
       privateBytes: metrics.privateBytes,
       handleCount: metrics.handleCount,
       cpuTime100ns: metrics.cpuTime100ns,
+      processes: metrics.processes,
     });
   }
   await sample();
-  while (Date.now() - startedAt < durationMs) {
-    await delay(Math.min(intervalMs, Math.max(1, durationMs - (Date.now() - startedAt))));
+  while (performance.now() - startedAt < durationMs) {
+    await delay(Math.min(intervalMs, Math.max(1, durationMs - (performance.now() - startedAt))));
     await sample();
   }
   const windowSize = Math.max(1, Math.floor(heapSamples.length / 5));
   return {
-    durationMs: Date.now() - startedAt,
+    durationMs: performance.now() - startedAt,
     samples: heapSamples.length,
     heapGrowthBytes: Math.round(average(heapSamples.slice(-windowSize)) - average(heapSamples.slice(0, windowSize))),
     maxHeapBytes: Math.round(Math.max(...heapSamples, 0)),
@@ -896,8 +1146,8 @@ async function runIdleSoak(target, durationMs, processUserDataDir) {
   };
 }
 
-async function evaluate(target, expression) {
-  const response = await sendCdp(target.webSocketDebuggerUrl, "Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+async function evaluate(target, expression, timeoutMs = 10_000) {
+  const response = await sendCdp(target.webSocketDebuggerUrl, "Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, timeoutMs);
   if (response.exceptionDetails) throw new Error(response.exceptionDetails.text ?? "Electron evaluation failed.");
   return response.result?.value;
 }
@@ -906,19 +1156,19 @@ async function waitForEvaluation(target, expression, timeoutMs) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     if (await evaluate(target, expression)) return;
-    await delay(50);
+    await delay(10);
   }
   throw new Error(`Timed out waiting for expression: ${expression}`);
 }
 
-function sendCdp(webSocketUrl, method, params) {
+function sendCdp(webSocketUrl, method, params, timeoutMs = 10_000) {
   return new Promise((resolvePromise, reject) => {
     const socket = new WebSocket(webSocketUrl);
     const id = 1;
     const timeout = setTimeout(() => {
       socket.close();
       reject(new Error(`CDP command timed out: ${method}`));
-    }, 10_000);
+    }, timeoutMs);
     socket.addEventListener("open", () => socket.send(JSON.stringify({ id, method, params })));
     socket.addEventListener("message", (event) => {
       const message = JSON.parse(String(event.data));

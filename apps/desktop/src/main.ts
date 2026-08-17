@@ -11,12 +11,6 @@ const distribution = resolveDesktopDistributionSettings(app.getName(), process.e
 const brainPetFeatureEnabled = isBrainPetFeatureEnabled(distribution, process.env.BRAINPET_ENABLED);
 const composition = resolveDesktopComposition(distribution, brainPetFeatureEnabled);
 
-// BrainPet renders two small, transparent pixel-art surfaces. Avoid retaining
-// a dedicated hardware compositor whose baseline working set is larger than
-// the entire decoded scene; software compositing still satisfies the 30/50 fps
-// release contract and is exercised by the Electron foundation smoke.
-if (distribution.profile === "brainpet") app.disableHardwareAcceleration();
-
 if (shouldUseIsolatedBrainPetUserData(distribution.profile, process.argv)) {
   app.setPath("userData", join(app.getPath("appData"), "BrainPet"));
 }

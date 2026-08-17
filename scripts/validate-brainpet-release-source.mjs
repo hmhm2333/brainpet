@@ -18,6 +18,8 @@ const adapterRegistry = JSON.parse(readFileSync(join(root, "config", "brainpet-a
 const workspacePackage = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 assert.match(workspacePackage.scripts.check, /brainpet:adapters:check/, "Default check must include adapter conformance.");
 assert.match(workspacePackage.scripts["brainpet:release:test"], /brainpet:adapters:check/, "Release test must include adapter conformance.");
+assert.match(workspacePackage.scripts["brainpet:idle-gate:start"], /brainpet:idle-gate:start/, "Workspace must expose the detached 24-hour idle gate runner.");
+assert.match(workspacePackage.scripts["brainpet:idle-gate:status"], /brainpet:idle-gate:status/, "Workspace must expose detached idle gate status.");
 const baseConfig = readFileSync(join(desktop, "electron-builder.brainpet.base.yml"), "utf8");
 const privateConfig = readFileSync(join(desktop, "electron-builder.brainpet.private.yml"), "utf8");
 const publicConfig = readFileSync(join(desktop, "electron-builder.brainpet.public.yml"), "utf8");
@@ -82,7 +84,11 @@ const brainPetControllerSources = Object.fromEntries([
 const distributionSource = readFileSync(join(desktop, "src", "distribution-profile.ts"), "utf8");
 assert.match(compositionSource, /layers: enabled \? \["hostCore", "brainPetFeature"\] : \["hostCore"\]/, "BrainPet must not compose OptionalOpenPetsServices.");
 assert.match(mainSource, /import\("\.\/composition\/openpets-runtime\.js"\)/, "Optional OpenPets services must be dynamically loaded.");
-assert.match(mainSource, /if \(distribution\.profile === "brainpet"\) app\.disableHardwareAcceleration\(\);/, "BrainPet must avoid the dedicated hardware compositor working set without changing OpenPets.");
+assert.doesNotMatch(
+  mainSource,
+  /disableHardwareAcceleration|appendSwitch\("(?:use-angle|use-gl|disable-gpu|disable-gpu-rasterization|enable-gpu-rasterization|use-vulkan)"|swiftshader/i,
+  "BrainPet must retain Electron's default hardware acceleration and must not force a software, WARP, SwiftShader, or custom GPU backend.",
+);
 assert.doesNotMatch(lifecycleSource, /plugin-service|brainpet\/host|remote-control-service|lan-controller|local-ipc|windows\.js/, "App lifecycle must only call the composition disposer.");
 assert.match(managedServiceSource, /#disposeRequested/, "Composition lifecycle must stop factory creation once disposal begins.");
 assert.match(optionalServicesSource, /AsyncOperationGate/, "Optional OpenPets services must drain lazy work before disposal completes.");
@@ -168,6 +174,16 @@ const packageValidatorSource = readFileSync(join(desktop, "scripts", "validate-b
 assert.match(packageValidatorSource, /assertMacosCodeObjectIsUnsigned/);
 assert.match(packageValidatorSource, /--appimage-signature/);
 assert.match(packageValidatorSource, /deb unexpectedly contains an embedded signature or non-standard archive member/);
+assert.match(packageValidatorSource, /appAsarSha256:/, "Package receipts must bind the packaged application bytes.");
+const performanceReceiptSource = readFileSync(join(desktop, "scripts", "brainpet-performance-receipt.mjs"), "utf8");
+assert.match(performanceReceiptSource, /--untracked-files=no/);
+assert.match(performanceReceiptSource, /packageReceipt\.source\.treeDirty, false/);
+assert.match(performanceReceiptSource, /await link\(temporary, target\)/, "Successful performance receipts must use non-overwriting atomic publication.");
+const performanceRunnerSource = readFileSync(join(desktop, "scripts", "brainpet-performance-gate-runner.mjs"), "utf8");
+assert.match(performanceRunnerSource, /detached: true/);
+assert.match(performanceRunnerSource, /creationDate === manifest\.runner\?\.creationDate/);
+assert.match(performanceRunnerSource, /identity\.executablePath/);
+assert.match(performanceRunnerSource, /commandNeedles\.every/);
 assert.deepEqual(Object.fromEntries(brainPetDistributionContract.releaseTargets.map((target) => [target.id, target.supportLevel])), {
   "windows-x64": "stable",
   "windows-arm64": "preview",

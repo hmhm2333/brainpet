@@ -215,15 +215,16 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `composition/async-operation-gate.ts`: Pure guard that blocks post-dispose lazy work and drains in-flight optional-service operations before cleanup
 - `composition/resource-transaction.ts`: Reverse-order rollback helper that preserves the original startup error while reporting cleanup failures
 - `composition/plugin-platform-startup.ts`: Injectable plugin startup orchestration for service, source, watcher, power-listener, tray, capabilities, and event-source rollback/retry tests
-- `composition/host-core.ts`: Minimal state, tray, pet, local IPC, and Agent lifecycle host
+- `composition/host-core.ts`: Minimal state, local IPC, and Agent lifecycle host; it exposes the pet before native tray work, defers update discovery, and cancels both deferred paths during disposal
 - `composition/openpets-runtime.ts`: Lazy Control Center, plugin, LAN, remote, and voice service factory with shutdown guards around every awaited load/start boundary; plugin startup commits only after its service, watcher, listeners, tray integration, capabilities, and event sources are all ready
 - `composition/brainpet-feature.ts`: Built-in training, install marker, setup, and onboarding feature factory
 - `brainpet/host.ts`: Thin Electron composition and IPC aggregate for the four BrainPet controllers
 - `brainpet/training-entry.ts`: Direct built-in training registration and toggle lifecycle
-- `brainpet/stage-window-controller.ts`: Hardened stage BrowserWindow, sender identity, hit testing, transactional open rollback, and close/cache lifecycle
+- `brainpet/stage-window-controller.ts`: Hardened stage BrowserWindow, sender identity, hit testing, transactional open rollback, renderer-per-close disposal, and stage-session cache release on controller shutdown
 - `brainpet/session-authority.ts`: Host-canonical session issuance, scoring, state transitions, and persistence
 - `brainpet/interaction-rig-controller.ts`: Pet/stage anchor ownership, drag transactions, geometry application, and timer disposal
-- `brainpet/performance-budget.ts`: Pure long-soak process-summary and memory/process budget evaluation used by Electron performance evidence
+- `brainpet/performance-budget.ts`: Pure process-soak and responsiveness percentile summaries plus fail-closed private-working-set/commit/process/latency/frame budget evaluation with total working-set evidence retained
+- `brainpet/smoke-mode.ts`: Fail-closed canonical active-30m/idle-24h profile resolver, bounded transient CDP heap-sample retry, and exact cold-idle target/process settlement state; probes remain distinguishable from release gates and protocol/crash errors are never retried
 - `brainpet-installation-state.ts`: Atomic BrainPet runtime/Bridge/lifecycle evidence store and Bridge-version reauthorization policy
 - `generated-brainpet-distribution.ts`: Generated Bridge version, product identity, unsigned direct-release policy, and six-target facts consumed by desktop installation code
 - `brainpet-adapter-manager.ts`: Codex CLI detection plus serialized install/upgrade/uninstall transactions, config backup/rollback, bundle hash verification, and redacted receipts

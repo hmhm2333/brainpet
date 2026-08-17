@@ -347,11 +347,14 @@ ports, drains pending work, then releases any resource that reached a started
 state. HostCore's display-change path calls a narrow LAN reclamp port and never
 statically imports the LAN pet implementation.
 
-On BrainPet, Electron hardware acceleration is disabled before readiness. The
-two bounded transparent pixel surfaces use software composition, which avoids
-retaining a dedicated hardware compositor while the foundation smoke still
-enforces the interactive frame-quality floor. Stage WebGL and spellcheck are
-disabled, its isolated cache is released on close, and the short Web Audio
+BrainPet retains Electron's default hardware acceleration. Formal packaged
+measurements showed that forcing software composition missed the cold-start,
+Stage-open, and minimum-FPS budgets, so the release source contract rejects
+software, WARP, SwiftShader, and custom GPU backend overrides. The Windows
+memory gate uses per-process private working set while retaining total working
+set, including duplicated Chromium/DLL shared pages, in the raw evidence.
+Stage WebGL and spellcheck are disabled, its isolated cache is released at app
+shutdown, and the short Web Audio
 context is closed after each tone. A normal Stage close also performs one
 BrainPet-only replacement of the pet BrowserWindow at the same saved position
 and with the same controller state, so the old Renderer process and page
@@ -367,6 +370,14 @@ BrainPet packaging uses base, private-test and public-release configs. Local
 Windows builds go to `dist-brainpet/private-test`; the unpacked runtime is
 `win-unpacked/brainpet.exe`. The NSIS installer is the normal test install path;
 the portable executable remains a transfer/diagnostic artifact.
+
+Formal Windows performance gates bind a clean Git commit to the exact package
+receipt, executable, and `app.asar` hashes before launch, then publish an
+immutable success receipt only after Electron cleanup succeeds. The detached
+`brainpet:idle-gate:start` and `brainpet:active-gate:start` runners can outlive the invoking Codex terminal; their
+status checks bind PID, process creation time, Node executable, and command line. A shutdown,
+reboot, worker loss, or sampling gap invalidates continuity and requires a full
+restart rather than resuming partial evidence.
 
 ## Where to look first
 

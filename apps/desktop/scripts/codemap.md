@@ -44,6 +44,8 @@ Check preload syntax → Compile tests to .test-dist → Run behavior tests → 
 ```
 brainpet-electron-smoke.mjs → isolated profile → native hotspot click → stage/lifecycle assertions → scoped process-tree cleanup
 brainpet-package.mjs → stage exact target helper → electron-builder → automatic validate-brainpet-package.mjs
+brainpet-performance-receipt.mjs → clean commit + package receipt + executable/app.asar hashes → cleanup-complete immutable gate receipt
+brainpet-performance-gate-runner.mjs → detached hidden worker → exact PID/creation/command manifest → immutable completion + receipt status
 brainpet-package-lifecycle.mjs → disposable GitHub-hosted runner → real install/start/default discovery/helper/upgrade/uninstall receipt
 brainpet-physical-acceptance.ps1 / brainpet-macos-physical-acceptance.mjs → unsigned Stable installer policy probe → OS-warning consent plus lifecycle/display acceptance → candidate-bound privacy-minimized schema-v5 receipt
 ```
@@ -61,7 +63,9 @@ brainpet-physical-acceptance.ps1 / brainpet-macos-physical-acceptance.mjs → un
 - `clean-package-output.cjs`: Removes `dist-electron` directory with path safety checks
 - `release-local.mjs`: Full release orchestration with preflight validation, multi-platform builds, and GitHub draft creation
 - `run-tests.mjs`: Desktop test runner for preload syntax checks, `.test-dist` behavior/contract tests, and remaining runtime checks
-- `brainpet-electron-smoke.mjs`: BrainPet native-entry, stage, continuously sampled process/heap performance, crash-isolation, and cleanup smoke
+- `brainpet-electron-smoke.mjs`: BrainPet native-entry, installed-candidate cold-start/cold-wake and p95 responsiveness evidence, stage frame windows, root-PID private/total-working-set plus commit/handle/CPU timeline, production-like logging for every performance probe/gate, canonical 30m/24h gate identity, bounded transient heap-sample retry, crash-isolation, and cleanup smoke
+- `brainpet-performance-receipt.mjs`: fail-closed local candidate validator and non-overwriting atomic 30m/24h success-receipt writer bound to commit, exact package receipt, executable, and app.asar bytes
+- `brainpet-performance-gate-runner.mjs`: detached Windows gate worker with immutable run/completion records and PID-creation-command status validation; survives a Codex terminal ending but treats reboot or process loss as interruption
 - `brainpet-package.mjs`: Six-target BrainPet builder that cannot complete without automatic package validation
 - `validate-brainpet-package.mjs`: Runtime/asar/helper/installer and explicit platform-signature-absence validator and target receipt writer
 - `brainpet-package-lifecycle.mjs`: CI-only real NSIS/DMG/AppImage/deb install, cold-wake, upgrade, Adapter, and uninstall exerciser
